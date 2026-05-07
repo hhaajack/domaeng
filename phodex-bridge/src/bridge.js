@@ -209,6 +209,7 @@ function startBridge({
   const desktopIpcActionFollower = !config.codexEndpoint
     ? createDesktopIpcActionFollower({
       sendApplicationResponse,
+      sendRuntimeFallback: forwardApplicationMessageToCodex,
       socketPath: config.desktopIpcSocketPath || undefined,
     })
     : null;
@@ -594,6 +595,10 @@ function startBridge({
     if (handleBridgeManagedThreadTurnsListRequest(rawMessage)) {
       return;
     }
+    forwardApplicationMessageToCodex(rawMessage);
+  }
+
+  function forwardApplicationMessageToCodex(rawMessage) {
     rememberForwardedRequestMethod(rawMessage);
     rememberThreadFromMessage("phone", rawMessage);
     codex.send(rawMessage);

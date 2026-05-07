@@ -12,6 +12,12 @@ const FRAME_HEADER_BYTES = 4;
 const MAX_FRAME_BYTES = 256 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 10_000;
 const DESKTOP_RESUME_METHODS = new Set(["thread/read", "thread/resume"]);
+const DESKTOP_RUNTIME_REQUEST_METHODS = new Set([
+  "turn/start",
+  "turn/steer",
+  "turn/interrupt",
+  "thread/compact/start",
+]);
 const ACTION_METHODS = new Set([
   "item/commandExecution/requestApproval",
   "item/fileChange/requestApproval",
@@ -24,8 +30,18 @@ const REPLY_METHOD_BY_ACTION_METHOD = new Map([
   ["item/fileRead/requestApproval", "thread-follower-file-approval-decision"],
   ["item/tool/requestUserInput", "thread-follower-submit-user-input"],
 ]);
+const FOLLOWER_METHOD_BY_RUNTIME_METHOD = new Map([
+  ["turn/start", "thread-follower-start-turn"],
+  ["turn/steer", "thread-follower-steer-turn"],
+  ["turn/interrupt", "thread-follower-interrupt-turn"],
+  ["thread/compact/start", "thread-follower-compact-thread"],
+]);
 const METHOD_VERSION_BY_NAME = new Map([
   ["initialize", 1],
+  ["thread-follower-start-turn", 1],
+  ["thread-follower-steer-turn", 1],
+  ["thread-follower-interrupt-turn", 1],
+  ["thread-follower-compact-thread", 1],
   ["thread-follower-command-approval-decision", 1],
   ["thread-follower-file-approval-decision", 1],
   ["thread-follower-submit-user-input", 1],
@@ -35,6 +51,7 @@ const APPROVAL_DECISIONS = new Set(["accept", "acceptForSession", "decline", "ca
 // Opens the Desktop IPC bus on demand and exposes Mac-owned pending actions as normal app-server requests.
 function createDesktopIpcActionFollower({
   sendApplicationResponse,
+  sendRuntimeFallback = null,
   readConversationState = null,
   logPrefix = "[remodex]",
   socketPath = resolveDefaultIpcSocketPath(),
@@ -56,6 +73,7 @@ function createDesktopIpcActionFollower({
   const activeThreadIds = new Set();
   const recoveringThreadIds = new Set();
   const queuedChangesByThreadId = new Map();
+  const desktopOwnerClientIdsByThreadId = new Map();
 
   function observeInbound(rawMessage) {
     const message = safeParseJSON(rawMessage);
@@ -66,6 +84,12 @@ function createDesktopIpcActionFollower({
     }
 
     const method = readString(message?.method);
+    const runtimeRoute = desktopRouteForRuntimeRequest(message);
+    if (runtimeRoute) {
+      submitDesktopRuntimeRequest(runtimeRoute, rawMessage);
+      return true;
+    }
+
     if (!DESKTOP_RESUME_METHODS.has(method)) {
       return false;
     }
@@ -86,6 +110,7 @@ function createDesktopIpcActionFollower({
     activeThreadIds.clear();
     recoveringThreadIds.clear();
     queuedChangesByThreadId.clear();
+    desktopOwnerClientIdsByThreadId.clear();
     ipc.close();
   }
 
@@ -99,6 +124,10 @@ function createDesktopIpcActionFollower({
     const threadId = readString(params.conversationId) || readString(params.conversation_id);
     if (!threadId || !activeThreadIds.has(threadId)) {
       return;
+    }
+    const ownerClientId = readString(envelope.sourceClientId);
+    if (ownerClientId) {
+      desktopOwnerClientIdsByThreadId.set(threadId, ownerClientId);
     }
 
     if (recoveringThreadIds.has(threadId)) {
@@ -138,6 +167,7 @@ function createDesktopIpcActionFollower({
     pendingRoutesByRequestId.clear();
     recoveringThreadIds.clear();
     queuedChangesByThreadId.clear();
+    desktopOwnerClientIdsByThreadId.clear();
   }
 
   function syncProjectedActions(threadId, actions) {
@@ -184,6 +214,32 @@ function createDesktopIpcActionFollower({
     return requestId ? pendingRoutesByRequestId.get(requestId) || null : null;
   }
 
+  function desktopRouteForRuntimeRequest(message) {
+    if (!message || typeof message !== "object" || !message.method || message.id == null) {
+      return null;
+    }
+
+    const method = readString(message.method);
+    if (!DESKTOP_RUNTIME_REQUEST_METHODS.has(method)) {
+      return null;
+    }
+
+    const requestId = requestIdKey(message.id);
+    const threadId = readThreadId(message.params);
+    if (!requestId || !threadId || !activeThreadIds.has(threadId)) {
+      return null;
+    }
+
+    return {
+      requestId,
+      method,
+      params: message.params && typeof message.params === "object" && !Array.isArray(message.params)
+        ? message.params
+        : {},
+      threadId,
+    };
+  }
+
   function submitDesktopActionResponse(route, responseMessage) {
     const payload = desktopFollowerPayloadForResponse(route, responseMessage);
     if (!payload) {
@@ -215,6 +271,43 @@ function createDesktopIpcActionFollower({
           error: {
             code: -32000,
             message: "Could not send this action to Codex on the Mac.",
+          },
+        }));
+      });
+  }
+
+  function submitDesktopRuntimeRequest(route, rawMessage) {
+    const payload = desktopFollowerPayloadForRuntimeRequest(route);
+    if (!payload) {
+      sendApplicationResponse(JSON.stringify({
+        id: route.requestId,
+        error: {
+          code: -32602,
+          message: "Invalid desktop runtime request.",
+        },
+      }));
+      return;
+    }
+
+    ipc.sendRequest(payload.method, payload.params)
+      .then((result) => {
+        sendApplicationResponse(JSON.stringify({
+          id: route.requestId,
+          result: desktopRuntimeResultForResponse(result),
+        }));
+      })
+      .catch((error) => {
+        if (shouldFallbackToBridgeRuntime(error) && typeof sendRuntimeFallback === "function") {
+          sendRuntimeFallback(rawMessage);
+          return;
+        }
+
+        console.warn(`${logPrefix} desktop runtime request failed for ${route.threadId}: ${error.message}`);
+        sendApplicationResponse(JSON.stringify({
+          id: route.requestId,
+          error: {
+            code: -32000,
+            message: "Could not send this request to Codex on the Mac.",
           },
         }));
       });
@@ -498,6 +591,67 @@ function desktopFollowerPayloadForResponse(route, responseMessage) {
   };
 }
 
+function desktopFollowerPayloadForRuntimeRequest(route) {
+  const method = FOLLOWER_METHOD_BY_RUNTIME_METHOD.get(route.method);
+  if (!method) {
+    return null;
+  }
+
+  switch (route.method) {
+    case "turn/start":
+      return {
+        method,
+        params: {
+          conversationId: route.threadId,
+          turnStartParams: {
+            ...route.params,
+            threadId: route.threadId,
+          },
+        },
+      };
+    case "turn/steer":
+      return {
+        method,
+        params: {
+          conversationId: route.threadId,
+          input: route.params.input,
+          restoreMessage: route.params.restoreMessage ?? route.params.restore_message ?? null,
+          attachments: Array.isArray(route.params.attachments) ? route.params.attachments : [],
+        },
+      };
+    case "turn/interrupt":
+    case "thread/compact/start":
+      return {
+        method,
+        params: {
+          conversationId: route.threadId,
+        },
+      };
+    default:
+      return null;
+  }
+}
+
+function desktopRuntimeResultForResponse(result) {
+  if (result && typeof result === "object" && !Array.isArray(result)
+    && Object.prototype.hasOwnProperty.call(result, "result")) {
+    return result.result ?? null;
+  }
+
+  return result ?? { ok: true };
+}
+
+function shouldFallbackToBridgeRuntime(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return message.includes("no-client-found")
+    || message.includes("client-not-found")
+    || message.includes("client-cannot-handle-request")
+    || message.includes("desktop ipc is not connected")
+    || message.includes("enoent")
+    || message.includes("econnrefused")
+    || message.includes("not-connected");
+}
+
 function projectPendingDesktopActions(threadId, conversationState) {
   const requests = Array.isArray(conversationState?.requests) ? conversationState.requests : [];
   return requests
@@ -671,7 +825,9 @@ function safeParseJSON(value) {
 module.exports = {
   applyConversationStateChange,
   createDesktopIpcActionFollower,
+  desktopFollowerPayloadForRuntimeRequest,
   desktopFollowerPayloadForResponse,
+  desktopRuntimeResultForResponse,
   projectPendingDesktopActions,
   resolveDefaultIpcSocketPath,
   seedConversationStateFromThreadRead,

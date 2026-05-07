@@ -170,6 +170,137 @@ test("bridge forwards desktop IPC actions to the phone and routes replies back t
   assert.equal(resolvedMessage.params.threadId, "thread-ipc");
 });
 
+test("bridge forwards active phone turn starts to the Codex Desktop IPC owner", async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "remodex-bridge-ipc-turn-"));
+  const ipcSocketPath = path.join(tempDir, "ipc.sock");
+  const relayServer = new WebSocket.Server({ port: 0 });
+  const relayMessages = [];
+  const ipcFrames = [];
+  let relaySocket = null;
+  let ipcServerSocket = null;
+  let fakeCodex = null;
+
+  await new Promise((resolve) => relayServer.once("listening", resolve));
+  relayServer.on("connection", (socket) => {
+    relaySocket = socket;
+    socket.on("message", (data) => {
+      const parsed = safeParseJSON(data.toString("utf8"));
+      if (parsed) {
+        relayMessages.push(parsed);
+      }
+    });
+  });
+
+  const ipcServer = net.createServer((socket) => {
+    ipcServerSocket = socket;
+    attachFrameReader(socket, (frame) => {
+      ipcFrames.push(frame);
+      if (frame.method === "initialize") {
+        writeFrame(socket, {
+          type: "response",
+          requestId: frame.requestId,
+          resultType: "success",
+          method: "initialize",
+          handledByClientId: "desktop",
+          result: { clientId: "desktop-test" },
+        });
+      }
+      if (frame.method === "thread-follower-start-turn") {
+        writeFrame(socket, {
+          type: "response",
+          requestId: frame.requestId,
+          resultType: "success",
+          method: frame.method,
+          handledByClientId: "desktop-owner",
+          result: {
+            result: {
+              turn: {
+                id: "turn-desktop",
+                status: "inProgress",
+              },
+            },
+          },
+        });
+      }
+    });
+  });
+  await new Promise((resolve) => ipcServer.listen(ipcSocketPath, resolve));
+
+  const { startBridge } = loadBridgeWithTestDoubles({
+    createCodexTransportImpl() {
+      fakeCodex = createFakeCodexTransport();
+      return fakeCodex;
+    },
+  });
+
+  t.after(() => {
+    fakeCodex?.emitClose();
+    relaySocket?.close();
+    relayServer.close();
+    ipcServer.close();
+    ipcServerSocket?.destroy();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  startBridge({
+    printPairingQr: false,
+    config: {
+      relayUrl: `ws://127.0.0.1:${relayServer.address().port}`,
+      pushServiceUrl: "",
+      pushPreviewMaxChars: 160,
+      refreshEnabled: false,
+      refreshDebounceMs: 1,
+      keepMacAwakeEnabled: false,
+      codexEndpoint: "",
+      refreshCommand: "",
+      codexBundleId: "",
+      codexAppPath: "",
+      desktopIpcSocketPath: ipcSocketPath,
+    },
+  });
+
+  await waitFor(() => relaySocket && relaySocket.readyState === WebSocket.OPEN);
+  relaySocket.send(JSON.stringify({
+    id: "resume-from-phone",
+    method: "thread/resume",
+    params: { threadId: "thread-ipc-turn" },
+  }));
+
+  await waitFor(() => ipcServerSocket);
+  relaySocket.send(JSON.stringify({
+    id: "turn-start-from-phone",
+    method: "turn/start",
+    params: {
+      threadId: "thread-ipc-turn",
+      input: [{ type: "text", text: "hello desktop" }],
+    },
+  }));
+
+  const ipcStart = await waitForMessage(
+    ipcFrames,
+    (frame) => frame.method === "thread-follower-start-turn"
+  );
+  assert.deepEqual(ipcStart.params, {
+    conversationId: "thread-ipc-turn",
+    turnStartParams: {
+      threadId: "thread-ipc-turn",
+      input: [{ type: "text", text: "hello desktop" }],
+    },
+  });
+  assert.equal(fakeCodex.sent.some((message) => message.method === "turn/start"), false);
+
+  const startResponse = await waitForMessage(
+    relayMessages,
+    (message) => message.id === "turn-start-from-phone"
+  );
+  assert.deepEqual(startResponse.result, {
+    turn: {
+      id: "turn-desktop",
+      status: "inProgress",
+    },
+  });
+});
+
 // Loads bridge.js with plaintext test transports while leaving the production module untouched.
 function loadBridgeWithTestDoubles({ createCodexTransportImpl }) {
   const bridgePath = require.resolve("../src/bridge");

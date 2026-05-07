@@ -15,7 +15,9 @@ const { setTimeout: wait } = require("node:timers/promises");
 const {
   applyConversationStateChange,
   createDesktopIpcActionFollower,
+  desktopFollowerPayloadForRuntimeRequest,
   desktopFollowerPayloadForResponse,
+  desktopRuntimeResultForResponse,
   projectPendingDesktopActions,
   seedConversationStateFromThreadRead,
 } = require("../src/desktop-ipc-action-follower");
@@ -191,6 +193,67 @@ test("builds desktop follower reply payloads from iOS responses", () => {
   );
 });
 
+test("builds desktop follower runtime request payloads from iOS turn actions", () => {
+  assert.deepEqual(
+    desktopFollowerPayloadForRuntimeRequest({
+      requestId: "turn-start-1",
+      method: "turn/start",
+      threadId: "thread-1",
+      params: {
+        threadId: "thread-1",
+        input: [{ type: "text", text: "hello" }],
+        cwd: "/repo",
+      },
+    }),
+    {
+      method: "thread-follower-start-turn",
+      params: {
+        conversationId: "thread-1",
+        turnStartParams: {
+          threadId: "thread-1",
+          input: [{ type: "text", text: "hello" }],
+          cwd: "/repo",
+        },
+      },
+    }
+  );
+
+  assert.deepEqual(
+    desktopFollowerPayloadForRuntimeRequest({
+      requestId: "interrupt-1",
+      method: "turn/interrupt",
+      threadId: "thread-1",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+      },
+    }),
+    {
+      method: "thread-follower-interrupt-turn",
+      params: {
+        conversationId: "thread-1",
+      },
+    }
+  );
+
+  assert.deepEqual(
+    desktopRuntimeResultForResponse({
+      result: {
+        turn: {
+          id: "turn-1",
+          status: "inProgress",
+        },
+      },
+    }),
+    {
+      turn: {
+        id: "turn-1",
+        status: "inProgress",
+      },
+    }
+  );
+});
+
 test("rejects malformed or failed desktop action responses instead of defaulting to accept", () => {
   assert.equal(
     desktopFollowerPayloadForResponse({
@@ -227,6 +290,171 @@ test("rejects malformed or failed desktop action responses instead of defaulting
     }),
     null
   );
+});
+
+test("desktop IPC follower forwards active iOS turn/start requests to the desktop owner", async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "remodex-ipc-turn-start-"));
+  const socketPath = path.join(tempDir, "ipc.sock");
+  const serverFrames = [];
+  let serverSocket = null;
+
+  const server = net.createServer((socket) => {
+    serverSocket = socket;
+    attachFrameReader(socket, (frame) => {
+      serverFrames.push(frame);
+      if (frame.method === "initialize") {
+        writeFrame(socket, {
+          type: "response",
+          requestId: frame.requestId,
+          resultType: "success",
+          method: "initialize",
+          handledByClientId: "desktop",
+          result: { clientId: "remodex-test" },
+        });
+      } else if (frame.method === "thread-follower-start-turn") {
+        writeFrame(socket, {
+          type: "response",
+          requestId: frame.requestId,
+          resultType: "success",
+          method: frame.method,
+          handledByClientId: "desktop-owner",
+          result: {
+            result: {
+              turn: {
+                id: "turn-from-desktop",
+                status: "inProgress",
+              },
+            },
+          },
+        });
+      }
+    });
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  t.after(() => {
+    server.close();
+    serverSocket?.destroy();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  const outbound = [];
+  const fallback = [];
+  const follower = createDesktopIpcActionFollower({
+    socketPath,
+    sendApplicationResponse(message) {
+      outbound.push(JSON.parse(message));
+    },
+    sendRuntimeFallback(message) {
+      fallback.push(JSON.parse(message));
+    },
+    requestTimeoutMs: 500,
+  });
+  t.after(() => follower.stopAll());
+
+  follower.observeInbound(JSON.stringify({
+    method: "thread/resume",
+    params: { threadId: "thread-live" },
+  }));
+  await waitFor(() => serverSocket);
+
+  assert.equal(follower.observeInbound(JSON.stringify({
+    id: "turn-start-1",
+    method: "turn/start",
+    params: {
+      threadId: "thread-live",
+      input: [{ type: "text", text: "hello" }],
+    },
+  })), true);
+
+  const ipcStart = await waitForMessage(
+    serverFrames,
+    (frame) => frame.method === "thread-follower-start-turn"
+  );
+  assert.deepEqual(ipcStart.params, {
+    conversationId: "thread-live",
+    turnStartParams: {
+      threadId: "thread-live",
+      input: [{ type: "text", text: "hello" }],
+    },
+  });
+
+  await waitFor(() => outbound.some((message) => message.id === "turn-start-1"));
+  assert.deepEqual(outbound.find((message) => message.id === "turn-start-1"), {
+    id: "turn-start-1",
+    result: {
+      turn: {
+        id: "turn-from-desktop",
+        status: "inProgress",
+      },
+    },
+  });
+  assert.deepEqual(fallback, []);
+});
+
+test("desktop IPC follower falls back to bridge runtime when no desktop owner can handle a turn", async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "remodex-ipc-turn-fallback-"));
+  const socketPath = path.join(tempDir, "ipc.sock");
+  let serverSocket = null;
+
+  const server = net.createServer((socket) => {
+    serverSocket = socket;
+    attachFrameReader(socket, (frame) => {
+      if (frame.method === "initialize") {
+        writeFrame(socket, {
+          type: "response",
+          requestId: frame.requestId,
+          resultType: "success",
+          method: "initialize",
+          handledByClientId: "desktop",
+          result: { clientId: "remodex-test" },
+        });
+      } else if (frame.method === "thread-follower-start-turn") {
+        writeFrame(socket, {
+          type: "response",
+          requestId: frame.requestId,
+          resultType: "error",
+          method: frame.method,
+          error: "no-client-found",
+        });
+      }
+    });
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  t.after(() => {
+    server.close();
+    serverSocket?.destroy();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  const fallback = [];
+  const follower = createDesktopIpcActionFollower({
+    socketPath,
+    sendApplicationResponse() {},
+    sendRuntimeFallback(message) {
+      fallback.push(JSON.parse(message));
+    },
+    requestTimeoutMs: 500,
+  });
+  t.after(() => follower.stopAll());
+
+  follower.observeInbound(JSON.stringify({
+    method: "thread/resume",
+    params: { threadId: "thread-fallback" },
+  }));
+  await waitFor(() => serverSocket);
+
+  assert.equal(follower.observeInbound(JSON.stringify({
+    id: "turn-start-fallback",
+    method: "turn/start",
+    params: {
+      threadId: "thread-fallback",
+      input: [{ type: "text", text: "hello" }],
+    },
+  })), true);
+
+  await waitFor(() => fallback.length === 1);
+  assert.equal(fallback[0].id, "turn-start-fallback");
+  assert.equal(fallback[0].method, "turn/start");
 });
 
 test("applies desktop IPC snapshots and Immer-style request patches", () => {
@@ -872,4 +1100,9 @@ async function waitFor(predicate, timeoutMs = 500) {
     }
     await wait(5);
   }
+}
+
+async function waitForMessage(messages, predicate, timeoutMs = 500) {
+  await waitFor(() => messages.find(predicate), timeoutMs);
+  return messages.find(predicate);
 }
