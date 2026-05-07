@@ -62,6 +62,24 @@ test("readBridgeConfig keeps safe defaults and explicit overrides", () => {
       },
     },
   });
+  const persistedRefreshConfig = readBridgeConfig({
+    env: {
+      REMODEX_DEVICE_STATE_DIR: "/tmp/remodex-refresh-state",
+    },
+    platform: "darwin",
+    runtimeRoot: "/tmp/remodex-package",
+    fsImpl: {
+      existsSync(targetPath) {
+        return targetPath === "/tmp/remodex-refresh-state/daemon-config.json";
+      },
+      readFileSync(targetPath) {
+        if (targetPath === "/tmp/remodex-refresh-state/daemon-config.json") {
+          return JSON.stringify({ refreshEnabled: true });
+        }
+        throw new Error("unexpected read");
+      },
+    },
+  });
   const macEndpointConfig = readBridgeConfig({
     env: { REMODEX_CODEX_ENDPOINT: "ws://localhost:8080" },
     platform: "darwin",
@@ -159,6 +177,7 @@ test("readBridgeConfig keeps safe defaults and explicit overrides", () => {
   assert.equal(macConfig.relayUrl, "");
   assert.equal(macConfig.pushServiceUrl, "");
   assert.equal(persistedKeepAwakeConfig.keepMacAwakeEnabled, false);
+  assert.equal(persistedRefreshConfig.refreshEnabled, true);
   assert.equal(macEndpointConfig.sharedRuntimeEnabled, false);
   assert.equal(macEndpointConfig.desktopSharedRuntimeEnabled, false);
   assert.equal(macEndpointConfig.refreshEnabled, false);
@@ -358,6 +377,35 @@ test("thread/started cancels the fallback and waits for completion before refres
 
   refresher.handleTransportReset();
   assert.equal(stopCount, 1);
+});
+
+test("pending approval requests refresh the current desktop thread before completion", async () => {
+  const refreshCalls = [];
+  const refresher = new CodexDesktopRefresher({
+    enabled: true,
+    debounceMs: 0,
+    refreshExecutor: async (targetUrl, options) => {
+      refreshCalls.push({ targetUrl, forceRelaunch: Boolean(options?.forceRelaunch) });
+    },
+  });
+
+  refresher.handleOutbound(JSON.stringify({
+    id: "approval-1",
+    method: "item/commandExecution/requestApproval",
+    params: {
+      threadId: "thread-approval",
+      command: ["/bin/zsh", "-lc", "date"],
+    },
+  }));
+
+  await waitFor(() => refreshCalls.length === 1);
+
+  assert.deepEqual(refreshCalls, [{
+    targetUrl: "codex://threads/thread-approval",
+    forceRelaunch: false,
+  }]);
+
+  refresher.handleTransportReset();
 });
 
 test("rollout growth does not refresh during long runs", async () => {

@@ -23,6 +23,12 @@ const DEFAULT_APP_BOOT_WAIT_MS = 1_200;
 const DESKTOP_REFRESH_TIMEOUT_MS = 20_000;
 const REFRESH_SCRIPT_PATH = path.join(__dirname, "scripts", "codex-refresh.applescript");
 const NEW_THREAD_DEEP_LINK = "codex://threads/new";
+const PENDING_ACTION_METHODS = new Set([
+  "item/commandExecution/requestApproval",
+  "item/fileChange/requestApproval",
+  "item/fileRead/requestApproval",
+  "item/tool/requestUserInput",
+]);
 
 class CodexDesktopRefresher {
   constructor({
@@ -134,6 +140,14 @@ class CodexDesktopRefresher {
     }
 
     const method = parsed.method;
+    if (PENDING_ACTION_METHODS.has(method)) {
+      const target = resolveOutboundTarget(method, parsed);
+      if (target?.threadId) {
+        this.queueRefresh("pending_action", target, `codex ${method}`);
+      }
+      return;
+    }
+
     if (method === "turn/completed") {
       this.clearFallbackTimer();
       const turnId = extractTurnId(parsed);
@@ -575,6 +589,9 @@ function readBridgeConfig({
   );
   const explicitRefreshEnabled = readOptionalBooleanEnv(["REMODEX_REFRESH_ENABLED"], env);
   const explicitKeepMacAwakeEnabled = readOptionalBooleanEnv(["REMODEX_KEEP_MAC_AWAKE"], env);
+  const persistedRefreshEnabled = typeof daemonConfig.refreshEnabled === "boolean"
+    ? daemonConfig.refreshEnabled
+    : null;
   const persistedKeepMacAwakeEnabled = typeof daemonConfig.keepMacAwakeEnabled === "boolean"
     ? daemonConfig.keepMacAwakeEnabled
     : null;
@@ -593,7 +610,7 @@ function readBridgeConfig({
       160
     ),
     refreshEnabled: explicitRefreshEnabled == null
-      ? defaultRefreshEnabled
+      ? (persistedRefreshEnabled == null ? defaultRefreshEnabled : persistedRefreshEnabled)
       : explicitRefreshEnabled,
     refreshDebounceMs: parseIntegerEnv(
       readFirstDefinedEnv(["REMODEX_REFRESH_DEBOUNCE_MS"], String(DEFAULT_DEBOUNCE_MS), env),
