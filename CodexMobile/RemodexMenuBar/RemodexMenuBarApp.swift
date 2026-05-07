@@ -6,6 +6,10 @@
 
 import SwiftUI
 
+enum RemodexWindowID {
+    static let controlCenter = "remodex-control-center"
+}
+
 @main
 struct RemodexMenuBarApp: App {
     @StateObject private var store = BridgeMenuBarStore()
@@ -16,10 +20,14 @@ struct RemodexMenuBarApp: App {
         } label: {
             BridgeMenuBarLabel(
                 snapshot: store.snapshot,
-                updateState: store.updateState,
                 isBusy: store.isRefreshing || store.isPerformingAction
             )
         }
         .menuBarExtraStyle(.window)
+
+        WindowGroup("Remodex", id: RemodexWindowID.controlCenter) {
+            BridgeControlCenterWindow(store: store)
+        }
+        .defaultSize(width: 720, height: 640)
     }
 }

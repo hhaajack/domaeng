@@ -61,7 +61,7 @@ test("projects desktop pending user input as an app-server request shape", () =>
   }]);
 });
 
-test("projects command and file approvals while ignoring completed or unsupported requests", () => {
+test("projects command, file, and permission approvals while ignoring completed requests", () => {
   const actions = projectPendingDesktopActions("thread-2", {
     requests: [
       {
@@ -108,7 +108,17 @@ test("projects command and file approvals while ignoring completed or unsupporte
       {
         id: "req-permissions",
         method: "item/permissions/requestApproval",
-        params: {},
+        params: {
+          threadId: "thread-2",
+          turnId: "turn-2",
+          reason: "Need broader workspace access",
+          permissions: {
+            fileSystem: {
+              paths: ["/repo"],
+              access: "readWrite",
+            },
+          },
+        },
       },
     ],
   });
@@ -119,11 +129,18 @@ test("projects command and file approvals while ignoring completed or unsupporte
       ["req-command", "item/commandExecution/requestApproval", "thread-2"],
       ["req-file", "item/fileChange/requestApproval", "thread-2"],
       ["req-file-read", "item/fileRead/requestApproval", "thread-2"],
+      ["req-permissions", "item/permissions/requestApproval", "thread-2"],
     ]
   );
   assert.equal(actions[0].params.command, "git status");
   assert.equal(actions[1].params.grantRoot, "/repo");
   assert.equal(actions[2].params.path, "/repo/secrets.txt");
+  assert.deepEqual(actions[3].params.permissions, {
+    fileSystem: {
+      paths: ["/repo"],
+      access: "readWrite",
+    },
+  });
 });
 
 test("builds desktop follower reply payloads from iOS responses", () => {
@@ -188,6 +205,41 @@ test("builds desktop follower reply payloads from iOS responses", () => {
         conversationId: "thread-1",
         requestId: "req-file-read",
         decision: "accept",
+      },
+    }
+  );
+
+  assert.deepEqual(
+    desktopFollowerPayloadForResponse({
+      requestId: "req-permissions",
+      method: "item/permissions/requestApproval",
+      threadId: "thread-1",
+    }, {
+      id: "req-permissions",
+      result: {
+        permissions: {
+          network: {
+            enabled: true,
+          },
+        },
+        scope: "session",
+        strictAutoReview: true,
+      },
+    }),
+    {
+      method: "thread-follower-permissions-request-approval-response",
+      params: {
+        conversationId: "thread-1",
+        requestId: "req-permissions",
+        response: {
+          permissions: {
+            network: {
+              enabled: true,
+            },
+          },
+          scope: "session",
+          strictAutoReview: true,
+        },
       },
     }
   );

@@ -31,6 +31,8 @@ export interface SecureClientHello {
   handshakeMode: SecureHandshakeMode;
   phoneDeviceId: string;
   phoneIdentityPublicKey: string;
+  deviceDisplayName?: string;
+  deviceKind?: string;
   phoneEphemeralPublicKey: string;
   clientNonce: string;
 }
@@ -191,7 +193,9 @@ export function createPhoneIdentity(): PhoneIdentityState {
   return {
     phoneDeviceId: `web-${randomUUID()}`,
     phoneIdentityPrivateKey: bytesToBase64(privateKey),
-    phoneIdentityPublicKey: bytesToBase64(publicKey)
+    phoneIdentityPublicKey: bytesToBase64(publicKey),
+    deviceDisplayName: browserDeviceDisplayName(),
+    deviceKind: "web"
   };
 }
 
@@ -213,6 +217,8 @@ export function createClientHello({
     handshakeMode: mode,
     phoneDeviceId: phoneIdentity.phoneDeviceId,
     phoneIdentityPublicKey: phoneIdentity.phoneIdentityPublicKey,
+    deviceDisplayName: phoneIdentity.deviceDisplayName || browserDeviceDisplayName(),
+    deviceKind: phoneIdentity.deviceKind || "web",
     phoneEphemeralPublicKey: bytesToBase64(x25519.getPublicKey(phoneEphemeralPrivateKey)),
     clientNonce: bytesToBase64(clientNonce)
   };
@@ -421,6 +427,29 @@ export async function signTrustedSessionResolve({
     timestamp,
     signature: bytesToBase64(signature)
   };
+}
+
+function browserDeviceDisplayName(): string {
+  const nav = globalThis.navigator as (Navigator & { userAgentData?: { platform?: string } }) | undefined;
+  const browser = browserName(nav?.userAgent || "");
+  const platform = nav?.userAgentData?.platform || nav?.platform || "";
+  return [browser, platform].filter(Boolean).join(" on ") || "Web Browser";
+}
+
+function browserName(userAgent: string): string {
+  if (userAgent.includes("Edg/")) {
+    return "Edge";
+  }
+  if (userAgent.includes("Chrome/") || userAgent.includes("CriOS/")) {
+    return "Chrome";
+  }
+  if (userAgent.includes("Firefox/") || userAgent.includes("FxiOS/")) {
+    return "Firefox";
+  }
+  if (userAgent.includes("Safari/")) {
+    return "Safari";
+  }
+  return "Web Browser";
 }
 
 export function nonceForDirection(sender: "mac" | "iphone", counter: number): Uint8Array {

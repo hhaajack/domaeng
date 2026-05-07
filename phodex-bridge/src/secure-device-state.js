@@ -1,13 +1,13 @@
 // FILE: secure-device-state.js
 // Purpose: Persists canonical bridge identity, trusted-phone state, and last seen iPhone app version for local QR pairing.
 // Layer: CLI helper
-// Exports: loadOrCreateBridgeDeviceState, readBridgeDeviceState, resetBridgeDeviceState, rememberTrustedPhone, rememberLastSeenPhoneAppVersion, getTrustedPhonePublicKey, resolveBridgeRelaySession
+// Exports: local bridge identity, trusted-device state, and safe trusted-device management helpers
 // Depends on: fs, os, path, crypto, child_process
 
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { randomUUID, generateKeyPairSync } = require("crypto");
+const { createHash, randomUUID, generateKeyPairSync } = require("crypto");
 const { execFileSync } = require("child_process");
 
 const DEFAULT_STORE_DIR = path.join(os.homedir(), ".remodex");
@@ -86,19 +86,47 @@ function resolveBridgeRelaySession(state, { persist = true } = {}) {
   };
 }
 
-// Persists the trusted iPhone identity so reconnects can be authenticated during the current pairing flow.
-function rememberTrustedPhone(state, phoneDeviceId, phoneIdentityPublicKey, { persist = true } = {}) {
+// Persists a trusted phone identity so reconnects can be authenticated by device.
+function rememberTrustedPhone(
+  state,
+  phoneDeviceId,
+  phoneIdentityPublicKey,
+  {
+    persist = true,
+    displayName = "",
+    deviceKind = "",
+    now = new Date(),
+  } = {}
+) {
   const normalizedDeviceId = normalizeNonEmptyString(phoneDeviceId);
   const normalizedPublicKey = normalizeNonEmptyString(phoneIdentityPublicKey);
   if (!normalizedDeviceId || !normalizedPublicKey) {
     return state;
   }
 
-  // Remodex supports one trusted iPhone per Mac, so a new trust record replaces old ones.
+  const currentState = normalizeBridgeDeviceState(state);
+  const existingMetadata = currentState.trustedPhoneMetadata?.[normalizedDeviceId] || {};
+  const trustedAt = normalizeDateString(existingMetadata.trustedAt) || dateToISOString(now);
+  const normalizedDisplayName = normalizeDisplayName(displayName) || existingMetadata.displayName || "";
+  const normalizedDeviceKind = normalizeDeviceKind(deviceKind) || existingMetadata.deviceKind || inferTrustedDeviceKind(normalizedDeviceId);
+
+  // Multiple browser/mobile installs may trust the same Mac; a new device must
+  // not invalidate an older device's reconnect credential.
   const nextState = normalizeBridgeDeviceState({
-    ...state,
+    ...currentState,
     trustedPhones: {
+      ...(currentState.trustedPhones || {}),
       [normalizedDeviceId]: normalizedPublicKey,
+    },
+    trustedPhoneMetadata: {
+      ...(currentState.trustedPhoneMetadata || {}),
+      [normalizedDeviceId]: {
+        displayName: normalizedDisplayName,
+        deviceKind: normalizedDeviceKind,
+        trustedAt,
+        lastSeenAt: dateToISOString(now),
+        disabledAt: null,
+      },
     },
   });
   if (persist) {
@@ -124,11 +152,117 @@ function rememberLastSeenPhoneAppVersion(state, phoneAppVersion, { persist = tru
 }
 
 function getTrustedPhonePublicKey(state, phoneDeviceId) {
+  const normalizedState = normalizeBridgeDeviceState(state);
   const normalizedDeviceId = normalizeNonEmptyString(phoneDeviceId);
   if (!normalizedDeviceId) {
     return null;
   }
-  return state.trustedPhones?.[normalizedDeviceId] || null;
+  if (isTrustedPhoneDisabled(normalizedState, normalizedDeviceId)) {
+    return null;
+  }
+  return normalizedState.trustedPhones?.[normalizedDeviceId] || null;
+}
+
+function getEnabledTrustedPhones(state) {
+  const allTrustedPhones = normalizeTrustedPhonesMap(state?.trustedPhones);
+  const trustedPhoneMetadata = normalizeTrustedPhoneMetadata(state?.trustedPhoneMetadata, allTrustedPhones);
+  const enabledTrustedPhones = {};
+  for (const [deviceId, publicKey] of Object.entries(allTrustedPhones || {})) {
+    if (isTrustedPhoneDisabled({ trustedPhoneMetadata }, deviceId)) {
+      continue;
+    }
+    enabledTrustedPhones[deviceId] = publicKey;
+  }
+  return enabledTrustedPhones;
+}
+
+function readTrustedDevicesSnapshot() {
+  const state = readBridgeDeviceState();
+  return listTrustedDevices(state);
+}
+
+function listTrustedDevices(state) {
+  if (!state) {
+    return [];
+  }
+  const normalizedState = normalizeBridgeDeviceState(state);
+  return Object.entries(normalizedState.trustedPhones || {})
+    .map(([deviceId, publicKey]) => trustedDeviceSnapshot(normalizedState, deviceId, publicKey))
+    .sort(compareTrustedDeviceSnapshots);
+}
+
+function setTrustedDeviceEnabled(deviceRecordId, enabled, { now = new Date() } = {}) {
+  const state = loadOrCreateBridgeDeviceState();
+  const match = findTrustedDeviceByRecordId(state, deviceRecordId);
+  if (!match) {
+    throw trustedDeviceNotFoundError(deviceRecordId);
+  }
+
+  const existingMetadata = state.trustedPhoneMetadata?.[match.deviceId] || {};
+  const nextState = normalizeBridgeDeviceState({
+    ...state,
+    trustedPhoneMetadata: {
+      ...(state.trustedPhoneMetadata || {}),
+      [match.deviceId]: {
+        ...existingMetadata,
+        disabledAt: enabled ? null : dateToISOString(now),
+      },
+    },
+  });
+  writeBridgeDeviceState(nextState);
+  return {
+    trustedDevice: trustedDeviceSnapshot(nextState, match.deviceId, match.publicKey),
+    trustedDevices: listTrustedDevices(nextState),
+  };
+}
+
+function revokeTrustedDevice(deviceRecordId) {
+  const state = loadOrCreateBridgeDeviceState();
+  const match = findTrustedDeviceByRecordId(state, deviceRecordId);
+  if (!match) {
+    throw trustedDeviceNotFoundError(deviceRecordId);
+  }
+
+  const trustedPhones = { ...(state.trustedPhones || {}) };
+  const trustedPhoneMetadata = { ...(state.trustedPhoneMetadata || {}) };
+  delete trustedPhones[match.deviceId];
+  delete trustedPhoneMetadata[match.deviceId];
+
+  const nextState = normalizeBridgeDeviceState({
+    ...state,
+    trustedPhones,
+    trustedPhoneMetadata,
+  });
+  writeBridgeDeviceState(nextState);
+  return {
+    trustedDevice: trustedDeviceSnapshot(state, match.deviceId, match.publicKey),
+    trustedDevices: listTrustedDevices(nextState),
+  };
+}
+
+function renameTrustedDevice(deviceRecordId, displayName) {
+  const state = loadOrCreateBridgeDeviceState();
+  const match = findTrustedDeviceByRecordId(state, deviceRecordId);
+  if (!match) {
+    throw trustedDeviceNotFoundError(deviceRecordId);
+  }
+
+  const existingMetadata = state.trustedPhoneMetadata?.[match.deviceId] || {};
+  const nextState = normalizeBridgeDeviceState({
+    ...state,
+    trustedPhoneMetadata: {
+      ...(state.trustedPhoneMetadata || {}),
+      [match.deviceId]: {
+        ...existingMetadata,
+        displayName: normalizeDisplayName(displayName),
+      },
+    },
+  });
+  writeBridgeDeviceState(nextState);
+  return {
+    trustedDevice: trustedDeviceSnapshot(nextState, match.deviceId, match.publicKey),
+    trustedDevices: listTrustedDevices(nextState),
+  };
 }
 
 function hasTrustedPhones(state) {
@@ -146,6 +280,7 @@ function createBridgeDeviceState() {
     macIdentityPublicKey: base64UrlToBase64(publicJwk.x),
     macIdentityPrivateKey: base64UrlToBase64(privateJwk.d),
     trustedPhones: {},
+    trustedPhoneMetadata: {},
     lastSeenPhoneAppVersion: null,
   };
 }
@@ -360,9 +495,27 @@ function normalizeBridgeDeviceState(rawState) {
     throw new Error("Bridge device state is incomplete");
   }
 
+  const trustedPhones = normalizeTrustedPhonesMap(rawState?.trustedPhones);
+  const trustedPhoneMetadata = normalizeTrustedPhoneMetadata(
+    rawState?.trustedPhoneMetadata,
+    trustedPhones
+  );
+
+  return {
+    version: 1,
+    macDeviceId,
+    macIdentityPublicKey,
+    macIdentityPrivateKey,
+    trustedPhones,
+    trustedPhoneMetadata,
+    lastSeenPhoneAppVersion,
+  };
+}
+
+function normalizeTrustedPhonesMap(rawTrustedPhones) {
   const trustedPhones = {};
-  if (rawState?.trustedPhones && typeof rawState.trustedPhones === "object") {
-    for (const [deviceId, publicKey] of Object.entries(rawState.trustedPhones)) {
+  if (rawTrustedPhones && typeof rawTrustedPhones === "object" && !Array.isArray(rawTrustedPhones)) {
+    for (const [deviceId, publicKey] of Object.entries(rawTrustedPhones)) {
       const normalizedDeviceId = normalizeNonEmptyString(deviceId);
       const normalizedPublicKey = normalizeNonEmptyString(publicKey);
       if (!normalizedDeviceId || !normalizedPublicKey) {
@@ -371,15 +524,108 @@ function normalizeBridgeDeviceState(rawState) {
       trustedPhones[normalizedDeviceId] = normalizedPublicKey;
     }
   }
+  return trustedPhones;
+}
+
+function normalizeTrustedPhoneMetadata(rawMetadata, trustedPhones) {
+  const normalized = {};
+  const source = rawMetadata && typeof rawMetadata === "object" && !Array.isArray(rawMetadata)
+    ? rawMetadata
+    : {};
+  for (const deviceId of Object.keys(trustedPhones || {})) {
+    const rawRecord = source[deviceId] && typeof source[deviceId] === "object" ? source[deviceId] : {};
+    normalized[deviceId] = {
+      displayName: normalizeDisplayName(rawRecord.displayName),
+      deviceKind: normalizeDeviceKind(rawRecord.deviceKind) || inferTrustedDeviceKind(deviceId),
+      trustedAt: normalizeDateString(rawRecord.trustedAt),
+      lastSeenAt: normalizeDateString(rawRecord.lastSeenAt),
+      disabledAt: normalizeDateString(rawRecord.disabledAt),
+    };
+  }
+  return normalized;
+}
+
+function trustedDeviceSnapshot(state, deviceId, publicKey) {
+  const normalizedState = normalizeBridgeDeviceState(state);
+  const metadata = normalizedState.trustedPhoneMetadata?.[deviceId] || {};
+  const fingerprint = fingerprintForPublicKey(publicKey);
+  const displayName = normalizeDisplayName(metadata.displayName)
+    || defaultTrustedDeviceDisplayName(metadata.deviceKind, fingerprint);
+  const disabledAt = normalizeDateString(metadata.disabledAt);
 
   return {
-    version: 1,
-    macDeviceId,
-    macIdentityPublicKey,
-    macIdentityPrivateKey,
-    trustedPhones,
-    lastSeenPhoneAppVersion,
+    id: trustedDeviceRecordId(deviceId, publicKey),
+    displayName,
+    kind: normalizeDeviceKind(metadata.deviceKind) || inferTrustedDeviceKind(deviceId),
+    fingerprint,
+    trustedAt: normalizeDateString(metadata.trustedAt) || null,
+    lastSeenAt: normalizeDateString(metadata.lastSeenAt) || null,
+    disabledAt: disabledAt || null,
+    status: disabledAt ? "disabled" : "enabled",
   };
+}
+
+function compareTrustedDeviceSnapshots(left, right) {
+  const leftTime = Date.parse(left.lastSeenAt || left.trustedAt || "") || 0;
+  const rightTime = Date.parse(right.lastSeenAt || right.trustedAt || "") || 0;
+  if (leftTime !== rightTime) {
+    return rightTime - leftTime;
+  }
+  return left.displayName.localeCompare(right.displayName);
+}
+
+function findTrustedDeviceByRecordId(state, deviceRecordId) {
+  const normalizedRecordId = normalizeNonEmptyString(deviceRecordId);
+  if (!normalizedRecordId) {
+    return null;
+  }
+  const normalizedState = normalizeBridgeDeviceState(state);
+  for (const [deviceId, publicKey] of Object.entries(normalizedState.trustedPhones || {})) {
+    if (trustedDeviceRecordId(deviceId, publicKey) === normalizedRecordId) {
+      return { deviceId, publicKey };
+    }
+  }
+  return null;
+}
+
+function trustedDeviceRecordId(deviceId, publicKey) {
+  return `dev_${createHash("sha256")
+    .update(`${deviceId}\0${publicKey}`)
+    .digest("hex")
+    .slice(0, 12)}`;
+}
+
+function fingerprintForPublicKey(publicKey) {
+  const normalizedPublicKey = normalizeNonEmptyString(publicKey);
+  const bytes = Buffer.from(normalizedPublicKey, "base64");
+  const digestInput = bytes.length > 0 ? bytes : Buffer.from(normalizedPublicKey, "utf8");
+  const digest = createHash("sha256").update(digestInput).digest("hex").slice(0, 8).toUpperCase();
+  return digest.replace(/^(.{4})(.{4})$/, "$1 $2");
+}
+
+function defaultTrustedDeviceDisplayName(deviceKind, fingerprint) {
+  switch (normalizeDeviceKind(deviceKind)) {
+  case "web":
+    return `Web Device ${fingerprint}`;
+  case "ios":
+    return `iPhone ${fingerprint}`;
+  case "android":
+    return `Android Device ${fingerprint}`;
+  default:
+    return `Device ${fingerprint}`;
+  }
+}
+
+function inferTrustedDeviceKind(deviceId) {
+  const normalizedDeviceId = normalizeNonEmptyString(deviceId).toLowerCase();
+  if (normalizedDeviceId.startsWith("web-")) {
+    return "web";
+  }
+  return "ios";
+}
+
+function isTrustedPhoneDisabled(state, deviceId) {
+  return Boolean(normalizeDateString(state?.trustedPhoneMetadata?.[deviceId]?.disabledAt));
 }
 
 function bridgeStatesEqual(left, right) {
@@ -391,6 +637,39 @@ function normalizeNonEmptyString(value) {
     return "";
   }
   return value.trim();
+}
+
+function normalizeDisplayName(value) {
+  const trimmed = normalizeNonEmptyString(value).replace(/\s+/g, " ");
+  return trimmed.slice(0, 80);
+}
+
+function normalizeDeviceKind(value) {
+  const normalized = normalizeNonEmptyString(value).toLowerCase();
+  if (normalized === "ios" || normalized === "web" || normalized === "android") {
+    return normalized;
+  }
+  return normalized ? "unknown" : "";
+}
+
+function normalizeDateString(value) {
+  const normalized = normalizeNonEmptyString(value);
+  if (!normalized) {
+    return null;
+  }
+  const timestamp = Date.parse(normalized);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+}
+
+function dateToISOString(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : new Date().toISOString();
+}
+
+function trustedDeviceNotFoundError(deviceRecordId) {
+  const error = new Error(`Trusted device not found: ${normalizeNonEmptyString(deviceRecordId) || "unknown"}`);
+  error.code = "trusted_device_not_found";
+  return error;
 }
 
 function corruptedStateError(source, error) {
@@ -420,11 +699,17 @@ function base64UrlToBase64(value) {
 }
 
 module.exports = {
+  getEnabledTrustedPhones,
   getTrustedPhonePublicKey,
   loadOrCreateBridgeDeviceState,
+  listTrustedDevices,
   readBridgeDeviceState,
+  readTrustedDevicesSnapshot,
   rememberLastSeenPhoneAppVersion,
   rememberTrustedPhone,
+  renameTrustedDevice,
+  revokeTrustedDevice,
   resetBridgeDeviceState,
   resolveBridgeRelaySession,
+  setTrustedDeviceEnabled,
 };

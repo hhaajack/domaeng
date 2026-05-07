@@ -7,6 +7,7 @@
 import CryptoKit
 import Foundation
 import Security
+import UIKit
 
 extension CodexService {
     // Completes the secure handshake before any JSON-RPC traffic is sent over the relay.
@@ -47,6 +48,8 @@ extension CodexService {
             handshakeMode: handshakeMode,
             phoneDeviceId: phoneIdentityState.phoneDeviceId,
             phoneIdentityPublicKey: phoneIdentityState.phoneIdentityPublicKey,
+            deviceDisplayName: currentSecureDeviceDisplayName(),
+            deviceKind: "ios",
             phoneEphemeralPublicKey: phoneEphemeralPrivateKey.publicKey.rawRepresentation.base64EncodedString(),
             clientNonce: clientNonce.base64EncodedString()
         )
@@ -490,7 +493,7 @@ private extension CodexService {
         bridgeUpdatePrompt = CodexBridgeUpdatePrompt(
             title: "Update the Remodex package on your computer",
             message: message,
-            command: "npm install -g remodex@latest"
+            command: RemodexBridgeCompatibility.adaptedBridgePackageInstallCommand
         )
     }
 
@@ -1001,6 +1004,14 @@ private extension CodexService {
             SecRandomCopyBytes(kSecRandomDefault, buffer.count, buffer.baseAddress!)
         }
         return data
+    }
+
+    func currentSecureDeviceDisplayName() -> String {
+        let deviceName = UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !deviceName.isEmpty else {
+            return "iPhone"
+        }
+        return String(deviceName.prefix(80))
     }
 
     func debugSecureLog(_ message: String) {

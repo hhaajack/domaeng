@@ -28,7 +28,6 @@ enum BridgeMenuBarActionError: LocalizedError {
 @MainActor
 final class BridgeMenuBarStore: ObservableObject {
     @Published var snapshot: BridgeSnapshot?
-    @Published var updateState = BridgePackageUpdateState.empty
     @Published var cliAvailability: BridgeCLIAvailability = .checking
     @Published var relayOverride: String
     @Published var isRefreshing = false
@@ -39,6 +38,8 @@ final class BridgeMenuBarStore: ObservableObject {
     private static let relayOverrideKey = "remodex.menuBar.relayOverride"
     private let service: BridgeControlService
     private var refreshLoopTask: Task<Void, Never>?
+
+    let supportedBridgeVersion = BridgeClientCompatibility.supportedBridgeVersion
 
     init(service: BridgeControlService? = nil) {
         self.service = service ?? BridgeControlService()
@@ -54,7 +55,7 @@ final class BridgeMenuBarStore: ObservableObject {
         refreshLoopTask?.cancel()
     }
 
-    // Refreshes the bridge snapshot plus npm update metadata so the menu bar is the new control surface.
+    // Refreshes the bridge snapshot so the menu bar stays aligned with the local control plane.
     func refresh(showSpinner: Bool = false) async {
         do {
             _ = try await performRefresh(
@@ -67,18 +68,31 @@ final class BridgeMenuBarStore: ObservableObject {
     }
 
     func saveRelayOverride(_ value: String) {
-        relayOverride = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        UserDefaults.standard.set(relayOverride, forKey: Self.relayOverrideKey)
-        Task {
-            await self.refresh(showSpinner: true)
-        }
+        applyRelayOverride(value, successMessage: "Relay updated.")
+    }
+
+    func useRelay(_ value: String) {
+        applyRelayOverride(value, successMessage: "Relay switched.")
     }
 
     func clearRelayOverride() {
-        relayOverride = ""
-        UserDefaults.standard.removeObject(forKey: Self.relayOverrideKey)
-        Task {
-            await self.refresh(showSpinner: true)
+        applyRelayOverride("", successMessage: "Default relay restored.")
+    }
+
+    private func applyRelayOverride(_ value: String, successMessage: String) {
+        let normalizedRelay = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let expectedRelay = normalizedRelay.isEmpty ? nil : normalizedRelay
+        let previousPairingDate = snapshot?.pairingSession?.createdDate
+        runAction(successMessage: successMessage) {
+            try await self.requireCLIAvailability()
+            self.relayOverride = normalizedRelay
+            if normalizedRelay.isEmpty {
+                UserDefaults.standard.removeObject(forKey: Self.relayOverrideKey)
+            } else {
+                UserDefaults.standard.set(normalizedRelay, forKey: Self.relayOverrideKey)
+            }
+            try await self.service.startBridge(relayOverride: self.effectiveRelayOverride)
+            try await self.waitForFreshPairing(after: previousPairingDate, expectedRelayURL: expectedRelay)
         }
     }
 
@@ -87,7 +101,7 @@ final class BridgeMenuBarStore: ObservableObject {
         runAction(successMessage: "Bridge avviato.") {
             try await self.requireCLIAvailability()
             try await self.service.startBridge(relayOverride: self.effectiveRelayOverride)
-            try await self.waitForFreshPairing(after: previousPairingDate)
+            try await self.waitForFreshPairing(after: previousPairingDate, expectedRelayURL: self.effectiveRelayOverride)
         }
     }
 
@@ -110,19 +124,46 @@ final class BridgeMenuBarStore: ObservableObject {
     func resetPairing() {
         runAction(successMessage: "Pairing resettato.") {
             try await self.requireCLIAvailability()
+            let previousPairingDate = self.snapshot?.pairingSession?.createdDate
             try await self.service.resetPairing(relayOverride: self.effectiveRelayOverride)
-            try await self.refreshAfterAction()
+            try await self.service.startBridge(relayOverride: self.effectiveRelayOverride)
+            try await self.waitForFreshPairing(after: previousPairingDate, expectedRelayURL: self.effectiveRelayOverride)
         }
     }
 
-    func updateBridgePackage() {
-        runAction(successMessage: "Bridge aggiornato all’ultima release.") {
+    func renewPairing() {
+        runAction(successMessage: "Pairing refreshed.") {
             try await self.requireCLIAvailability()
-            try await self.service.updateBridgePackage()
-            if self.snapshot?.launchdLoaded == true {
-                try await self.service.startBridge(relayOverride: self.effectiveRelayOverride)
-            }
-            try await self.refreshAfterAction()
+            let previousPairingDate = self.snapshot?.pairingSession?.createdDate
+            try await self.service.startBridge(relayOverride: self.effectiveRelayOverride)
+            try await self.waitForFreshPairing(after: previousPairingDate, expectedRelayURL: self.effectiveRelayOverride)
+        }
+    }
+
+    func enableTrustedDevice(_ device: BridgeTrustedDevice) {
+        updateTrustedDevice(
+            device,
+            successMessage: "Trusted device enabled."
+        ) {
+            try await self.service.setTrustedDevice(device.id, enabled: true, relayOverride: self.effectiveRelayOverride)
+        }
+    }
+
+    func disableTrustedDevice(_ device: BridgeTrustedDevice) {
+        updateTrustedDevice(
+            device,
+            successMessage: "Trusted device disabled."
+        ) {
+            try await self.service.setTrustedDevice(device.id, enabled: false, relayOverride: self.effectiveRelayOverride)
+        }
+    }
+
+    func revokeTrustedDevice(_ device: BridgeTrustedDevice) {
+        updateTrustedDevice(
+            device,
+            successMessage: "Trusted device removed."
+        ) {
+            try await self.service.revokeTrustedDevice(device.id, relayOverride: self.effectiveRelayOverride)
         }
     }
 
@@ -146,6 +187,29 @@ final class BridgeMenuBarStore: ObservableObject {
     func openStderrLog() {
         guard let snapshot else { return }
         NSWorkspace.shared.open(URL(fileURLWithPath: snapshot.stderrLogPath))
+    }
+
+    func copyTextToPasteboard(_ value: String, successMessage: String = "Copied.") {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            errorMessage = "Nothing to copy."
+            return
+        }
+
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(trimmed, forType: .string)
+        transientMessage = successMessage
+        errorMessage = ""
+    }
+
+    func openExternalURL(_ value: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed), !trimmed.isEmpty else {
+            errorMessage = "URL is not available."
+            return
+        }
+
+        NSWorkspace.shared.open(url)
     }
 
     private var effectiveRelayOverride: String? {
@@ -173,7 +237,6 @@ final class BridgeMenuBarStore: ObservableObject {
         let cliAvailability = await refreshCLIAvailability()
         guard cliAvailability.isAvailable else {
             snapshot = nil
-            updateState = .empty
             return
         }
 
@@ -200,21 +263,20 @@ final class BridgeMenuBarStore: ObservableObject {
         }
     }
 
-    private func resolveUpdateState(installedVersion: String) async -> BridgePackageUpdateState {
-        let latestVersionResult = await service.fetchLatestPackageVersion()
-        switch latestVersionResult {
-        case .success(let latestVersion):
-            return BridgePackageUpdateState(
-                installedVersion: installedVersion,
-                latestVersion: latestVersion,
-                errorMessage: nil
-            )
-        case .failure(let error):
-            return BridgePackageUpdateState(
-                installedVersion: installedVersion,
-                latestVersion: nil,
-                errorMessage: error.localizedDescription
-            )
+    private func updateTrustedDevice(
+        _ device: BridgeTrustedDevice,
+        successMessage: String,
+        action: @escaping () async throws -> Void
+    ) {
+        _ = device
+        runAction(successMessage: successMessage) {
+            try await self.requireCLIAvailability()
+            let shouldRestartBridge = self.snapshot?.launchdLoaded == true
+            try await action()
+            if shouldRestartBridge {
+                try await self.service.startBridge(relayOverride: self.effectiveRelayOverride)
+            }
+            try await self.refreshAfterAction()
         }
     }
 
@@ -242,7 +304,6 @@ final class BridgeMenuBarStore: ObservableObject {
         let cliAvailability = await refreshCLIAvailability()
         guard cliAvailability.isAvailable else {
             snapshot = nil
-            updateState = .empty
             transientMessage = ""
             errorMessage = ""
             return nil
@@ -252,12 +313,10 @@ final class BridgeMenuBarStore: ObservableObject {
             let snapshot = try await service.loadSnapshot(relayOverride: effectiveRelayOverride)
             self.snapshot = snapshot
             self.errorMessage = ""
-            self.updateState = await resolveUpdateState(installedVersion: snapshot.currentVersion)
             return snapshot
         } catch {
             if clearSnapshotOnFailure {
                 snapshot = nil
-                updateState = .empty
             }
             errorMessage = error.localizedDescription
             throw error
@@ -265,13 +324,18 @@ final class BridgeMenuBarStore: ObservableObject {
     }
 
     // Treats a missing fresh QR as a real start failure so the menu bar never reports a false success.
-    private func waitForFreshPairing(after previousPairingDate: Date?) async throws {
+    private func waitForFreshPairing(after previousPairingDate: Date?, expectedRelayURL: String? = nil) async throws {
         for _ in 0..<20 {
             do {
                 let nextSnapshot = try await service.loadSnapshot(relayOverride: effectiveRelayOverride)
                 let nextPairingDate = nextSnapshot.pairingSession?.createdDate
                 self.snapshot = nextSnapshot
-                self.updateState = await resolveUpdateState(installedVersion: nextSnapshot.currentVersion)
+                if let expectedRelayURL,
+                   !Self.relayURLsMatch(nextSnapshot.effectiveRelayURL, expectedRelayURL) {
+                    try? await Task.sleep(for: .milliseconds(500))
+                    continue
+                }
+
                 if previousPairingDate == nil {
                     if nextSnapshot.pairingSession?.pairingPayload != nil {
                         return
@@ -289,6 +353,22 @@ final class BridgeMenuBarStore: ObservableObject {
         }
 
         throw BridgeMenuBarActionError.pairingTimeout
+    }
+
+    private static func relayURLsMatch(_ lhs: String, _ rhs: String) -> Bool {
+        let normalizedLHS = normalizeRelayURLForComparison(lhs)
+        let normalizedRHS = normalizeRelayURLForComparison(rhs)
+        return !normalizedLHS.isEmpty && normalizedLHS == normalizedRHS
+    }
+
+    private static func normalizeRelayURLForComparison(_ value: String) -> String {
+        var normalized = value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        while normalized.hasSuffix("/") {
+            normalized.removeLast()
+        }
+        return normalized
     }
 
     private func runAction(

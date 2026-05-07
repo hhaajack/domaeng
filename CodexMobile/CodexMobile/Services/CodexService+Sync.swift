@@ -105,7 +105,7 @@ extension CodexService {
                 requestImmediateSync(threadId: activeThreadId)
                 // Re-check bridge-managed state when the app becomes active again.
                 Task { @MainActor [weak self] in
-                    await self?.refreshBridgeManagedState(allowAvailableBridgeUpdatePrompt: true)
+                    await self?.refreshBridgeManagedState()
                 }
             } else {
                 stopSyncLoop()

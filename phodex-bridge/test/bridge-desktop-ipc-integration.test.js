@@ -353,6 +353,9 @@ function createSecureDeviceStateDouble() {
         trustedPhones: {},
       };
     },
+    getEnabledTrustedPhones(deviceState) {
+      return deviceState.trustedPhones || {};
+    },
     rememberLastSeenPhoneAppVersion(deviceState) {
       return deviceState;
     },

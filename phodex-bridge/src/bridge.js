@@ -36,6 +36,7 @@ const { createPushNotificationServiceClient } = require("./push-notification-ser
 const { createPushNotificationTracker } = require("./push-notification-tracker");
 const { resolveCodexGeneratedImagesRoot } = require("./codex-home");
 const {
+  getEnabledTrustedPhones,
   loadOrCreateBridgeDeviceState,
   rememberLastSeenPhoneAppVersion,
   resolveBridgeRelaySession,
@@ -1344,7 +1345,7 @@ function createMacOSBridgeWakeAssertion({
   };
 }
 
-// Registers the canonical Mac identity and the one trusted iPhone allowed for auto-resolve.
+// Registers the canonical Mac identity and trusted devices allowed for auto-resolve.
 function buildMacRegistrationHeaders(deviceState, pairingSession) {
   const registration = buildMacRegistration(deviceState, pairingSession);
   const headers = {
@@ -1363,11 +1364,14 @@ function buildMacRegistrationHeaders(deviceState, pairingSession) {
 }
 
 function buildMacRegistration(deviceState, pairingSession) {
-  const trustedPhoneEntry = Object.entries(deviceState?.trustedPhones || {})[0] || null;
+  const trustedPhones = normalizeTrustedPhones(getEnabledTrustedPhones(deviceState));
+  const trustedPhoneEntry = Object.entries(trustedPhones)[0] || null;
   return {
     macDeviceId: normalizeNonEmptyString(deviceState?.macDeviceId),
     macIdentityPublicKey: normalizeNonEmptyString(deviceState?.macIdentityPublicKey),
     displayName: normalizeNonEmptyString(os.hostname()),
+    trustedPhones,
+    // Legacy single-device fields are kept for older relay builds and headers.
     trustedPhoneDeviceId: normalizeNonEmptyString(trustedPhoneEntry?.[0]),
     trustedPhonePublicKey: normalizeNonEmptyString(trustedPhoneEntry?.[1]),
     pairingCode: normalizeNonEmptyString(pairingSession?.pairingCode),
@@ -1376,6 +1380,23 @@ function buildMacRegistration(deviceState, pairingSession) {
       ? pairingSession.pairingPayload.expiresAt
       : 0,
   };
+}
+
+function normalizeTrustedPhones(value) {
+  const trustedPhones = {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return trustedPhones;
+  }
+
+  for (const [deviceId, publicKey] of Object.entries(value)) {
+    const normalizedDeviceId = normalizeNonEmptyString(deviceId);
+    const normalizedPublicKey = normalizeNonEmptyString(publicKey);
+    if (!normalizedDeviceId || !normalizedPublicKey) {
+      continue;
+    }
+    trustedPhones[normalizedDeviceId] = normalizedPublicKey;
+  }
+  return trustedPhones;
 }
 
 function shutdown(codex, getSocket, beforeExit = () => {}) {
@@ -2511,6 +2532,7 @@ function persistBridgePreferences(
 }
 
 module.exports = {
+  buildMacRegistration,
   buildHeartbeatBridgeStatus,
   createMacOSBridgeWakeAssertion,
   fetchAdaptiveThreadTurnsListForRelay,

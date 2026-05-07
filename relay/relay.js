@@ -360,10 +360,11 @@ function resolveTrustedMacSession({
     throw createRelayError(404, "session_unavailable", "The trusted Mac is offline right now.");
   }
 
-  if (
-    liveSession.trustedPhoneDeviceId !== normalizedPhoneDeviceId
-    || liveSession.trustedPhonePublicKey !== normalizedPhoneIdentityPublicKey
-  ) {
+  if (!macRegistrationTrustsPhone(
+    liveSession,
+    normalizedPhoneDeviceId,
+    normalizedPhoneIdentityPublicKey
+  )) {
     throw createRelayError(403, "phone_not_trusted", "This iPhone is not trusted for the requested Mac.");
   }
 
@@ -557,17 +558,54 @@ function readMacRegistrationHeaders(headers, sessionId) {
 }
 
 function normalizeMacRegistration(registration, sessionId) {
+  const trustedPhones = normalizeTrustedPhones(registration);
   return {
     sessionId,
     macDeviceId: normalizeNonEmptyString(registration?.macDeviceId),
     macIdentityPublicKey: normalizeNonEmptyString(registration?.macIdentityPublicKey),
     displayName: normalizeNonEmptyString(registration?.displayName),
+    trustedPhones,
+    // Legacy single-device fields are kept for compatibility with older bridges.
     trustedPhoneDeviceId: normalizeNonEmptyString(registration?.trustedPhoneDeviceId),
     trustedPhonePublicKey: normalizeNonEmptyString(registration?.trustedPhonePublicKey),
     pairingCode: normalizeShortPairingCode(registration?.pairingCode),
     pairingVersion: normalizePositiveInteger(registration?.pairingVersion),
     pairingExpiresAt: normalizePositiveInteger(registration?.pairingExpiresAt),
   };
+}
+
+function normalizeTrustedPhones(registration) {
+  const trustedPhones = {};
+  const rawTrustedPhones = registration?.trustedPhones;
+
+  if (rawTrustedPhones && typeof rawTrustedPhones === "object" && !Array.isArray(rawTrustedPhones)) {
+    for (const [phoneDeviceId, phonePublicKey] of Object.entries(rawTrustedPhones)) {
+      const normalizedDeviceId = normalizeNonEmptyString(phoneDeviceId);
+      const normalizedPublicKey = normalizeNonEmptyString(phonePublicKey);
+      if (!normalizedDeviceId || !normalizedPublicKey) {
+        continue;
+      }
+      trustedPhones[normalizedDeviceId] = normalizedPublicKey;
+    }
+  }
+
+  const legacyDeviceId = normalizeNonEmptyString(registration?.trustedPhoneDeviceId);
+  const legacyPublicKey = normalizeNonEmptyString(registration?.trustedPhonePublicKey);
+  if (legacyDeviceId && legacyPublicKey) {
+    trustedPhones[legacyDeviceId] = legacyPublicKey;
+  }
+
+  return trustedPhones;
+}
+
+function macRegistrationTrustsPhone(macRegistration, phoneDeviceId, phoneIdentityPublicKey) {
+  const trustedPublicKey = macRegistration?.trustedPhones?.[phoneDeviceId]
+    || (
+      macRegistration?.trustedPhoneDeviceId === phoneDeviceId
+        ? macRegistration.trustedPhonePublicKey
+        : ""
+    );
+  return trustedPublicKey === phoneIdentityPublicKey;
 }
 
 function buildTrustedSessionResolveBytes({

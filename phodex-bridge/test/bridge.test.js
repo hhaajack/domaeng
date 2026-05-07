@@ -10,6 +10,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const {
+  buildMacRegistration,
   buildHeartbeatBridgeStatus,
   createMacOSBridgeWakeAssertion,
   fetchAdaptiveThreadTurnsListForRelay,
@@ -18,6 +19,30 @@ const {
   sanitizeLiveGeneratedImageMessageForRelay,
   sanitizeThreadHistoryImagesForRelay,
 } = require("../src/bridge");
+
+test("buildMacRegistration publishes all trusted phone identities", () => {
+  const registration = buildMacRegistration({
+    macDeviceId: "mac-1",
+    macIdentityPublicKey: "mac-public-key",
+    trustedPhones: {
+      "phone-1": "phone-public-key-1",
+      "phone-2": "phone-public-key-2",
+    },
+  }, {
+    pairingCode: "ABCD2345",
+    pairingPayload: {
+      v: 2,
+      expiresAt: 1234,
+    },
+  });
+
+  assert.deepEqual(registration.trustedPhones, {
+    "phone-1": "phone-public-key-1",
+    "phone-2": "phone-public-key-2",
+  });
+  assert.equal(registration.trustedPhoneDeviceId, "phone-1");
+  assert.equal(registration.trustedPhonePublicKey, "phone-public-key-1");
+});
 
 test("hasRelayConnectionGoneStale returns true once the relay silence crosses the timeout", () => {
   assert.equal(

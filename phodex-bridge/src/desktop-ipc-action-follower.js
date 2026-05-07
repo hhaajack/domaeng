@@ -22,12 +22,14 @@ const ACTION_METHODS = new Set([
   "item/commandExecution/requestApproval",
   "item/fileChange/requestApproval",
   "item/fileRead/requestApproval",
+  "item/permissions/requestApproval",
   "item/tool/requestUserInput",
 ]);
 const REPLY_METHOD_BY_ACTION_METHOD = new Map([
   ["item/commandExecution/requestApproval", "thread-follower-command-approval-decision"],
   ["item/fileChange/requestApproval", "thread-follower-file-approval-decision"],
   ["item/fileRead/requestApproval", "thread-follower-file-approval-decision"],
+  ["item/permissions/requestApproval", "thread-follower-permissions-request-approval-response"],
   ["item/tool/requestUserInput", "thread-follower-submit-user-input"],
 ]);
 const FOLLOWER_METHOD_BY_RUNTIME_METHOD = new Map([
@@ -44,6 +46,7 @@ const METHOD_VERSION_BY_NAME = new Map([
   ["thread-follower-compact-thread", 1],
   ["thread-follower-command-approval-decision", 1],
   ["thread-follower-file-approval-decision", 1],
+  ["thread-follower-permissions-request-approval-response", 1],
   ["thread-follower-submit-user-input", 1],
 ]);
 const APPROVAL_DECISIONS = new Set(["accept", "acceptForSession", "decline", "cancel"]);
@@ -572,6 +575,36 @@ function desktopFollowerPayloadForResponse(route, responseMessage) {
         response: {
           answers,
         },
+      },
+    };
+  }
+
+  if (route.method === "item/permissions/requestApproval") {
+    const response = responseMessage?.result;
+    if (!response || typeof response !== "object" || Array.isArray(response)) {
+      return null;
+    }
+    const scope = readString(response.scope);
+    if (scope !== "turn" && scope !== "session") {
+      return null;
+    }
+    const permissions = response.permissions && typeof response.permissions === "object" && !Array.isArray(response.permissions)
+      ? cloneJSON(response.permissions)
+      : {};
+    const payloadResponse = {
+      permissions,
+      scope,
+    };
+    if (typeof response.strictAutoReview === "boolean") {
+      payloadResponse.strictAutoReview = response.strictAutoReview;
+    }
+
+    return {
+      method,
+      params: {
+        conversationId: route.threadId,
+        requestId: route.requestId,
+        response: payloadResponse,
       },
     };
   }

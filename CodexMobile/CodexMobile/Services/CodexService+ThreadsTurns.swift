@@ -43,6 +43,7 @@ extension CodexService {
         }
 
         pendingApprovals.append(request)
+        notifyApprovalIfNeeded(request)
     }
 
     // Removes the exact resolved approval request when the server confirms it is gone.

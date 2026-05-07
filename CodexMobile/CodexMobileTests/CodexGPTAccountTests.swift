@@ -120,41 +120,7 @@ final class CodexGPTAccountTests: XCTestCase {
         XCTAssertFalse(service.gptVoiceRequiresLogin)
     }
 
-    func testRefreshBridgeVersionStatePresentsOptionalBridgeUpdateWhenLatestIsNewer() async {
-        let service = makeService()
-        service.isConnected = true
-
-        service.requestTransportOverride = { method, params in
-            XCTAssertEqual(method, "account/status/read")
-            XCTAssertNil(params)
-            return RPCMessage(
-                id: .string(UUID().uuidString),
-                result: .object([
-                    "status": .string("authenticated"),
-                    "authMethod": .string("chatgpt"),
-                    "loginInFlight": .bool(false),
-                    "needsReauth": .bool(false),
-                    "tokenReady": .bool(true),
-                    "bridgeVersion": .string("1.3.9"),
-                    "bridgeLatestVersion": .string("1.4.0"),
-                ]),
-                includeJSONRPC: false
-            )
-        }
-
-        await service.refreshBridgeVersionState(allowAvailableBridgeUpdatePrompt: true)
-
-        XCTAssertEqual(service.bridgeInstalledVersion, "1.3.9")
-        XCTAssertEqual(service.latestBridgePackageVersion, "1.4.0")
-        XCTAssertEqual(
-            service.bridgeUpdatePrompt?.title,
-            "A newer Remodex update is available on your Mac"
-        )
-        XCTAssertEqual(service.bridgeUpdatePrompt?.command, "npm install -g remodex@latest")
-        XCTAssertEqual(service.gptAccountSnapshot.status, .unknown)
-    }
-
-    func testRefreshBridgeVersionStateDoesNotPresentOptionalBridgeUpdateWithoutForegroundFlag() async {
+    func testRefreshBridgeVersionStateIgnoresPublishedLatestVersion() async {
         let service = makeService()
         service.isConnected = true
 
@@ -178,10 +144,12 @@ final class CodexGPTAccountTests: XCTestCase {
 
         await service.refreshBridgeVersionState()
 
+        XCTAssertEqual(service.bridgeInstalledVersion, "1.3.9")
         XCTAssertNil(service.bridgeUpdatePrompt)
+        XCTAssertEqual(service.gptAccountSnapshot.status, .unknown)
     }
 
-    func testRefreshBridgeVersionStateDoesNotRepeatOptionalBridgeUpdateForSameLatestVersion() async {
+    func testRefreshBridgeVersionStateKeepsRequiredBridgeUpdatePromptOnly() async {
         let service = makeService()
         service.isConnected = true
 
@@ -196,24 +164,20 @@ final class CodexGPTAccountTests: XCTestCase {
                     "loginInFlight": .bool(false),
                     "needsReauth": .bool(false),
                     "tokenReady": .bool(true),
-                    "bridgeVersion": .string("1.3.9"),
+                    "bridgeVersion": .string("1.3.8"),
                     "bridgeLatestVersion": .string("1.4.0"),
                 ]),
                 includeJSONRPC: false
             )
         }
 
-        await service.refreshBridgeVersionState(allowAvailableBridgeUpdatePrompt: true)
-        let firstPrompt = service.bridgeUpdatePrompt
+        await service.refreshBridgeVersionState()
 
-        service.bridgeUpdatePrompt = nil
-        await service.refreshBridgeVersionState(allowAvailableBridgeUpdatePrompt: true)
-
-        XCTAssertNotNil(firstPrompt)
-        XCTAssertNil(service.bridgeUpdatePrompt)
+        XCTAssertEqual(service.bridgeUpdatePrompt?.title, "Update Remodex on your computer to reconnect")
+        XCTAssertEqual(service.bridgeUpdatePrompt?.command, RemodexBridgeCompatibility.adaptedBridgePackageInstallCommand)
     }
 
-    func testForegroundReturnRefreshesBridgeVersionAndPresentsOptionalUpdatePrompt() async {
+    func testForegroundReturnRefreshesBridgeVersionWithoutOptionalUpdatePrompt() async {
         let service = makeService()
         service.isConnected = true
         service.isInitialized = true
@@ -242,11 +206,7 @@ final class CodexGPTAccountTests: XCTestCase {
         await yieldMainActor(times: 3)
 
         XCTAssertEqual(service.bridgeInstalledVersion, "1.3.9")
-        XCTAssertEqual(service.latestBridgePackageVersion, "1.4.0")
-        XCTAssertEqual(
-            service.bridgeUpdatePrompt?.title,
-            "A newer Remodex update is available on your Mac"
-        )
+        XCTAssertNil(service.bridgeUpdatePrompt)
     }
 
     func testStartOrResumeGPTLoginUsesChatGPTVariantAndCachesPendingURL() async throws {

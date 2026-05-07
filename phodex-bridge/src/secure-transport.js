@@ -136,6 +136,10 @@ function createBridgeSecureTransport({
     const phoneIdentityPublicKey = normalizeNonEmptyString(message.phoneIdentityPublicKey);
     const phoneEphemeralPublicKey = normalizeNonEmptyString(message.phoneEphemeralPublicKey);
     const clientNonceBase64 = normalizeNonEmptyString(message.clientNonce);
+    const deviceDisplayName = normalizeDisplayName(
+      message.deviceDisplayName || message.phoneDisplayName || message.displayName
+    );
+    const deviceKind = normalizeDeviceKind(message.deviceKind || message.clientKind || message.platform);
 
     if (protocolVersion !== SECURE_PROTOCOL_VERSION || incomingSessionId !== sessionId) {
       sendControlMessage(createSecureError({
@@ -181,7 +185,7 @@ function createBridgeSecureTransport({
       if (trustedPhonePublicKey !== phoneIdentityPublicKey) {
         sendControlMessage(createSecureError({
           code: "phone_identity_changed",
-          message: "The trusted iPhone identity does not match this reconnect attempt.",
+          message: "The trusted device identity does not match this reconnect attempt.",
         }));
         return;
       }
@@ -238,6 +242,8 @@ function createBridgeSecureTransport({
       keyEpoch,
       phoneDeviceId,
       phoneIdentityPublicKey,
+      deviceDisplayName,
+      deviceKind,
       phoneEphemeralPublicKey,
       macEphemeralPrivateKey: base64UrlToBase64(privateJwk.d),
       macEphemeralPublicKey: base64UrlToBase64(publicJwk.x),
@@ -353,7 +359,7 @@ function createBridgeSecureTransport({
       pendingHandshake.handshakeMode === HANDSHAKE_MODE_QR_BOOTSTRAP
       || getTrustedPhonePublicKey(currentDeviceState, pendingHandshake.phoneDeviceId)
     ) {
-      // Lock the trusted phone identity so later reconnects can be verified cleanly.
+      // Lock this phone identity by device so later reconnects can be verified cleanly.
       const previousTrustedPhonePublicKey = getTrustedPhonePublicKey(
         currentDeviceState,
         pendingHandshake.phoneDeviceId
@@ -361,7 +367,11 @@ function createBridgeSecureTransport({
       currentDeviceState = rememberTrustedPhone(
         currentDeviceState,
         pendingHandshake.phoneDeviceId,
-        pendingHandshake.phoneIdentityPublicKey
+        pendingHandshake.phoneIdentityPublicKey,
+        {
+          displayName: pendingHandshake.deviceDisplayName,
+          deviceKind: pendingHandshake.deviceKind,
+        }
       );
       if (previousTrustedPhonePublicKey !== pendingHandshake.phoneIdentityPublicKey) {
         onTrustedPhoneUpdate?.(currentDeviceState);
@@ -474,7 +484,7 @@ function createBridgeSecureTransport({
     }
   }
 
-  // Starts each fresh QR bootstrap with a clean catch-up window for the single trusted phone.
+  // Starts each fresh QR bootstrap with a clean catch-up window for the newly active phone.
   function resetOutboundReplayState() {
     outboundBuffer.length = 0;
     outboundBufferBytes = 0;
@@ -697,6 +707,18 @@ function normalizeNonEmptyString(value) {
     return "";
   }
   return value.trim();
+}
+
+function normalizeDisplayName(value) {
+  return normalizeNonEmptyString(value).replace(/\s+/g, " ").slice(0, 80);
+}
+
+function normalizeDeviceKind(value) {
+  const normalized = normalizeNonEmptyString(value).toLowerCase();
+  if (normalized === "ios" || normalized === "web" || normalized === "android") {
+    return normalized;
+  }
+  return normalized ? "unknown" : "";
 }
 
 function safeParseJSON(value) {

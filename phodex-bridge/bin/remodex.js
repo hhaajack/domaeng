@@ -11,10 +11,13 @@ const {
   printMacOSBridgeServiceStatus,
   readBridgeConfig,
   resetMacOSBridgePairing,
+  renameTrustedDevice,
   runMacOSBridgeService,
+  revokeTrustedDevice,
   startBridge,
   startMacOSBridgeService,
   stopMacOSBridgeService,
+  setTrustedDeviceEnabled,
   resetBridgePairing,
   openLastActiveThread,
   watchThreadRollout,
@@ -27,10 +30,13 @@ const defaultDeps = {
   printMacOSBridgeServiceStatus,
   readBridgeConfig,
   resetMacOSBridgePairing,
+  renameTrustedDevice,
   runMacOSBridgeService,
+  revokeTrustedDevice,
   startBridge,
   startMacOSBridgeService,
   stopMacOSBridgeService,
+  setTrustedDeviceEnabled,
   resetBridgePairing,
   openLastActiveThread,
   watchThreadRollout,
@@ -49,7 +55,14 @@ async function main({
   exitImpl = process.exit,
   deps = defaultDeps,
 } = {}) {
-  const { command, jsonOutput, watchThreadId } = parseCliArgs(argv.slice(2));
+  const {
+    command,
+    jsonOutput,
+    watchThreadId,
+    trustedDeviceAction,
+    trustedDeviceId,
+    trustedDeviceName,
+  } = parseCliArgs(argv.slice(2));
 
   if (isVersionCommand(command)) {
     emitVersion({ jsonOutput, consoleImpl });
@@ -200,6 +213,32 @@ async function main({
     return;
   }
 
+  if (command === "trusted-device") {
+    try {
+      const result = runTrustedDeviceCommand({
+        action: trustedDeviceAction,
+        deviceId: trustedDeviceId,
+        displayName: trustedDeviceName,
+        deps,
+      });
+      emitResult({
+        payload: {
+          ok: true,
+          currentVersion: version,
+          action: trustedDeviceAction,
+          ...result,
+        },
+        message: trustedDeviceActionMessage(trustedDeviceAction),
+        jsonOutput,
+        consoleImpl,
+      });
+    } catch (error) {
+      consoleImpl.error(`[remodex] ${(error && error.message) || "Failed to update the trusted device."}`);
+      exitImpl(1);
+    }
+    return;
+  }
+
   if (command === "resume") {
     try {
       const state = deps.openLastActiveThread();
@@ -234,8 +273,9 @@ async function main({
   consoleImpl.error(`Unknown command: ${command}`);
   consoleImpl.error(
     "Usage: remodex up | remodex run | remodex start | remodex restart | remodex stop | remodex status | "
-    + "remodex reset-pairing | remodex resume | remodex watch [threadId] | remodex --version | "
-    + "append --json to start/restart/stop/status/reset-pairing/resume for machine-readable output"
+    + "remodex reset-pairing | remodex trusted-device <enable|disable|revoke|rename> <id> [name] | "
+    + "remodex resume | remodex watch [threadId] | remodex --version | "
+    + "append --json to start/restart/stop/status/reset-pairing/trusted-device/resume for machine-readable output"
   );
   exitImpl(1);
 }
@@ -257,7 +297,47 @@ function parseCliArgs(rawArgs) {
     command: positionals[0] || "up",
     jsonOutput,
     watchThreadId: positionals[1] || "",
+    trustedDeviceAction: positionals[1] || "",
+    trustedDeviceId: positionals[2] || "",
+    trustedDeviceName: positionals.slice(3).join(" "),
   };
+}
+
+function runTrustedDeviceCommand({ action, deviceId, displayName, deps }) {
+  if (!deviceId || !["enable", "disable", "revoke", "rename"].includes(action)) {
+    throw new Error("Usage: remodex trusted-device <enable|disable|revoke|rename> <id> [name]");
+  }
+
+  if (action === "enable") {
+    return deps.setTrustedDeviceEnabled(deviceId, true);
+  }
+  if (action === "disable") {
+    return deps.setTrustedDeviceEnabled(deviceId, false);
+  }
+  if (action === "revoke") {
+    return deps.revokeTrustedDevice(deviceId);
+  }
+
+  const normalizedDisplayName = typeof displayName === "string" ? displayName.trim() : "";
+  if (!normalizedDisplayName) {
+    throw new Error("Usage: remodex trusted-device rename <id> <name>");
+  }
+  return deps.renameTrustedDevice(deviceId, normalizedDisplayName);
+}
+
+function trustedDeviceActionMessage(action) {
+  switch (action) {
+  case "enable":
+    return "[remodex] Trusted device enabled.";
+  case "disable":
+    return "[remodex] Trusted device disabled.";
+  case "revoke":
+    return "[remodex] Trusted device removed.";
+  case "rename":
+    return "[remodex] Trusted device renamed.";
+  default:
+    return "[remodex] Trusted device updated.";
+  }
 }
 
 function emitVersion({

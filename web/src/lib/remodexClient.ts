@@ -10,7 +10,8 @@ import type {
   RelaySessionState,
   RPCMessage,
   RuntimeSettings,
-  TrustedMacRecord
+  TrustedMacRecord,
+  WebPushSubscriptionPayload
 } from "../types";
 import { idKey, randomUUID } from "./base64";
 import { JSONRPCDispatcher, RPCError } from "./jsonRpc";
@@ -159,6 +160,20 @@ export class RemodexClient {
     return items.map(decodeModelOption).filter((model): model is ModelOption => Boolean(model));
   }
 
+  async readRateLimits(): Promise<JSONValue> {
+    try {
+      const response = await this.request("account/rateLimits/read", null);
+      return response.result ?? {};
+    } catch (error) {
+      if (!shouldRetryRateLimitsWithEmptyParams(error)) {
+        throw error;
+      }
+    }
+
+    const response = await this.request("account/rateLimits/read", {});
+    return response.result ?? {};
+  }
+
   async readThread(threadId: string): Promise<RPCMessage> {
     return this.request("thread/read", {
       threadId,
@@ -278,10 +293,29 @@ export class RemodexClient {
     return this.request("desktop/refreshThread", { threadId }, 30_000);
   }
 
+  async getWebPushPublicKey(): Promise<string> {
+    const response = await this.request("notifications/webPush/publicKey", {}, 30_000);
+    const result = asObject(response.result);
+    const publicKey = readString(result.publicKey);
+    if (!publicKey) {
+      throw new Error("Web Push public key is not available");
+    }
+    return publicKey;
+  }
+
+  async registerWebPush(subscription: WebPushSubscriptionPayload): Promise<RPCMessage> {
+    return this.request("notifications/webPush/register", {
+      subscription: subscription as unknown as JSONValue,
+      alertsEnabled: true
+    }, 30_000);
+  }
+
+  async unregisterWebPush(endpoint?: string): Promise<RPCMessage> {
+    return this.request("notifications/webPush/unregister", endpoint ? { endpoint } : {}, 30_000);
+  }
+
   async approve(request: ApprovalRequest, decision: "accept" | "decline" | "acceptForSession"): Promise<void> {
-    await this.respond(request.requestID, {
-      decision
-    });
+    await this.respond(request.requestID, approvalResponseForDecision(request, decision));
   }
 
   async request(method: string, params?: JSONValue, timeoutMs?: number): Promise<RPCMessage> {
@@ -603,6 +637,28 @@ function asArray(value: JSONValue | undefined): JSONValue[] | undefined {
   return Array.isArray(value) ? value : undefined;
 }
 
+function approvalResponseForDecision(
+  request: ApprovalRequest,
+  decision: "accept" | "decline" | "acceptForSession"
+): JSONValue {
+  if (request.method !== "item/permissions/requestApproval") {
+    return { decision };
+  }
+
+  if (decision === "decline") {
+    return {
+      permissions: {},
+      scope: "turn"
+    };
+  }
+
+  const params = asObject(request.params);
+  return {
+    permissions: asObject(params.permissions),
+    scope: decision === "acceptForSession" ? "session" : "turn"
+  };
+}
+
 function readString(value: JSONValue | undefined): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
@@ -690,6 +746,22 @@ export function isThreadRolloutMissingError(error: unknown): boolean {
 function titleForEffort(effort: string): string {
   if (effort === "xhigh") return "Extra High";
   return effort.charAt(0).toUpperCase() + effort.slice(1);
+}
+
+function shouldRetryRateLimitsWithEmptyParams(error: unknown): boolean {
+  if (!(error instanceof RPCError)) {
+    return false;
+  }
+  if (error.code !== -32602 && error.code !== -32600) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  return message.includes("invalid params")
+    || message.includes("invalid param")
+    || message.includes("failed to parse")
+    || message.includes("expected")
+    || message.includes("missing field `params`")
+    || message.includes("missing field params");
 }
 
 function errorMessage(error: unknown): string {

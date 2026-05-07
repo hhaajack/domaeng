@@ -824,8 +824,8 @@ private struct SettingsBridgeVersionCard: View {
             )
 
             settingsVersionRow(
-                title: "Latest available",
-                value: latestVersionLabel,
+                title: "Adapted by This App",
+                value: adaptedVersionLabel,
                 valueStyle: .primary
             )
 
@@ -850,8 +850,8 @@ private struct SettingsBridgeVersionCard: View {
         normalizedVersion(codex.bridgeInstalledVersion) ?? "Unknown"
     }
 
-    private var latestVersionLabel: String {
-        normalizedVersion(codex.latestBridgePackageVersion) ?? "Unknown"
+    private var adaptedVersionLabel: String {
+        adaptedVersion
     }
 
     private var guidanceText: String? {
@@ -859,19 +859,15 @@ private struct SettingsBridgeVersionCard: View {
             return "Connect to a computer bridge to read the installed package version."
         }
 
-        guard let latestVersion else {
-            return "Installed version detected. The latest published package is unavailable right now."
+        if installedVersion == adaptedVersion {
+            return "The installed bridge matches the version this app was adapted for."
         }
 
-        if installedVersion == latestVersion {
-            return "The installed bridge matches the latest published package."
+        if installedVersion.compare(adaptedVersion, options: .numeric) == .orderedAscending {
+            return "This app was adapted for a newer Remodex bridge. Update the full Remodex client before changing the bridge alone."
         }
 
-        if installedVersion.compare(latestVersion, options: .numeric) == .orderedAscending {
-            return "A newer Remodex package is available on npm."
-        }
-
-        return "This Mac is running a different build than the current npm latest."
+        return "This Mac is running a newer bridge than the version this app was adapted for."
     }
 
     private var versionStatusLabel: String {
@@ -879,25 +875,20 @@ private struct SettingsBridgeVersionCard: View {
             return "Unknown"
         }
 
-        guard let latestVersion else {
-            return "Installed"
+        if installedVersion == adaptedVersion {
+            return "Matched"
         }
 
-        if installedVersion == latestVersion {
-            return "Up to date"
+        if installedVersion.compare(adaptedVersion, options: .numeric) == .orderedAscending {
+            return "Older bridge"
         }
 
-        if installedVersion.compare(latestVersion, options: .numeric) == .orderedAscending {
-            return "Update available"
-        }
-
-        return "Different build"
+        return "Newer bridge"
     }
 
     private var guidanceColor: Color {
         guard let installedVersion,
-              let latestVersion,
-              installedVersion.compare(latestVersion, options: .numeric) == .orderedAscending else {
+              installedVersion != adaptedVersion else {
             return .secondary
         }
 
@@ -906,8 +897,7 @@ private struct SettingsBridgeVersionCard: View {
 
     private var installedValueStyle: Color {
         guard let installedVersion,
-              let latestVersion,
-              installedVersion.compare(latestVersion, options: .numeric) == .orderedAscending else {
+              installedVersion != adaptedVersion else {
             return .primary
         }
 
@@ -918,8 +908,8 @@ private struct SettingsBridgeVersionCard: View {
         normalizedVersion(codex.bridgeInstalledVersion)
     }
 
-    private var latestVersion: String? {
-        normalizedVersion(codex.latestBridgePackageVersion)
+    private var adaptedVersion: String {
+        CodexService.adaptedBridgePackageVersion
     }
 
     private func normalizedVersion(_ value: String?) -> String? {

@@ -66,6 +66,8 @@
 	<string>$(PHODEX_CHATGPT_CALLBACK_SCHEME)</string>
 	<key>PHODEX_DEFAULT_RELAY_URL</key>
 	<string>$(PHODEX_DEFAULT_RELAY_URL)</string>
+	<key>RemodexSupportedBridgeVersion</key>
+	<string>$(REMODEX_SUPPORTED_BRIDGE_VERSION)</string>
 	<key>REVENUECAT_PUBLIC_API_KEY</key>
 	<string>$(REVENUECAT_PUBLIC_API_KEY)</string>
 	<key>REVENUECAT_ENTITLEMENT_NAME</key>

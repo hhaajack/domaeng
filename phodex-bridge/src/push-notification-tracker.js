@@ -20,6 +20,7 @@ function createPushNotificationTracker({
   const threadTitleById = new Map();
   const threadIdByTurnId = new Map();
   const turnStateByKey = new Map();
+  const attentionNotifiedAtByKey = new Map();
   const completionDedupe = createPushNotificationCompletionDedupe({ now });
 
   // ─── ENTRY POINT ─────────────────────────────────────────────
@@ -32,6 +33,11 @@ function createPushNotificationTracker({
 
     rememberMessageContext(message);
     clearFallbackSuppressionForNewRun(message);
+
+    if (isApprovalRequestMethod(message.method)) {
+      void notifyApprovalRequired(message);
+      return;
+    }
 
     if (isAssistantDeltaMethod(message.method)) {
       recordAssistantDelta(message.threadId, message.turnId, message.params, message.eventObject);
@@ -176,6 +182,43 @@ function createPushNotificationTracker({
     }
   }
 
+  async function notifyApprovalRequired({ threadId, turnId, requestId, params, eventObject }) {
+    const resolvedThreadId = threadId || (turnId ? threadIdByTurnId.get(turnId) : null);
+    if (!pushServiceClient?.hasConfiguredBaseUrl || !pushServiceClient.notifyAttention || !resolvedThreadId) {
+      return;
+    }
+
+    const dedupeKey = attentionDedupeKey({
+      sessionId,
+      threadId: resolvedThreadId,
+      turnId,
+      requestId,
+      now,
+    });
+    pruneAttentionDedupe(attentionNotifiedAtByKey, now);
+    if (attentionNotifiedAtByKey.has(dedupeKey)) {
+      return;
+    }
+
+    const title = normalizePreviewText(threadTitleById.get(resolvedThreadId)) || "New Thread";
+    const body = buildApprovalBody(params, eventObject);
+    attentionNotifiedAtByKey.set(dedupeKey, now());
+
+    try {
+      await pushServiceClient.notifyAttention({
+        threadId: resolvedThreadId,
+        turnId,
+        requestId,
+        title,
+        body,
+        dedupeKey,
+      });
+    } catch (error) {
+      attentionNotifiedAtByKey.delete(dedupeKey);
+      console.error(`${logPrefix} push attention notify failed: ${error.message}`);
+    }
+  }
+
   function recordAssistantDelta(threadId, turnId, params, eventObject) {
     const resolvedTurnId = turnId || resolveTurnId("assistant", params, eventObject);
     const resolvedThreadId = threadId || (resolvedTurnId ? threadIdByTurnId.get(resolvedTurnId) : null);
@@ -273,6 +316,7 @@ function parseOutboundMessage(rawMessage) {
     method,
     params,
     eventObject,
+    requestId: parsed.id == null ? null : String(parsed.id),
     threadId: resolveThreadId(method, params, eventObject),
     turnId: resolveTurnId(method, params, eventObject),
   };
@@ -390,6 +434,13 @@ function isAssistantDeltaMethod(method) {
     || method === "codex/event/agent_message_delta";
 }
 
+function isApprovalRequestMethod(method) {
+  return method === "item/commandExecution/requestApproval"
+    || method === "item/fileChange/requestApproval"
+    || method === "item/permissions/requestApproval"
+    || method.endsWith("requestApproval");
+}
+
 function isAssistantCompletedMethod(method, params, eventObject) {
   if (method === "codex/event/agent_message") {
     return true;
@@ -472,6 +523,20 @@ function extractFailureMessage(params, eventObject) {
   return "";
 }
 
+function buildApprovalBody(params, eventObject) {
+  const command = normalizePreviewText(params?.command || eventObject?.command);
+  if (command) {
+    return `Approval needed: ${command}`;
+  }
+
+  const reason = normalizePreviewText(params?.reason || eventObject?.reason);
+  if (reason) {
+    return reason;
+  }
+
+  return "Codex needs approval to continue.";
+}
+
 function resolveCompletionResult(params, eventObject) {
   const rawStatus = readString(
     params?.turn?.status
@@ -498,6 +563,27 @@ function completionDedupeKey({ sessionId, threadId, turnId, result, now }) {
 
   const timeBucket = Math.floor(now() / 30_000);
   return [sessionId || "", threadId, "no-turn", result, `bucket-${timeBucket}`].join("|");
+}
+
+function attentionDedupeKey({ sessionId, threadId, turnId, requestId, now }) {
+  if (requestId) {
+    return [sessionId || "", threadId, requestId].join("|");
+  }
+  if (turnId) {
+    return [sessionId || "", threadId, turnId, "approval"].join("|");
+  }
+
+  const timeBucket = Math.floor(now() / 30_000);
+  return [sessionId || "", threadId, "approval", `bucket-${timeBucket}`].join("|");
+}
+
+function pruneAttentionDedupe(dedupeMap, now) {
+  const cutoff = now() - 60_000;
+  for (const [key, timestamp] of dedupeMap.entries()) {
+    if (timestamp < cutoff) {
+      dedupeMap.delete(key);
+    }
+  }
 }
 
 // Mirrors the iOS terminal-state mapping so managed pushes fire on the same end states.

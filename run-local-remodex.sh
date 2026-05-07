@@ -18,6 +18,7 @@ RELAY_PORT="${RELAY_PORT:-9000}"
 RELAY_HOSTNAME="${RELAY_HOSTNAME:-}"
 RELAY_URL="${RELAY_URL:-}"
 RELAY_BRIDGE_HOST=""
+PUSH_SERVICE_URL=""
 RELAY_PID=""
 BRIDGE_PID=""
 
@@ -219,6 +220,36 @@ try {
 ' "${raw_url}"
 }
 
+push_service_url_from_relay_url() {
+  local raw_url="$1"
+
+  node -e '
+const rawUrl = process.argv[1];
+
+try {
+  const url = new URL(rawUrl);
+  if (url.protocol === "wss:") {
+    url.protocol = "https:";
+  } else if (url.protocol === "ws:") {
+    url.protocol = "http:";
+  } else if (url.protocol !== "https:" && url.protocol !== "http:") {
+    process.exit(1);
+  }
+
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (parts.at(-1) === "relay") {
+    parts.pop();
+  }
+  url.pathname = parts.length ? `/${parts.join("/")}` : "/";
+  url.search = "";
+  url.hash = "";
+  console.log(url.toString().replace(/\/+$/, ""));
+} catch {
+  process.exit(1);
+}
+' "${raw_url}"
+}
+
 configure_relay_url() {
   if [[ -n "${RELAY_URL}" ]]; then
     RELAY_URL="$(normalize_relay_url "${RELAY_URL}")" || die "Invalid --relay-url '${RELAY_URL}'. Pass ws(s)://.../relay, or paste an http(s) tunnel URL."
@@ -334,7 +365,7 @@ const { createRelayServer } = require(process.env.RELAY_SERVER_MODULE);
 
 const host = process.env.RELAY_BIND_HOST || "0.0.0.0";
 const port = Number.parseInt(process.env.RELAY_PORT || "9000", 10);
-const { server } = createRelayServer();
+const { server } = createRelayServer({ enablePushService: true });
 
 server.listen(port, host, () => {
   console.log(`[relay] listening on http://${host}:${port}`);
@@ -361,6 +392,7 @@ print_summary() {
   Relay hostname  : ${RELAY_HOSTNAME}
   Bridge host     : ${RELAY_BRIDGE_HOST}
   Relay URL       : ${RELAY_URL}
+  Push service URL: ${PUSH_SERVICE_URL}
 EOF
 }
 
@@ -370,7 +402,7 @@ start_bridge() {
   # This local helper should print the QR in the current terminal immediately.
   # Use the foreground bridge path instead of the macOS launchd wrapper so QR
   # rendering does not depend on daemon state being written back first.
-  REMODEX_RELAY="${RELAY_URL}" node ./bin/remodex.js run &
+  REMODEX_RELAY="${RELAY_URL}" REMODEX_PUSH_SERVICE_URL="${PUSH_SERVICE_URL}" node ./bin/remodex.js run &
   BRIDGE_PID=$!
 }
 
@@ -402,6 +434,7 @@ ensure_prerequisites
 ensure_package_dependencies "${BRIDGE_DIR}"
 ensure_package_dependencies "${RELAY_DIR}"
 configure_relay_url
+PUSH_SERVICE_URL="$(push_service_url_from_relay_url "${RELAY_URL}")" || die "Unable to derive push service URL from relay URL '${RELAY_URL}'."
 ensure_port_available
 print_summary
 start_embedded_relay

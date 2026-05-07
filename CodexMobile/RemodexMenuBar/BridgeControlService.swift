@@ -1,5 +1,5 @@
 // FILE: BridgeControlService.swift
-// Purpose: Wraps the existing remodex/npm shell commands so the menu bar app can detect the global CLI and control the bridge.
+// Purpose: Wraps the existing remodex shell commands so the menu bar app can detect the global CLI and control the bridge.
 // Layer: Companion app service
 // Exports: BridgeControlService, ShellCommandRunner
 // Depends on: Foundation, BridgeControlModels
@@ -83,7 +83,7 @@ final class ShellCommandRunner {
     }
 
     // Silently loads interactive zsh PATH customizations so GUI-launched commands see the same global CLI install as Terminal.
-    private func wrappedShellCommand(_ command: String) -> String {
+    private nonisolated func wrappedShellCommand(_ command: String) -> String {
         [
             "export TERM=dumb",
             "source ~/.zshrc >/dev/null 2>/dev/null || true",
@@ -112,7 +112,7 @@ final class BridgeControlService {
         do {
             let invocation = try await resolveCLIInvocation()
             let result = try await runner.run(command: invocation.command(["--version"]))
-            guard let version = parseLatestVersion(result.stdout) else {
+            guard let version = parseVersion(result.stdout) else {
                 return .broken(message: "The installed CLI returned an unreadable version.")
             }
 
@@ -172,27 +172,23 @@ final class BridgeControlService {
         )
     }
 
-    func updateBridgePackage() async throws {
-        _ = try await runner.run(command: "npm install -g remodex@latest")
+    func setTrustedDevice(_ deviceId: String, enabled: Bool, relayOverride: String?) async throws {
+        let invocation = try await resolveCLIInvocation()
+        _ = try await runner.run(
+            command: invocation.command(["trusted-device", enabled ? "enable" : "disable", deviceId, "--json"]),
+            environment: commandEnvironment(relayOverride: relayOverride)
+        )
     }
 
-    func fetchLatestPackageVersion() async -> Result<String, Error> {
-        do {
-            let result = try await runner.run(command: "npm view remodex version --json")
-            let latestVersion = parseLatestVersion(result.stdout)
-            guard let latestVersion else {
-                throw BridgeControlError.commandFailed(
-                    command: "npm view remodex version --json",
-                    message: "npm returned an unreadable version."
-                )
-            }
-            return .success(latestVersion)
-        } catch {
-            return .failure(error)
-        }
+    func revokeTrustedDevice(_ deviceId: String, relayOverride: String?) async throws {
+        let invocation = try await resolveCLIInvocation()
+        _ = try await runner.run(
+            command: invocation.command(["trusted-device", "revoke", deviceId, "--json"]),
+            environment: commandEnvironment(relayOverride: relayOverride)
+        )
     }
 
-    private func parseLatestVersion(_ output: String) -> String? {
+    private func parseVersion(_ output: String) -> String? {
         guard !output.isEmpty else {
             return nil
         }
@@ -218,7 +214,7 @@ final class BridgeControlService {
         }
 
         let versionResult = try await runner.run(command: invocation.command(["--version"]))
-        guard let currentVersion = parseLatestVersion(versionResult.stdout) else {
+        guard let currentVersion = parseVersion(versionResult.stdout) else {
             throw BridgeControlError.invalidSnapshot("Bridge status returned an unreadable CLI version.")
         }
 
@@ -242,6 +238,7 @@ final class BridgeControlService {
             daemonConfig: daemonConfig,
             bridgeStatus: bridgeStatus,
             pairingSession: pairingSession,
+            trustedDevices: [],
             stdoutLogPath: stdoutLogPath,
             stderrLogPath: stderrLogPath
         )

@@ -95,6 +95,45 @@ test("push routes are rate limited", async () => {
   assert.equal(body.code, "rate_limited");
 });
 
+test("push attention route forwards approval alerts", async () => {
+  const calls = [];
+  const { body, status } = await withServer(async ({ port }) => {
+    const response = await fetch(`http://127.0.0.1:${port}/v1/push/session/notify-attention`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "session-approval",
+        notificationSecret: "secret-approval",
+        threadId: "thread-approval",
+        requestId: "approval-1",
+        dedupeKey: "attention-1",
+      }),
+    });
+    return {
+      body: await response.json(),
+      status: response.status,
+    };
+  }, {
+    pushSessionService: {
+      async registerDevice() {},
+      async notifyCompletion() {},
+      async notifyAttention(payload) {
+        calls.push(payload);
+        return { ok: true };
+      },
+      getStats() {
+        return { enabled: true };
+      },
+    },
+  });
+
+  assert.equal(status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].threadId, "thread-approval");
+  assert.equal(calls[0].requestId, "approval-1");
+});
+
 test("push registration requires the live mac notification secret", async () => {
   await withServer(async ({ port }) => {
     const mac = new WebSocket(`ws://127.0.0.1:${port}/relay/session-push`, {
@@ -430,6 +469,64 @@ test("trusted session resolve starts working immediately after a mac updates its
     const body = await response.json();
     assert.equal(body.displayName, "Updated-Mac");
     assert.equal(body.sessionId, "live-session-4");
+
+    const macClosed = onceClosed(mac);
+    mac.close();
+    await macClosed;
+  });
+});
+
+test("trusted session resolve accepts any phone from a mac trusted-phones registration", async () => {
+  const firstPhone = makePhoneIdentity();
+  const secondPhone = makePhoneIdentity();
+
+  await withServer(async ({ port }) => {
+    const mac = new WebSocket(`ws://127.0.0.1:${port}/relay/live-session-multi-phone`, {
+      headers: {
+        "x-role": "mac",
+        "x-mac-device-id": "mac-multi",
+        "x-mac-identity-public-key": "mac-public-key-multi",
+      },
+    });
+    await onceOpen(mac);
+
+    mac.send(JSON.stringify({
+      kind: "relayMacRegistration",
+      registration: {
+        macDeviceId: "mac-multi",
+        macIdentityPublicKey: "mac-public-key-multi",
+        trustedPhones: {
+          [firstPhone.phoneDeviceId]: firstPhone.phoneIdentityPublicKey,
+          [secondPhone.phoneDeviceId]: secondPhone.phoneIdentityPublicKey,
+        },
+      },
+    }));
+
+    const firstResponse = await fetch(`http://127.0.0.1:${port}/v1/trusted/session/resolve`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(makeTrustedResolveBody({
+        macDeviceId: "mac-multi",
+        phoneIdentity: firstPhone,
+        nonce: "nonce-multi-1",
+        timestamp: Date.now(),
+      })),
+    });
+    assert.equal(firstResponse.status, 200);
+    assert.equal((await firstResponse.json()).sessionId, "live-session-multi-phone");
+
+    const secondResponse = await fetch(`http://127.0.0.1:${port}/v1/trusted/session/resolve`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(makeTrustedResolveBody({
+        macDeviceId: "mac-multi",
+        phoneIdentity: secondPhone,
+        nonce: "nonce-multi-2",
+        timestamp: Date.now(),
+      })),
+    });
+    assert.equal(secondResponse.status, 200);
+    assert.equal((await secondResponse.json()).sessionId, "live-session-multi-phone");
 
     const macClosed = onceClosed(mac);
     mac.close();

@@ -46,6 +46,26 @@ final class CodexApprovalStateTests: XCTestCase {
         XCTAssertEqual(service.pendingApproval(for: "thread-b")?.id, service.idKey(from: secondRequestID))
     }
 
+    func testPendingApprovalMarksSidebarBadgeAsNeedingAttention() {
+        let service = makeService()
+
+        service.runningThreadIDs.insert("thread-a")
+        service.handleIncomingRPCMessage(
+            RPCMessage(
+                id: .string("approval-1"),
+                method: "item/commandExecution/requestApproval",
+                params: .object([
+                    "threadId": .string("thread-a"),
+                    "turnId": .string("turn-a"),
+                    "command": .string("git status"),
+                ]),
+                includeJSONRPC: false
+            )
+        )
+
+        XCTAssertEqual(service.threadRunBadgeState(for: "thread-a"), .approval)
+    }
+
     func testServerRequestResolvedRemovesOnlyMatchingApproval() {
         let service = makeService()
         let firstRequestID: JSONValue = .string("approval-1")

@@ -177,6 +177,57 @@ test("push tracker uses failure previews for failed turns", async () => {
   assert.equal(notifications[0].body, "Tests failed on CI.");
 });
 
+test("push tracker sends an attention push for approval requests", async () => {
+  const notifications = [];
+  const tracker = createPushNotificationTracker({
+    sessionId: "session-approval",
+    pushServiceClient: {
+      hasConfiguredBaseUrl: true,
+      async notifyAttention(payload) {
+        notifications.push(payload);
+        return { ok: true };
+      },
+    },
+  });
+
+  tracker.handleOutbound(JSON.stringify({
+    method: "thread/started",
+    params: {
+      thread: {
+        id: "thread-approval",
+        title: "Ship review",
+      },
+    },
+  }));
+  tracker.handleOutbound(JSON.stringify({
+    id: "approval-1",
+    method: "item/commandExecution/requestApproval",
+    params: {
+      threadId: "thread-approval",
+      turnId: "turn-approval",
+      command: "npm test",
+    },
+  }));
+  tracker.handleOutbound(JSON.stringify({
+    id: "approval-1",
+    method: "item/commandExecution/requestApproval",
+    params: {
+      threadId: "thread-approval",
+      turnId: "turn-approval",
+      command: "npm test",
+    },
+  }));
+
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0].threadId, "thread-approval");
+  assert.equal(notifications[0].turnId, "turn-approval");
+  assert.equal(notifications[0].requestId, "approval-1");
+  assert.equal(notifications[0].title, "Ship review");
+  assert.equal(notifications[0].body, "Approval needed: npm test");
+});
+
 test("push tracker sends a failed push for terminal error events", async () => {
   const notifications = [];
   const tracker = createPushNotificationTracker({

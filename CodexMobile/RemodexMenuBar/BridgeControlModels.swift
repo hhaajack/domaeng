@@ -1,7 +1,7 @@
 // FILE: BridgeControlModels.swift
-// Purpose: Defines the machine-readable bridge snapshot plus the menu-bar-specific CLI/update state models.
+// Purpose: Defines the machine-readable bridge snapshot plus menu-bar-specific CLI/compatibility models.
 // Layer: Companion app model
-// Exports: bridge snapshot, runtime status, pairing payload, CLI availability, and update state helpers
+// Exports: bridge snapshot, runtime status, pairing payload, CLI availability, and compatibility helpers
 // Depends on: Foundation
 
 import Foundation
@@ -16,6 +16,7 @@ struct BridgeSnapshot: Codable, Equatable {
     let daemonConfig: BridgeDaemonConfig?
     let bridgeStatus: BridgeRuntimeStatus?
     let pairingSession: BridgePairingSession?
+    let trustedDevices: [BridgeTrustedDevice]?
     let stdoutLogPath: String
     let stderrLogPath: String
 }
@@ -37,6 +38,7 @@ struct BridgeRuntimeStatus: Codable, Equatable {
 
 struct BridgePairingSession: Codable, Equatable {
     let createdAt: String?
+    let pairingCode: String?
     let pairingPayload: BridgePairingPayload?
 }
 
@@ -49,24 +51,29 @@ struct BridgePairingPayload: Codable, Equatable {
     let expiresAt: Int64
 }
 
-struct BridgePackageUpdateState: Equatable {
-    let installedVersion: String?
-    let latestVersion: String?
-    let errorMessage: String?
+struct BridgeTrustedDevice: Codable, Equatable, Identifiable {
+    let id: String
+    let displayName: String
+    let kind: String?
+    let fingerprint: String
+    let trustedAt: String?
+    let lastSeenAt: String?
+    let disabledAt: String?
+    let status: String?
+}
 
-    static let empty = BridgePackageUpdateState(
-        installedVersion: nil,
-        latestVersion: nil,
-        errorMessage: nil
-    )
+enum BridgeClientCompatibility {
+    static let supportedBridgeVersionInfoKey = "RemodexSupportedBridgeVersion"
+    static let fallbackSupportedBridgeVersion = "1.5.0"
 
-    var isUpdateAvailable: Bool {
-        guard let installedVersion,
-              let latestVersion else {
-            return false
+    static var supportedBridgeVersion: String {
+        if let configuredVersion = (Bundle.main.object(
+            forInfoDictionaryKey: supportedBridgeVersionInfoKey
+        ) as? String)?.nonEmptyTrimmed {
+            return configuredVersion
         }
 
-        return installedVersion.compare(latestVersion, options: .numeric) == .orderedAscending
+        return fallbackSupportedBridgeVersion
     }
 }
 
@@ -76,7 +83,9 @@ enum BridgeCLIAvailability: Equatable {
     case missing
     case broken(message: String)
 
-    static let installCommand = "npm install -g remodex@latest"
+    static var installCommand: String {
+        "npm install -g remodex@\(BridgeClientCompatibility.supportedBridgeVersion)"
+    }
 
     var isAvailable: Bool {
         if case .available = self {
@@ -166,6 +175,10 @@ extension BridgeSnapshot {
         bridgeStatus?.lastError?.nonEmptyTrimmed ?? ""
     }
 
+    var trustedDeviceList: [BridgeTrustedDevice] {
+        trustedDevices ?? []
+    }
+
     var stateDirectoryPath: String {
         let stderrURL = URL(fileURLWithPath: stderrLogPath)
         return stderrURL.deletingLastPathComponent().deletingLastPathComponent().path
@@ -175,11 +188,48 @@ extension BridgeSnapshot {
         classifyRelay(effectiveRelayURL)
     }
 
+    var tailscaleRelayURL: String {
+        guard classifyRelay(effectiveRelayURL) != "Local" else {
+            return ""
+        }
+
+        return effectiveRelayURL
+    }
+
+    var tailscaleWebAppURL: String {
+        webAppURL(fromRelayURL: tailscaleRelayURL) ?? ""
+    }
+
+    var localLANRelayURL: String {
+        "ws://\(Self.localLANHostName):9000/relay"
+    }
+
+    var localLANWebAppURL: String {
+        "http://\(Self.localLANHostName):9000/app/"
+    }
+
     private static let relativeFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
         return formatter
     }()
+
+    private static var localLANHostName: String {
+        let hostName = ProcessInfo.processInfo.hostName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !hostName.isEmpty else {
+            return "localhost"
+        }
+
+        let normalized = hostName
+            .replacingOccurrences(of: " ", with: "-")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard !normalized.isEmpty else {
+            return "localhost"
+        }
+
+        return normalized.contains(".") ? normalized : "\(normalized).local"
+    }
 }
 
 extension BridgeRuntimeStatus {
@@ -200,7 +250,15 @@ extension BridgePairingPayload {
     }
 
     var isExpired: Bool {
-        expiryDate <= Date()
+        isExpired(at: Date())
+    }
+
+    func isExpired(at date: Date) -> Bool {
+        expiryDate <= date
+    }
+
+    func stateLabel(at date: Date) -> String {
+        isExpired(at: date) ? "Expired" : "Ready"
     }
 }
 
@@ -229,6 +287,36 @@ private func classifyRelay(_ relayURL: String) -> String {
     }
 
     return "Remote"
+}
+
+private func webAppURL(fromRelayURL relayURL: String) -> String? {
+    guard !relayURL.isEmpty,
+          var components = URLComponents(string: relayURL) else {
+        return nil
+    }
+
+    switch components.scheme?.lowercased() {
+    case "wss":
+        components.scheme = "https"
+    case "ws":
+        components.scheme = "http"
+    case "https", "http":
+        break
+    default:
+        return nil
+    }
+
+    var pathParts = components.path
+        .split(separator: "/")
+        .map(String.init)
+    if pathParts.last == "relay" {
+        pathParts.removeLast()
+    }
+    pathParts.append("app")
+    components.path = "/" + pathParts.joined(separator: "/") + "/"
+    components.query = nil
+    components.fragment = nil
+    return components.string
 }
 
 private let bridgeISO8601Formatter: ISO8601DateFormatter = {

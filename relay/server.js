@@ -4,7 +4,9 @@
 // Exports: createRelayServer, createFixedWindowRateLimiter
 // Depends on: http, ws, ./relay, ./push-service
 
+const fs = require("fs");
 const http = require("http");
+const path = require("path");
 const { monitorEventLoopDelay } = require("perf_hooks");
 const { WebSocketServer } = require("ws");
 const {
@@ -25,6 +27,7 @@ function createRelayServer({
   pushSessionService,
   relayOptions = {},
   trustProxy = false,
+  webAppDir = path.resolve(__dirname, "..", "web", "dist"),
 } = {}) {
   const runtimeMetrics = createRuntimeMetrics();
   const pushEnabled = Boolean(enablePushService || pushSessionService);
@@ -50,6 +53,7 @@ function createRelayServer({
       pushSessionService: resolvedPushSessionService,
       runtimeMetrics,
       trustProxy,
+      webAppDir,
     });
   });
   const wss = new WebSocketServer({ noServer: true });
@@ -99,6 +103,7 @@ async function handleHTTPRequest(req, res, {
   pushSessionService,
   runtimeMetrics,
   trustProxy,
+  webAppDir,
 }) {
   const pathname = safePathname(req.url);
   if (req.method === "GET" && pathname === "/health") {
@@ -121,6 +126,30 @@ async function handleHTTPRequest(req, res, {
     return writeRateLimitResponse(res);
   }
 
+  if (req.method === "GET" && isWebAppPath(pathname)) {
+    const redirectLocation = tailscaleWebAppRedirectLocation(req);
+    if (redirectLocation) {
+      return writeRedirect(res, 308, redirectLocation);
+    }
+    return handleWebAppRoute(req, res, webAppDir);
+  }
+
+  if (req.method === "GET" && pathname === "/v1/push/web/vapid-public-key") {
+    if (!pushEnabled) {
+      return writeJSON(res, 404, {
+        ok: false,
+        error: "Not found",
+      });
+    }
+    if (!pushRateLimiter.allow(`${requestKey}:web-vapid-public-key`)) {
+      return writeRateLimitResponse(res);
+    }
+    return writeJSON(res, 200, {
+      ok: true,
+      publicKey: pushSessionService.getWebPushPublicKey(),
+    });
+  }
+
   if (req.method === "POST" && pathname === "/v1/push/session/register-device") {
     if (!pushEnabled) {
       return writeJSON(res, 404, {
@@ -132,6 +161,32 @@ async function handleHTTPRequest(req, res, {
       return writeRateLimitResponse(res);
     }
     return handleJSONRoute(req, res, async (body) => pushSessionService.registerDevice(body));
+  }
+
+  if (req.method === "POST" && pathname === "/v1/push/session/register-web") {
+    if (!pushEnabled) {
+      return writeJSON(res, 404, {
+        ok: false,
+        error: "Not found",
+      });
+    }
+    if (!pushRateLimiter.allow(`${requestKey}:register-web`)) {
+      return writeRateLimitResponse(res);
+    }
+    return handleJSONRoute(req, res, async (body) => pushSessionService.registerWebPush(body));
+  }
+
+  if (req.method === "POST" && pathname === "/v1/push/session/unregister-web") {
+    if (!pushEnabled) {
+      return writeJSON(res, 404, {
+        ok: false,
+        error: "Not found",
+      });
+    }
+    if (!pushRateLimiter.allow(`${requestKey}:unregister-web`)) {
+      return writeRateLimitResponse(res);
+    }
+    return handleJSONRoute(req, res, async (body) => pushSessionService.unregisterWebPush(body));
   }
 
   if (req.method === "POST" && pathname === "/v1/push/session/notify-completion") {
@@ -147,6 +202,19 @@ async function handleHTTPRequest(req, res, {
     return handleJSONRoute(req, res, async (body) => pushSessionService.notifyCompletion(body));
   }
 
+  if (req.method === "POST" && pathname === "/v1/push/session/notify-attention") {
+    if (!pushEnabled) {
+      return writeJSON(res, 404, {
+        ok: false,
+        error: "Not found",
+      });
+    }
+    if (!pushRateLimiter.allow(`${requestKey}:notify-attention`)) {
+      return writeRateLimitResponse(res);
+    }
+    return handleJSONRoute(req, res, async (body) => pushSessionService.notifyAttention(body));
+  }
+
   if (req.method === "POST" && pathname === "/v1/trusted/session/resolve") {
     return handleJSONRoute(req, res, async (body) => resolveTrustedMacSession(body));
   }
@@ -159,6 +227,98 @@ async function handleHTTPRequest(req, res, {
     ok: false,
     error: "Not found",
   });
+}
+
+function isWebAppPath(pathname) {
+  return pathname === "/app" || pathname.startsWith("/app/");
+}
+
+function handleWebAppRoute(req, res, webAppDir) {
+  const resolvedRoot = path.resolve(webAppDir || "");
+  if (!resolvedRoot || !fs.existsSync(resolvedRoot)) {
+    return writeJSON(res, 404, {
+      ok: false,
+      error: "Web app is not built",
+      code: "web_app_unavailable",
+    });
+  }
+
+  const pathname = safePathname(req.url);
+  const relativePath = pathname === "/app"
+    ? "index.html"
+    : safeDecodeURIComponent(pathname.slice("/app/".length)) || "index.html";
+  const candidatePath = path.resolve(resolvedRoot, relativePath);
+  const rootPrefix = `${resolvedRoot}${path.sep}`;
+  if (candidatePath !== resolvedRoot && !candidatePath.startsWith(rootPrefix)) {
+    return writeJSON(res, 403, {
+      ok: false,
+      error: "Forbidden",
+      code: "web_app_forbidden",
+    });
+  }
+
+  let filePath = candidatePath;
+  if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+    filePath = path.join(resolvedRoot, "index.html");
+  }
+  if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+    return writeJSON(res, 404, {
+      ok: false,
+      error: "Web app is not built",
+      code: "web_app_unavailable",
+    });
+  }
+
+  res.statusCode = 200;
+  res.setHeader("content-type", contentTypeForPath(filePath));
+  res.setHeader(
+    "cache-control",
+    shouldBypassWebAppCache(filePath) ? "no-store" : "public, max-age=31536000, immutable"
+  );
+  fs.createReadStream(filePath).pipe(res);
+  return undefined;
+}
+
+function shouldBypassWebAppCache(filePath) {
+  const basename = path.basename(filePath);
+  return basename === "index.html"
+    || basename === "sw.js"
+    || basename === "push-sw.js"
+    || basename === "manifest.webmanifest";
+}
+
+function contentTypeForPath(filePath) {
+  switch (path.extname(filePath).toLowerCase()) {
+    case ".html":
+      return "text/html; charset=utf-8";
+    case ".js":
+      return "text/javascript; charset=utf-8";
+    case ".css":
+      return "text/css; charset=utf-8";
+    case ".json":
+      return "application/json; charset=utf-8";
+    case ".webmanifest":
+      return "application/manifest+json; charset=utf-8";
+    case ".svg":
+      return "image/svg+xml";
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".ico":
+      return "image/x-icon";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+function safeDecodeURIComponent(value) {
+  try {
+    return decodeURIComponent(value || "");
+  } catch {
+    return "";
+  }
 }
 
 async function handleJSONRoute(req, res, handler) {
@@ -229,14 +389,54 @@ function writeRateLimitResponse(res) {
   });
 }
 
+function writeRedirect(res, status, location) {
+  res.statusCode = status;
+  res.setHeader("location", location);
+  res.end();
+}
+
+function tailscaleWebAppRedirectLocation(req) {
+  const hostHeader = readHeaderString(req?.headers?.host);
+  if (!hostHeader) {
+    return "";
+  }
+
+  let hostURL;
+  try {
+    hostURL = new URL(`http://${hostHeader}`);
+  } catch {
+    return "";
+  }
+
+  const hostname = hostURL.hostname.toLowerCase();
+  if (!hostname.endsWith(".ts.net") || !hostURL.port || hostURL.port === "443") {
+    return "";
+  }
+
+  let requestURL;
+  try {
+    requestURL = new URL(req?.url || "/", "http://localhost");
+  } catch {
+    requestURL = new URL("/app/", "http://localhost");
+  }
+
+  const pathname = requestURL.pathname === "/app" ? "/app/" : requestURL.pathname;
+  return `https://${hostname}${pathname}${requestURL.search}`;
+}
+
 function createDisabledPushSessionService() {
   return {
+    getWebPushPublicKey() {
+      return "";
+    },
     getStats() {
       return {
         enabled: false,
         registeredSessions: 0,
         deliveredDedupeKeys: 0,
         apnsConfigured: false,
+        webPushConfigured: false,
+        webPushSubscriptions: 0,
       };
     },
   };
@@ -396,7 +596,9 @@ if (require.main === module) {
     ["REMODEX_ENABLE_PUSH_SERVICE", "PHODEX_ENABLE_PUSH_SERVICE"]
   ) ?? false;
   const bindHost = process.env.RELAY_BIND_HOST || "0.0.0.0";
-  const { server } = createRelayServer({ enablePushService, trustProxy });
+  const webAppDir = readHeaderString(process.env.REMODEX_WEB_APP_DIR)
+    || path.resolve(__dirname, "..", "web", "dist");
+  const { server } = createRelayServer({ enablePushService, trustProxy, webAppDir });
   server.listen(port, bindHost, () => {
     console.log(`[relay] listening on ${bindHost}:${port}`);
   });

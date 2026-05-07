@@ -10,12 +10,17 @@ const path = require("path");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  getEnabledTrustedPhones,
+  getTrustedPhonePublicKey,
   loadOrCreateBridgeDeviceState,
+  listTrustedDevices,
   readBridgeDeviceState,
   rememberLastSeenPhoneAppVersion,
   rememberTrustedPhone,
+  revokeTrustedDevice,
   resetBridgeDeviceState,
   resolveBridgeRelaySession,
+  setTrustedDeviceEnabled,
 } = require("../src/secure-device-state");
 
 // ─── Relay Session Resolution ───────────────────────────────
@@ -34,8 +39,12 @@ test("resolveBridgeRelaySession always creates a fresh relay session", () => {
   assert.deepEqual(resolved.deviceState, state);
 });
 
-test("rememberTrustedPhone stores the trusted phone identity", () => {
-  const state = makeDeviceState();
+test("rememberTrustedPhone stores trusted phone identities by device", () => {
+  const state = makeDeviceState({
+    trustedPhones: {
+      "phone-1": "phone-public-key-1",
+    },
+  });
 
   const nextState = rememberTrustedPhone(
     state,
@@ -45,7 +54,84 @@ test("rememberTrustedPhone stores the trusted phone identity", () => {
   );
 
   assert.deepEqual(nextState.trustedPhones, {
+    "phone-1": "phone-public-key-1",
     "phone-3": "phone-public-key-3",
+  });
+});
+
+test("rememberTrustedPhone stores display metadata without exposing secrets in snapshots", () => {
+  const nextState = rememberTrustedPhone(
+    makeDeviceState(),
+    "web-device",
+    Buffer.from("web-public-key").toString("base64"),
+    {
+      persist: false,
+      displayName: "Safari on macOS",
+      deviceKind: "web",
+      now: new Date("2026-05-01T12:00:00.000Z"),
+    }
+  );
+
+  assert.equal(nextState.trustedPhoneMetadata["web-device"].displayName, "Safari on macOS");
+  assert.equal(nextState.trustedPhoneMetadata["web-device"].deviceKind, "web");
+  assert.equal(nextState.trustedPhoneMetadata["web-device"].trustedAt, "2026-05-01T12:00:00.000Z");
+
+  const [snapshot] = listTrustedDevices(nextState);
+  assert.match(snapshot.id, /^dev_[a-f0-9]{12}$/);
+  assert.equal(snapshot.displayName, "Safari on macOS");
+  assert.equal(snapshot.kind, "web");
+  assert.equal(snapshot.status, "enabled");
+  assert.equal(Object.hasOwn(snapshot, "phoneDeviceId"), false);
+  assert.equal(Object.hasOwn(snapshot, "phoneIdentityPublicKey"), false);
+});
+
+test("setTrustedDeviceEnabled disables reconnect without deleting the trusted record", () => {
+  withTempDeviceStateEnv(() => {
+    const trustedState = rememberTrustedPhone(
+      makeDeviceState(),
+      "phone-disable",
+      "phone-public-key-disable",
+      { persist: true, now: new Date("2026-05-01T12:00:00.000Z") }
+    );
+    const [snapshot] = listTrustedDevices(trustedState);
+
+    const result = setTrustedDeviceEnabled(snapshot.id, false, {
+      now: new Date("2026-05-01T12:01:00.000Z"),
+    });
+    const reloaded = loadOrCreateBridgeDeviceState();
+
+    assert.equal(result.trustedDevice.status, "disabled");
+    assert.equal(reloaded.trustedPhones["phone-disable"], "phone-public-key-disable");
+    assert.equal(getTrustedPhonePublicKey(reloaded, "phone-disable"), null);
+    assert.deepEqual(getEnabledTrustedPhones(reloaded), {});
+  });
+});
+
+test("revokeTrustedDevice removes one trusted device by opaque id", () => {
+  withTempDeviceStateEnv(() => {
+    const trustedState = rememberTrustedPhone(
+      rememberTrustedPhone(
+        makeDeviceState(),
+        "phone-keep",
+        "phone-public-key-keep",
+        { persist: false, displayName: "Keep" }
+      ),
+      "phone-revoke",
+      "phone-public-key-revoke",
+      { persist: true, displayName: "Remove" }
+    );
+    const revoked = listTrustedDevices(trustedState)
+      .find((device) => device.displayName === "Remove");
+
+    assert.ok(revoked);
+    const result = revokeTrustedDevice(revoked.id);
+    const reloaded = loadOrCreateBridgeDeviceState();
+
+    assert.equal(result.trustedDevices.length, 1);
+    assert.deepEqual(reloaded.trustedPhones, {
+      "phone-keep": "phone-public-key-keep",
+    });
+    assert.equal(reloaded.trustedPhoneMetadata["phone-revoke"], undefined);
   });
 });
 
@@ -197,15 +283,26 @@ test("resetBridgeDeviceState removes both canonical and mirrored pairing state",
 });
 
 function makeDeviceState(overrides = {}) {
-  return {
+  const state = {
     version: 1,
     macDeviceId: "mac-device-id",
     macIdentityPublicKey: "mac-public-key",
     macIdentityPrivateKey: "mac-private-key",
     trustedPhones: {},
+    trustedPhoneMetadata: {},
     lastSeenPhoneAppVersion: null,
     ...overrides,
   };
+  for (const deviceId of Object.keys(state.trustedPhones || {})) {
+    state.trustedPhoneMetadata[deviceId] ||= {
+      displayName: "",
+      deviceKind: deviceId.startsWith("web-") ? "web" : "ios",
+      trustedAt: null,
+      lastSeenAt: null,
+      disabledAt: null,
+    };
+  }
+  return state;
 }
 
 function withTempDeviceStateEnv(run) {

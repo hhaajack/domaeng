@@ -115,6 +115,36 @@ final class CodexPushNotificationRegistrationTests: XCTestCase {
         XCTAssertEqual(recordedParams?.objectValue?["deviceToken"]?.stringValue, "deadbeef")
     }
 
+    func testBackgroundApprovalRequestSchedulesNotification() async {
+        let center = MockUserNotificationCenter(status: .authorized)
+        let registrar = MockRemoteNotificationRegistrar()
+        let service = makeService(
+            userNotificationCenter: center,
+            remoteNotificationRegistrar: registrar
+        )
+        service.isAppInForeground = false
+        service.threads = [CodexThread(id: "thread-approval", title: "Needs approval")]
+
+        service.handleIncomingRPCMessage(
+            RPCMessage(
+                id: .string("approval-1"),
+                method: "item/commandExecution/requestApproval",
+                params: .object([
+                    "threadId": .string("thread-approval"),
+                    "turnId": .string("turn-approval"),
+                    "command": .string("npm test"),
+                ]),
+                includeJSONRPC: false
+            )
+        )
+        try? await Task.sleep(nanoseconds: 80_000_000)
+
+        XCTAssertEqual(center.addRequests.count, 1)
+        XCTAssertEqual(center.addRequests[0].content.title, "Needs approval")
+        XCTAssertEqual(center.addRequests[0].content.userInfo[CodexNotificationPayloadKeys.threadId] as? String, "thread-approval")
+        XCTAssertEqual(center.addRequests[0].content.userInfo[CodexNotificationPayloadKeys.source] as? String, "codex.approvalRequired")
+    }
+
     func testNotificationOpenStaysPendingUntilThreadBecomesAvailable() async {
         let center = MockUserNotificationCenter(status: .authorized)
         let registrar = MockRemoteNotificationRegistrar()

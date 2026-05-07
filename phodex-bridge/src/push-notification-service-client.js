@@ -30,6 +30,32 @@ function createPushNotificationServiceClient({
     });
   }
 
+  async function getWebPushPublicKey() {
+    return getJSON("/v1/push/web/vapid-public-key");
+  }
+
+  async function registerWebPush({
+    subscription,
+    alertsEnabled,
+  } = {}) {
+    return postJSON("/v1/push/session/register-web", {
+      sessionId,
+      notificationSecret,
+      subscription,
+      alertsEnabled,
+    });
+  }
+
+  async function unregisterWebPush({
+    endpoint,
+  } = {}) {
+    return postJSON("/v1/push/session/unregister-web", {
+      sessionId,
+      notificationSecret,
+      endpoint,
+    });
+  }
+
   async function notifyCompletion({
     threadId,
     turnId,
@@ -50,7 +76,43 @@ function createPushNotificationServiceClient({
     });
   }
 
+  async function notifyAttention({
+    threadId,
+    turnId,
+    requestId,
+    title,
+    body,
+    dedupeKey,
+  } = {}) {
+    return postJSON("/v1/push/session/notify-attention", {
+      sessionId,
+      notificationSecret,
+      threadId,
+      turnId,
+      requestId,
+      title,
+      body,
+      dedupeKey,
+    });
+  }
+
   async function postJSON(pathname, payload) {
+    return requestJSON(pathname, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async function getJSON(pathname) {
+    return requestJSON(pathname, {
+      method: "GET",
+    });
+  }
+
+  async function requestJSON(pathname, options) {
     if (!normalizedBaseUrl || typeof fetchImpl !== "function") {
       return { ok: false, skipped: true };
     }
@@ -67,11 +129,7 @@ function createPushNotificationServiceClient({
     let response;
     try {
       response = await fetchImpl(`${normalizedBaseUrl}${pathname}`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(payload),
+        ...options,
         signal: controller?.signal,
       });
     } catch (error) {
@@ -102,7 +160,11 @@ function createPushNotificationServiceClient({
   return {
     hasConfiguredBaseUrl: Boolean(normalizedBaseUrl),
     registerDevice,
+    getWebPushPublicKey,
+    registerWebPush,
+    unregisterWebPush,
     notifyCompletion,
+    notifyAttention,
     logUnavailable() {
       if (!normalizedBaseUrl) {
         console.log(`${logPrefix} push notifications disabled: no push service URL configured`);

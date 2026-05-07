@@ -553,6 +553,7 @@ function readBridgeConfig({
   const daemonConfig = readDaemonConfig({ env, fsImpl }) || {};
   const privateDefaults = readPrivatePackageDefaults({ runtimeRoot, fsImpl });
   const sourceCheckout = isSourceCheckout(runtimeRoot, fsImpl);
+  const persistedRelayUrl = readString(daemonConfig.relayUrl) || "";
   const defaultRelayUrl = sourceCheckout
     ? ""
     : privateDefaults.relayUrl;
@@ -563,12 +564,14 @@ function readBridgeConfig({
   );
   const relayUrl = readFirstDefinedEnv(
     ["REMODEX_RELAY", "PHODEX_RELAY"],
-    defaultRelayUrl,
+    persistedRelayUrl || defaultRelayUrl,
     env
   );
-  const defaultPushServiceUrl = sourceCheckout || explicitRelayUrl
-    ? ""
-    : privateDefaults.pushServiceUrl;
+  const derivedPushServiceUrl = pushServiceUrlFromRelayUrl(relayUrl);
+  const relayUsesPackagedDefault = !explicitRelayUrl
+    && (!persistedRelayUrl || persistedRelayUrl === defaultRelayUrl);
+  const defaultPushServiceUrl = (relayUsesPackagedDefault ? privateDefaults.pushServiceUrl : "")
+    || derivedPushServiceUrl;
   const codexEndpoint = readFirstDefinedEnv(
     ["REMODEX_CODEX_ENDPOINT", "PHODEX_CODEX_ENDPOINT"],
     "",
@@ -659,6 +662,35 @@ function readPrivatePackageDefaults({ runtimeRoot, fsImpl }) {
       relayUrl: "",
       pushServiceUrl: "",
     };
+  }
+}
+
+function pushServiceUrlFromRelayUrl(value) {
+  const rawValue = readString(value);
+  if (!rawValue) {
+    return "";
+  }
+
+  try {
+    const url = new URL(rawValue);
+    if (url.protocol === "wss:") {
+      url.protocol = "https:";
+    } else if (url.protocol === "ws:") {
+      url.protocol = "http:";
+    } else if (url.protocol !== "https:" && url.protocol !== "http:") {
+      return "";
+    }
+
+    const parts = url.pathname.split("/").filter(Boolean);
+    if (parts.at(-1) === "relay") {
+      parts.pop();
+    }
+    url.pathname = parts.length ? `/${parts.join("/")}` : "/";
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return "";
   }
 }
 

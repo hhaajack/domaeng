@@ -6,11 +6,6 @@
 
 import Foundation
 
-private let minimumBridgePackageUpdateCommand = "npm install -g remodex@latest"
-private let forcedBridgeUpgradeFromVersion = "1.3.8"
-private let forcedBridgeUpgradeTargetVersion = "1.3.9"
-private let forcedBridgeUpgradeCommand = "npm install -g remodex@1.3.9"
-
 enum CodexGPTAccountStatus: String, Codable, Sendable {
     case unknown
     case unavailable
@@ -174,7 +169,7 @@ extension CodexService {
     static let legacyGPTLoginCallbackEnabled = true
 
     // Refreshes bridge-managed account + package metadata together for foreground/reconnect flows.
-    func refreshBridgeManagedState(allowAvailableBridgeUpdatePrompt: Bool = false) async {
+    func refreshBridgeManagedState() async {
         guard isConnected else {
             applyGPTAccountConnectionFallback()
             return
@@ -184,8 +179,7 @@ extension CodexService {
             let bridgeState = try await fetchBridgeManagedStatusSnapshot()
             applyBridgePackageStatus(
                 from: bridgeState.payload,
-                allowMissingVersionPrompt: bridgeState.allowMissingVersionPrompt,
-                allowAvailableBridgeUpdatePrompt: allowAvailableBridgeUpdatePrompt
+                allowMissingVersionPrompt: bridgeState.allowMissingVersionPrompt
             )
             applyBridgeManagedAccountSnapshot(from: bridgeState.payload)
         } catch {
@@ -208,8 +202,8 @@ extension CodexService {
         }
     }
 
-    // Refreshes only the bridge package version state so Remodex updates stay independent from GPT UX.
-    func refreshBridgeVersionState(allowAvailableBridgeUpdatePrompt: Bool = false) async {
+    // Refreshes only the bridge package version state so compatibility status stays independent from GPT UX.
+    func refreshBridgeVersionState() async {
         guard isConnected else {
             return
         }
@@ -218,8 +212,7 @@ extension CodexService {
             let bridgeState = try await fetchBridgeManagedStatusSnapshot()
             applyBridgePackageStatus(
                 from: bridgeState.payload,
-                allowMissingVersionPrompt: bridgeState.allowMissingVersionPrompt,
-                allowAvailableBridgeUpdatePrompt: allowAvailableBridgeUpdatePrompt
+                allowMissingVersionPrompt: bridgeState.allowMissingVersionPrompt
             )
         } catch {
             // Keep the last-known bridge version info when the status read fails transiently.
@@ -672,11 +665,10 @@ extension CodexService {
         }
     }
 
-    // Applies bridge package versions and prompts independently from GPT account state.
+    // Applies bridge package compatibility status independently from GPT account state.
     private func applyBridgePackageStatus(
         from payloadObject: IncomingParamsObject,
-        allowMissingVersionPrompt: Bool,
-        allowAvailableBridgeUpdatePrompt: Bool
+        allowMissingVersionPrompt: Bool
     ) {
         let previousTransportMode = codexTransportMode
         codexTransportMode = decodeCodexTransportMode(
@@ -693,18 +685,11 @@ extension CodexService {
             in: payloadObject,
             keys: ["bridgeVersion", "bridge_version", "bridgePackageVersion", "bridge_package_version"]
         )
-        latestBridgePackageVersion = firstStringValue(
-            in: payloadObject,
-            keys: ["bridgeLatestVersion", "bridge_latest_version", "bridgePublishedVersion", "bridge_published_version"]
-        )
         applyBridgeHostMetadata(from: payloadObject)
         evaluateRequiredBridgePackageVersion(
             from: payloadObject,
             allowMissingVersionPrompt: allowMissingVersionPrompt
         )
-        if allowAvailableBridgeUpdatePrompt {
-            evaluateAvailableBridgePackageVersionPromptIfNeeded()
-        }
     }
 
     private func decodeCodexTransportMode(from rawValue: String?) -> CodexRuntimeTransportMode {
@@ -809,47 +794,7 @@ extension CodexService {
         return CodexBridgeUpdatePrompt(
             title: "Update Remodex on your computer to reconnect",
             message: message,
-            command: minimumBridgePackageUpdateCommand
-        )
-    }
-
-    // Surfaces a softer "npm update available" prompt without overriding stricter compatibility prompts.
-    private func evaluateAvailableBridgePackageVersionPromptIfNeeded() {
-        guard isAppInForeground else {
-            return
-        }
-
-        guard bridgeUpdatePrompt == nil else {
-            return
-        }
-
-        guard let installedVersion = normalizedBridgePackageVersion(bridgeInstalledVersion) else {
-            return
-        }
-
-        if installedVersion == forcedBridgeUpgradeFromVersion {
-            guard lastPresentedAvailableBridgePackageVersion != forcedBridgeUpgradeTargetVersion else {
-                return
-            }
-
-            lastPresentedAvailableBridgePackageVersion = forcedBridgeUpgradeTargetVersion
-            bridgeUpdatePrompt = forcedBridgePackageUpdatePrompt(currentVersion: installedVersion)
-            return
-        }
-
-        guard let latestVersion = normalizedBridgePackageVersion(latestBridgePackageVersion),
-              installedVersion.compare(latestVersion, options: .numeric) == .orderedAscending else {
-            return
-        }
-
-        guard lastPresentedAvailableBridgePackageVersion != latestVersion else {
-            return
-        }
-
-        lastPresentedAvailableBridgePackageVersion = latestVersion
-        bridgeUpdatePrompt = availableBridgePackageUpdatePrompt(
-            currentVersion: installedVersion,
-            latestVersion: latestVersion
+            command: adaptedBridgePackageInstallCommand
         )
     }
 
@@ -863,23 +808,8 @@ extension CodexService {
         return trimmed
     }
 
-    private func availableBridgePackageUpdatePrompt(
-        currentVersion: String,
-        latestVersion: String
-    ) -> CodexBridgeUpdatePrompt {
-        CodexBridgeUpdatePrompt(
-            title: "A newer Remodex update is available on your computer",
-            message: "This computer bridge is running Remodex \(currentVersion), and npm now has Remodex \(latestVersion). Update the package on your computer when you're ready, then reconnect to start using the newer build.",
-            command: minimumBridgePackageUpdateCommand
-        )
-    }
-
-    private func forcedBridgePackageUpdatePrompt(currentVersion: String) -> CodexBridgeUpdatePrompt {
-        CodexBridgeUpdatePrompt(
-            title: "Update Remodex on your computer to reconnect",
-            message: "This computer bridge is running Remodex \(currentVersion). Update the Remodex CLI on your computer to \(forcedBridgeUpgradeTargetVersion), then reconnect.",
-            command: forcedBridgeUpgradeCommand
-        )
+    private var adaptedBridgePackageInstallCommand: String {
+        RemodexBridgeCompatibility.adaptedBridgePackageInstallCommand
     }
 
     // Opens the pending ChatGPT login URL on the bridge Mac instead of opening Safari on iPhone.

@@ -1,9 +1,15 @@
 import {
+  AlertCircle,
   BadgeCheck,
+  Bell,
+  BellOff,
   Camera,
   Check,
   ChevronDown,
   ChevronLeft,
+  CircleCheck,
+  Folder,
+  FolderOpen,
   GitBranch,
   GitCommitHorizontal,
   Image as ImageIcon,
@@ -22,7 +28,16 @@ import {
 } from "lucide-react";
 import { Component, useEffect, useRef, useState, type ClipboardEvent, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
-import type { ApprovalRequest, ModelOption, TimelineMessage } from "./types";
+import type {
+  ApprovalRequest,
+  CodexRateLimitBucket,
+  CodexRateLimitDisplayRow,
+  CodexThread,
+  InAppNotification,
+  ModelOption,
+  ThreadRunState,
+  TimelineMessage
+} from "./types";
 import { useRemodexStore } from "./state/useRemodexStore";
 import {
   canonicalTailscaleWebAppURL,
@@ -217,13 +232,69 @@ function PairingScreen() {
 
 function Workspace() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [projectOpenByKey, setProjectOpenByKey] = useState<Record<string, boolean>>({});
   const threads = useRemodexStore((state) => state.threads);
   const activeThreadId = useRemodexStore((state) => state.activeThreadId);
+  const runningTurnByThread = useRemodexStore((state) => state.runningTurnByThread);
+  const threadRunStateByThread = useRemodexStore((state) => state.threadRunStateByThread);
+  const pendingApprovals = useRemodexStore((state) => state.pendingApprovals);
+  const inAppNotifications = useRemodexStore((state) => state.inAppNotifications);
+  const dismissInAppNotification = useRemodexStore((state) => state.dismissInAppNotification);
   const openThread = useRemodexStore((state) => state.openThread);
   const newThread = useRemodexStore((state) => state.newThread);
   const refreshThreads = useRemodexStore((state) => state.refreshThreads);
   const settingsOpen = useRemodexStore((state) => state.settingsOpen);
   const setSettingsOpen = useRemodexStore((state) => state.setSettingsOpen);
+  const activeThread = threads.find((thread) => thread.id === activeThreadId);
+  const projectGroups = buildProjectGroups(threads);
+  const activeProjectKey = activeThread ? projectKeyForThread(activeThread) : projectGroups[0]?.key;
+  const activeProject = projectGroups.find((project) => project.key === activeProjectKey);
+  const newThreadCwd = activeThread?.cwd || activeProject?.cwd;
+
+  useEffect(() => {
+    if (!activeProjectKey) {
+      return;
+    }
+    setProjectOpenByKey((state) => state[activeProjectKey] === false ? { ...state, [activeProjectKey]: true } : state);
+  }, [activeProjectKey]);
+
+  useEffect(() => {
+    const openExternalThread = (threadId: string) => {
+      if (!threadId || threadId === activeThreadId) {
+        return;
+      }
+      setSidebarOpen(false);
+      void openThread(threadId);
+    };
+
+    openExternalThread(threadIdFromCurrentURL());
+
+    const handleHashChange = () => openExternalThread(threadIdFromCurrentURL());
+    const handleServiceWorkerMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: string; threadId?: string } | undefined;
+      if (data?.type === "remodex:openThread" && data.threadId) {
+        openExternalThread(data.threadId);
+      }
+    };
+
+    window.addEventListener("hashchange", handleHashChange);
+    navigator.serviceWorker?.addEventListener("message", handleServiceWorkerMessage);
+    return () => {
+      window.removeEventListener("hashchange", handleHashChange);
+      navigator.serviceWorker?.removeEventListener("message", handleServiceWorkerMessage);
+    };
+  }, [activeThreadId, openThread]);
+
+  function projectIsOpen(projectKey: string): boolean {
+    return projectOpenByKey[projectKey] ?? true;
+  }
+
+  function toggleProject(projectKey: string) {
+    setProjectOpenByKey((state) => ({
+      ...state,
+      [projectKey]: !(state[projectKey] ?? true)
+    }));
+  }
 
   return (
     <section className="workspace">
@@ -238,7 +309,7 @@ function Workspace() {
             aria-label="New chat"
             onClick={() => {
               setSidebarOpen(false);
-              void newThread();
+              void newThread(newThreadCwd);
             }}
           >
             <Plus size={18} />
@@ -258,26 +329,75 @@ function Workspace() {
           </button>
         </div>
         <div className="thread-list">
-          {threads.map((thread) => (
-            <button
-              key={thread.id}
-              className={`thread-row ${thread.id === activeThreadId ? "selected" : ""}`}
-              onClick={() => {
-                setSidebarOpen(false);
-                void openThread(thread.id);
-              }}
-            >
-              <span>{thread.title || thread.name || "Conversation"}</span>
-              <small>{thread.cwd || thread.sourceKind || thread.status || "local"}</small>
-            </button>
-          ))}
-          {!threads.length ? (
+          {projectGroups.map((project) => {
+            const open = projectIsOpen(project.key);
+            const projectActive = project.key === activeProjectKey;
+            const projectState = projectThreadState(project.threads, runningTurnByThread, threadRunStateByThread, pendingApprovals);
+            return (
+              <section key={project.key} className={`project-group ${projectActive ? "active" : ""}`}>
+                <div className="project-row">
+                  <button
+                    className="project-toggle"
+                    aria-expanded={open}
+                    onClick={() => toggleProject(project.key)}
+                    title={project.path}
+                  >
+                    {open ? <FolderOpen size={16} /> : <Folder size={16} />}
+                    <span className="project-text">
+                      <strong>{project.label}</strong>
+                      <small>{project.path}</small>
+                    </span>
+                    <ThreadStateDot state={projectState} />
+                    <span className="project-count">{project.threads.length}</span>
+                  </button>
+                  {project.cwd ? (
+                    <button
+                      className="project-new"
+                      title={`New chat in ${project.label}`}
+                      aria-label={`New chat in ${project.label}`}
+                      onClick={() => {
+                        setSidebarOpen(false);
+                        void newThread(project.cwd);
+                      }}
+                    >
+                      <Plus size={15} />
+                    </button>
+                  ) : null}
+                </div>
+                {open ? (
+                  <div className="project-threads">
+                    {project.threads.map((thread) => {
+                      const threadState = threadActivityState(thread.id, runningTurnByThread, threadRunStateByThread, pendingApprovals);
+                      return (
+                        <button
+                          key={thread.id}
+                          className={`thread-row ${thread.id === activeThreadId ? "selected" : ""}`}
+                          onClick={() => {
+                            setSidebarOpen(false);
+                            void openThread(thread.id);
+                          }}
+                        >
+                          <span className="thread-title-line">
+                            <ThreadStateDot state={threadState} />
+                            <span className="thread-row-title">{thread.title || thread.name || "Conversation"}</span>
+                          </span>
+                          <small>{threadSubtitle(thread, project)}</small>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </section>
+            );
+          })}
+          {!projectGroups.length ? (
             <div className="empty-sidebar">
               <strong>No conversations</strong>
               <span>Start a new thread or refresh after the bridge has loaded Codex history.</span>
             </div>
           ) : null}
         </div>
+        <SidebarUsage />
       </aside>
 
       <section className="conversation">
@@ -293,8 +413,158 @@ function Workspace() {
         <Composer />
       </section>
       {settingsOpen ? <SettingsSheet onClose={() => setSettingsOpen(false)} /> : null}
+      <NotificationBubbles
+        notifications={inAppNotifications}
+        onDismiss={dismissInAppNotification}
+        onOpen={(threadId) => {
+          setSidebarOpen(false);
+          void openThread(threadId);
+        }}
+      />
     </section>
   );
+}
+
+function SidebarUsage() {
+  const rateLimitBuckets = useRemodexStore((state) => state.rateLimitBuckets);
+  const isLoadingRateLimits = useRemodexStore((state) => state.isLoadingRateLimits);
+  const rateLimitsError = useRemodexStore((state) => state.rateLimitsError);
+  const rateLimitsLoadedAt = useRemodexStore((state) => state.rateLimitsLoadedAt);
+  const refreshRateLimits = useRemodexStore((state) => state.refreshRateLimits);
+  const rows = visibleRateLimitRows(rateLimitBuckets);
+
+  return (
+    <section className="sidebar-usage" aria-label="Codex usage">
+      <div className="sidebar-usage-header">
+        <strong>Codex usage</strong>
+        <button
+          className="usage-refresh-button"
+          title="Refresh usage"
+          aria-label="Refresh usage"
+          disabled={isLoadingRateLimits}
+          onClick={() => void refreshRateLimits()}
+        >
+          <RefreshCw size={14} />
+        </button>
+      </div>
+
+      {rows.length ? (
+        <div className="usage-rows">
+          {rows.map((row) => (
+            <div className="usage-row" key={row.id}>
+              <div className="usage-row-top">
+                <span>{row.label}</span>
+                <strong>{remainingPercent(row.window.usedPercent)}% left</strong>
+              </div>
+              <div className="usage-meter" aria-hidden="true">
+                <span
+                  className={`usage-meter-fill ${usageLevelClass(row.window.usedPercent)}`}
+                  style={{ width: `${remainingPercent(row.window.usedPercent)}%` }}
+                />
+              </div>
+              <small>{resetLabel(row.window.resetsAt) ?? "Reset time unavailable"}</small>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p>{isLoadingRateLimits ? "Loading usage..." : rateLimitsError || "Usage unavailable"}</p>
+      )}
+
+      {rateLimitsLoadedAt ? <span className="usage-updated">Updated {timeOfDayLabel(rateLimitsLoadedAt)}</span> : null}
+    </section>
+  );
+}
+
+interface ProjectGroup {
+  key: string;
+  label: string;
+  path: string;
+  cwd?: string;
+  updatedAt: number;
+  threads: CodexThread[];
+}
+
+function ThreadStateDot({ state }: { state?: ThreadRunState }) {
+  return state ? <span className={`thread-state-dot ${state}`} aria-hidden="true" /> : null;
+}
+
+function NotificationBubbles({
+  notifications,
+  onDismiss,
+  onOpen
+}: {
+  notifications: InAppNotification[];
+  onDismiss: (id: string) => void;
+  onOpen: (threadId: string) => void;
+}) {
+  if (!notifications.length) {
+    return null;
+  }
+
+  return (
+    <div className="notification-bubbles" aria-live="polite">
+      {notifications.map((notification) => (
+        <article key={notification.id} className={`notification-bubble ${notification.kind}`}>
+          <button
+            className="bubble-main"
+            onClick={() => {
+              onDismiss(notification.id);
+              onOpen(notification.threadId);
+            }}
+            title={notification.title}
+          >
+            {notification.kind === "ready" ? <CircleCheck size={18} /> : <AlertCircle size={18} />}
+            <span>
+              <strong>{notification.title}</strong>
+              <small>{notification.body}</small>
+            </span>
+          </button>
+          <button
+            className="bubble-close"
+            aria-label="Dismiss notification"
+            onClick={() => onDismiss(notification.id)}
+          >
+            <X size={14} />
+          </button>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function projectThreadState(
+  threads: CodexThread[],
+  runningTurnByThread: Record<string, string | undefined>,
+  stateByThread: Record<string, ThreadRunState | undefined>,
+  pendingApprovals: ApprovalRequest[]
+): ThreadRunState | undefined {
+  return highestPriorityThreadState(
+    threads.map((thread) => threadActivityState(thread.id, runningTurnByThread, stateByThread, pendingApprovals))
+  );
+}
+
+function threadActivityState(
+  threadId: string,
+  runningTurnByThread: Record<string, string | undefined>,
+  stateByThread: Record<string, ThreadRunState | undefined>,
+  pendingApprovals: ApprovalRequest[]
+): ThreadRunState | undefined {
+  if (pendingApprovals.some((request) => request.threadId === threadId)) {
+    return "approval";
+  }
+  if (runningTurnByThread[threadId]) {
+    return "running";
+  }
+  return stateByThread[threadId];
+}
+
+function highestPriorityThreadState(states: Array<ThreadRunState | undefined>): ThreadRunState | undefined {
+  for (const state of ["approval", "running", "failed", "ready"] as const) {
+    if (states.includes(state)) {
+      return state;
+    }
+  }
+  return undefined;
 }
 
 function ThreadTitle() {
@@ -313,27 +583,74 @@ function Timeline() {
   const activeThreadId = useRemodexStore((state) => state.activeThreadId);
   const messages = useRemodexStore((state) => activeThreadId ? state.messagesByThread[activeThreadId] ?? EMPTY_MESSAGES : EMPTY_MESSAGES);
   const threads = useRemodexStore((state) => state.threads);
+  const timelineRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const stickToBottomRef = useRef(true);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [messages.length]);
+    stickToBottomRef.current = true;
+    setShowJumpToLatest(false);
+    const frame = window.requestAnimationFrame(() => scrollToLatest("auto"));
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeThreadId]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      if (stickToBottomRef.current) {
+        scrollToLatest("auto");
+        return;
+      }
+      updateTimelineStickiness();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [messages]);
+
+  function updateTimelineStickiness() {
+    const timeline = timelineRef.current;
+    if (!timeline) {
+      return;
+    }
+    const distanceToBottom = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight;
+    const nearBottom = distanceToBottom < 120;
+    stickToBottomRef.current = nearBottom;
+    const nextShow = messages.length > 0 && !nearBottom;
+    setShowJumpToLatest((current) => current === nextShow ? current : nextShow);
+  }
+
+  function scrollToLatest(behavior: ScrollBehavior = "smooth") {
+    bottomRef.current?.scrollIntoView({ block: "end", behavior });
+    stickToBottomRef.current = true;
+    setShowJumpToLatest(false);
+  }
 
   return (
-    <div className="timeline">
-      {!threads.length ? (
-        <div className="empty-state">
-          <strong>No conversations yet</strong>
-          <span>Use the plus button to create a thread, or refresh after Codex history is available.</span>
-        </div>
-      ) : activeThreadId && messages.length === 0 ? (
-        <div className="empty-state">
-          <strong>No messages in this thread</strong>
-          <span>Send the first message from the composer.</span>
-        </div>
+    <div className="timeline-shell">
+      <div className="timeline" ref={timelineRef} onScroll={updateTimelineStickiness}>
+        {!threads.length ? (
+          <div className="empty-state">
+            <strong>No conversations yet</strong>
+            <span>Use the plus button to create a thread, or refresh after the bridge has loaded Codex history.</span>
+          </div>
+        ) : activeThreadId && messages.length === 0 ? (
+          <div className="empty-state">
+            <strong>No messages in this thread</strong>
+            <span>Send the first message from the composer.</span>
+          </div>
+        ) : null}
+        {messages.map((message) => <TimelineRow key={message.id} message={message} />)}
+        <div ref={bottomRef} />
+      </div>
+      {showJumpToLatest ? (
+        <button
+          className="jump-latest-button"
+          title="Jump to latest"
+          aria-label="Jump to latest"
+          onClick={() => scrollToLatest()}
+        >
+          <ChevronDown size={18} />
+        </button>
       ) : null}
-      {messages.map((message) => <TimelineRow key={message.id} message={message} />)}
-      <div ref={bottomRef} />
     </div>
   );
 }
@@ -381,17 +698,103 @@ function ApprovalCard({
   request: ApprovalRequest;
   onDecision: (decision: "accept" | "decline" | "acceptForSession") => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const title = approvalTitle(request);
+  const detail = approvalDetail(request);
+  const extraDetail = approvalExtraDetail(request, title);
+  const permissionsRequest = request.method === "item/permissions/requestApproval";
   return (
-    <div className="approval-card">
-      <div>
-        <strong>{request.command || request.method}</strong>
-        <span>{request.reason || request.threadId || "Approval requested"}</span>
+    <div className={`approval-card ${expanded ? "expanded" : ""}`}>
+      <button
+        type="button"
+        className="approval-content"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <strong>{title}</strong>
+        <span>{detail}</span>
+        {expanded && extraDetail ? <pre>{extraDetail}</pre> : null}
+      </button>
+      <div className="approval-actions">
+        <button
+          className="icon-button"
+          title={permissionsRequest ? "Continue without permissions" : "Decline"}
+          aria-label={permissionsRequest ? "Continue without permissions" : "Decline"}
+          onClick={() => onDecision("decline")}
+        >
+          <X size={16} />
+        </button>
+        <button onClick={() => onDecision("acceptForSession")}>Session</button>
+        <button
+          className="primary icon-button"
+          title={permissionsRequest ? "Allow for this turn" : "Accept"}
+          aria-label={permissionsRequest ? "Allow for this turn" : "Accept"}
+          onClick={() => onDecision("accept")}
+        >
+          <Check size={16} />
+        </button>
       </div>
-      <button className="icon-button" title="Decline" aria-label="Decline" onClick={() => onDecision("decline")}><X size={16} /></button>
-      <button onClick={() => onDecision("acceptForSession")}>Session</button>
-      <button className="primary icon-button" title="Accept" aria-label="Accept" onClick={() => onDecision("accept")}><Check size={16} /></button>
     </div>
   );
+}
+
+function approvalTitle(request: ApprovalRequest): string {
+  switch (request.method) {
+    case "item/permissions/requestApproval":
+      return "Permissions";
+    case "item/fileChange/requestApproval":
+      return "File changes";
+    case "item/fileRead/requestApproval":
+      return "File read";
+    case "item/commandExecution/requestApproval":
+      return request.command || "Command";
+    default:
+      return request.command || request.method;
+  }
+}
+
+function approvalDetail(request: ApprovalRequest): string {
+  if (request.reason) {
+    return request.reason;
+  }
+  if (request.method === "item/permissions/requestApproval") {
+    return permissionSummary(request.params);
+  }
+  return request.threadId || "Approval requested";
+}
+
+function approvalExtraDetail(request: ApprovalRequest, title: string): string | undefined {
+  if (request.method === "item/permissions/requestApproval") {
+    const permissions = objectValue(objectValue(request.params).permissions);
+    if (Object.keys(permissions).length > 0) {
+      return JSON.stringify(permissions, null, 2);
+    }
+  } else if (request.command && request.command !== title) {
+    return request.command;
+  }
+  return undefined;
+}
+
+function permissionSummary(params: unknown): string {
+  const permissions = objectValue(objectValue(params).permissions);
+  const parts: string[] = [];
+  if (permissions.network != null) {
+    parts.push("Network");
+  }
+  const fileSystem = objectValue(permissions.fileSystem);
+  const paths = Array.isArray(fileSystem.paths)
+    ? fileSystem.paths.filter((path): path is string => typeof path === "string")
+    : [];
+  if (paths.length) {
+    parts.push(paths.length === 1 ? paths[0] : `${paths.length} paths`);
+  } else if (permissions.fileSystem != null) {
+    parts.push("File system");
+  }
+  return parts.length ? parts.join(" + ") : "Additional permissions requested";
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
 function Composer() {
@@ -685,7 +1088,14 @@ function SettingsSheet({ onClose }: { onClose: () => void }) {
   const runtimeSettings = useRemodexStore((state) => state.runtimeSettings);
   const setRuntimeSettings = useRemodexStore((state) => state.setRuntimeSettings);
   const availableModels = useRemodexStore((state) => state.availableModels);
+  const webPushStatus = useRemodexStore((state) => state.webPushStatus);
+  const webPushError = useRemodexStore((state) => state.webPushError);
+  const enableWebPushNotifications = useRemodexStore((state) => state.enableWebPushNotifications);
+  const disableWebPushNotifications = useRemodexStore((state) => state.disableWebPushNotifications);
   const disconnect = useRemodexStore((state) => state.disconnect);
+  const webPushBusy = webPushStatus === "checking" || webPushStatus === "subscribing";
+  const webPushEnabled = webPushStatus === "enabled";
+  const webPushUnavailable = webPushStatus === "unsupported" || webPushStatus === "insecure";
   return (
     <div className="sheet-backdrop">
       <section className="settings-sheet">
@@ -717,10 +1127,35 @@ function SettingsSheet({ onClose }: { onClose: () => void }) {
           />
           <span>Auto review</span>
         </label>
+        <div className="push-settings-row">
+          <div>
+            <span>Notifications</span>
+            <small>{webPushLabel(webPushStatus, webPushError)}</small>
+          </div>
+          <button
+            className={`icon-button ${webPushEnabled ? "selected" : ""}`}
+            disabled={webPushBusy || webPushUnavailable}
+            title={webPushEnabled ? "Disable notifications" : "Enable notifications"}
+            aria-label={webPushEnabled ? "Disable notifications" : "Enable notifications"}
+            onClick={() => void (webPushEnabled ? disableWebPushNotifications() : enableWebPushNotifications())}
+          >
+            {webPushEnabled ? <Bell size={17} /> : <BellOff size={17} />}
+          </button>
+        </div>
         <button className="danger wide" onClick={disconnect}>Disconnect</button>
       </section>
     </div>
   );
+}
+
+function webPushLabel(status: string, error?: string): string {
+  if (status === "enabled") return "Enabled";
+  if (status === "subscribing") return "Updating...";
+  if (status === "checking") return "Checking...";
+  if (status === "insecure") return "HTTPS or localhost required";
+  if (status === "unsupported") return "Unsupported";
+  if (status === "error") return error || "Failed";
+  return "Off";
 }
 
 function QRScanner({ onClose, onPayload }: { onClose: () => void; onPayload: (value: string) => void }) {
@@ -840,6 +1275,24 @@ function relayEntryOptionsFromCurrentLocation() {
   }
 }
 
+function threadIdFromCurrentURL(): string {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  try {
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const fromHash = hashParams.get("thread")?.trim();
+    if (fromHash) {
+      return fromHash;
+    }
+    const url = new URL(window.location.href);
+    return url.searchParams.get("threadId")?.trim() || "";
+  } catch {
+    return "";
+  }
+}
+
 function canUseCameraScanner(): boolean {
   return Boolean(
     window.isSecureContext
@@ -877,6 +1330,194 @@ function labelForMessage(message: TimelineMessage): string {
   if (message.kind === "plan") return "Plan";
   if (message.kind === "image") return "Image";
   return message.role === "assistant" ? "Codex" : "System";
+}
+
+function visibleRateLimitRows(buckets: CodexRateLimitBucket[]): CodexRateLimitDisplayRow[] {
+  const dedupedByLabel = new Map<string, CodexRateLimitDisplayRow>();
+  for (const row of buckets.flatMap(displayRowsForBucket)) {
+    const current = dedupedByLabel.get(row.label);
+    dedupedByLabel.set(row.label, current ? preferredRateLimitRow(current, row) : row);
+  }
+
+  return [...dedupedByLabel.values()].sort((left, right) => {
+    const leftDuration = left.window.windowDurationMins ?? Number.MAX_SAFE_INTEGER;
+    const rightDuration = right.window.windowDurationMins ?? Number.MAX_SAFE_INTEGER;
+    if (leftDuration === rightDuration) {
+      return left.label.localeCompare(right.label, undefined, { sensitivity: "base" });
+    }
+    return leftDuration - rightDuration;
+  });
+}
+
+function displayRowsForBucket(bucket: CodexRateLimitBucket): CodexRateLimitDisplayRow[] {
+  const fallback = bucket.limitName || bucket.limitId;
+  const rows: CodexRateLimitDisplayRow[] = [];
+  if (bucket.primary) {
+    rows.push({
+      id: `${bucket.limitId}-primary`,
+      label: durationLabel(bucket.primary.windowDurationMins) ?? fallback,
+      window: bucket.primary
+    });
+  }
+  if (bucket.secondary) {
+    rows.push({
+      id: `${bucket.limitId}-secondary`,
+      label: durationLabel(bucket.secondary.windowDurationMins) ?? fallback,
+      window: bucket.secondary
+    });
+  }
+  return rows;
+}
+
+function preferredRateLimitRow(
+  current: CodexRateLimitDisplayRow,
+  candidate: CodexRateLimitDisplayRow
+): CodexRateLimitDisplayRow {
+  const currentUsed = clampedPercent(current.window.usedPercent);
+  const candidateUsed = clampedPercent(candidate.window.usedPercent);
+  if (currentUsed !== candidateUsed) {
+    return candidateUsed > currentUsed ? candidate : current;
+  }
+  if (current.window.resetsAt == null) {
+    return candidate.window.resetsAt == null ? current : candidate;
+  }
+  if (candidate.window.resetsAt == null) {
+    return current;
+  }
+  return candidate.window.resetsAt < current.window.resetsAt ? candidate : current;
+}
+
+function durationLabel(minutes: number | undefined): string | undefined {
+  if (!minutes || minutes <= 0) {
+    return undefined;
+  }
+  const weekMinutes = 7 * 24 * 60;
+  const dayMinutes = 24 * 60;
+  if (minutes % weekMinutes === 0) {
+    return minutes === weekMinutes ? "Weekly" : `${minutes / weekMinutes}w`;
+  }
+  if (minutes % dayMinutes === 0) {
+    return `${minutes / dayMinutes}d`;
+  }
+  if (minutes % 60 === 0) {
+    return `${minutes / 60}h`;
+  }
+  return `${minutes}m`;
+}
+
+function remainingPercent(usedPercent: number): number {
+  return Math.max(0, 100 - clampedPercent(usedPercent));
+}
+
+function clampedPercent(value: number): number {
+  return Math.min(Math.max(Math.round(value), 0), 100);
+}
+
+function usageLevelClass(usedPercent: number): string {
+  const clamped = clampedPercent(usedPercent);
+  if (clamped >= 90) {
+    return "high";
+  }
+  if (clamped >= 70) {
+    return "medium";
+  }
+  return "normal";
+}
+
+function resetLabel(value: number | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+  const now = new Date();
+  const sameDay = date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate();
+  const options: Intl.DateTimeFormatOptions = sameDay
+    ? { hour: "2-digit", minute: "2-digit", hour12: false }
+    : { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false };
+  return `resets ${date.toLocaleString(undefined, options)}`;
+}
+
+function timeOfDayLabel(value: number): string {
+  return new Date(value).toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  });
+}
+
+function buildProjectGroups(threads: CodexThread[]): ProjectGroup[] {
+  const groups = new Map<string, ProjectGroup>();
+  for (const thread of threads) {
+    const key = projectKeyForThread(thread);
+    const cwd = thread.cwd?.trim();
+    const existing = groups.get(key);
+    const updatedAt = timestampValue(thread.updatedAt ?? thread.createdAt);
+    if (existing) {
+      existing.threads.push(thread);
+      existing.updatedAt = Math.max(existing.updatedAt, updatedAt);
+      continue;
+    }
+    groups.set(key, {
+      key,
+      label: cwd ? projectName(cwd) : "No Project",
+      path: cwd || "Threads without a project folder",
+      cwd,
+      updatedAt,
+      threads: [thread]
+    });
+  }
+  return [...groups.values()].sort((left, right) => right.updatedAt - left.updatedAt);
+}
+
+function projectKeyForThread(thread: CodexThread): string {
+  return thread.cwd?.trim() || "__no_project__";
+}
+
+function projectName(path: string): string {
+  const normalized = path.replace(/\/+$/, "");
+  if (!normalized || normalized === "/") {
+    return path;
+  }
+  const parts = normalized.split("/").filter(Boolean);
+  return parts[parts.length - 1] || normalized;
+}
+
+function threadSubtitle(thread: CodexThread, project: ProjectGroup): string {
+  if (!project.cwd && thread.cwd) {
+    return thread.cwd;
+  }
+  return timeLabel(thread.updatedAt ?? thread.createdAt)
+    || thread.status
+    || thread.sourceKind
+    || project.label;
+}
+
+function timeLabel(value: string | number | undefined): string | undefined {
+  const timestamp = timestampValue(value);
+  if (!timestamp) {
+    return undefined;
+  }
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function timestampValue(value: string | number | undefined): number {
+  if (typeof value === "number") {
+    return value;
+  }
+  if (!value) {
+    return 0;
+  }
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 function secureStateLabel(value: string): string {

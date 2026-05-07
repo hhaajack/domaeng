@@ -11,7 +11,7 @@ const path = require("path");
 const { startBridge } = require("./bridge");
 const { readBridgeConfig } = require("./codex-desktop-refresher");
 const { printQR } = require("./qr");
-const { resetBridgeDeviceState } = require("./secure-device-state");
+const { readTrustedDevicesSnapshot, resetBridgeDeviceState } = require("./secure-device-state");
 const {
   clearBridgeStatus,
   clearPairingSession,
@@ -173,6 +173,7 @@ function getMacOSBridgeServiceStatus({
     daemonConfig: readDaemonConfig({ env, fsImpl }),
     bridgeStatus: readBridgeStatus({ env, fsImpl }),
     pairingSession: readPairingSession({ env, fsImpl }),
+    trustedDevices: readTrustedDevicesSnapshot(),
     stdoutLogPath: resolveBridgeStdoutLogPath({ env }),
     stderrLogPath: resolveBridgeStderrLogPath({ env }),
   };

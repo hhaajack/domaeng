@@ -11,6 +11,7 @@ import UserNotifications
 private enum CodexNotificationSource {
     static let runCompletion = "codex.runCompletion"
     static let structuredUserInput = "codex.structuredUserInput"
+    static let approvalRequired = "codex.approvalRequired"
 }
 
 protocol CodexRemoteNotificationRegistering: AnyObject {
@@ -84,7 +85,8 @@ private struct CodexThreadNotificationPayload {
     init?(from userInfo: [AnyHashable: Any]) {
         guard let source = userInfo[CodexNotificationPayloadKeys.source] as? String,
               (source == CodexNotificationSource.runCompletion
-                || source == CodexNotificationSource.structuredUserInput),
+                || source == CodexNotificationSource.structuredUserInput
+                || source == CodexNotificationSource.approvalRequired),
               let threadId = userInfo[CodexNotificationPayloadKeys.threadId] as? String,
               !threadId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
@@ -251,6 +253,20 @@ extension CodexService {
                 requestID: requestID,
                 questions: questions
             )
+        }
+    }
+
+    // Approval prompts also block a run mid-turn, so background users need the same
+    // notification path as structured input prompts.
+    func notifyApprovalIfNeeded(_ request: CodexApprovalRequest) {
+        guard !isAppInForeground,
+              let threadId = request.threadId?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !threadId.isEmpty else {
+            return
+        }
+
+        Task { @MainActor [weak self] in
+            await self?.scheduleApprovalNotificationIfNeeded(request, threadId: threadId)
         }
     }
 
@@ -522,6 +538,54 @@ private extension CodexService {
         }
     }
 
+    func scheduleApprovalNotificationIfNeeded(
+        _ request: CodexApprovalRequest,
+        threadId: String
+    ) async {
+        await refreshNotificationAuthorizationStatus()
+        guard canScheduleRunCompletionNotifications else {
+            return
+        }
+
+        let now = Date()
+        pruneApprovalNotificationDedupe(now: now)
+        let dedupeKey = approvalNotificationDedupeKey(threadId: threadId, requestID: request.requestID)
+
+        if let previousTimestamp = approvalNotificationDedupedAt[dedupeKey],
+           now.timeIntervalSince(previousTimestamp) <= 60 {
+            return
+        }
+
+        approvalNotificationDedupedAt[dedupeKey] = now
+
+        let title = thread(for: threadId)?.displayTitle ?? CodexThread.defaultDisplayTitle
+        let body = approvalNotificationBody(for: request)
+
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        content.threadIdentifier = threadId
+        content.userInfo = [
+            CodexNotificationPayloadKeys.source: CodexNotificationSource.approvalRequired,
+            CodexNotificationPayloadKeys.threadId: threadId,
+            CodexNotificationPayloadKeys.turnId: request.turnId ?? "",
+            CodexNotificationPayloadKeys.requestId: request.id,
+        ]
+
+        let notificationRequest = UNNotificationRequest(
+            identifier: approvalNotificationIdentifier(for: dedupeKey),
+            content: content,
+            trigger: nil
+        )
+
+        do {
+            try await userNotificationCenter.add(notificationRequest)
+        } catch {
+            debugRuntimeLog("failed to schedule approval notification: \(error.localizedDescription)")
+        }
+    }
+
     var canScheduleRunCompletionNotifications: Bool {
         switch notificationAuthorizationStatus {
         case .authorized, .provisional, .ephemeral:
@@ -588,6 +652,38 @@ private extension CodexService {
         structuredUserInputNotificationDedupedAt = structuredUserInputNotificationDedupedAt.filter { _, timestamp in
             now.timeIntervalSince(timestamp) <= 60
         }
+    }
+
+    func approvalNotificationDedupeKey(threadId: String, requestID: JSONValue) -> String {
+        "\(threadId)|\(idKey(from: requestID))"
+    }
+
+    func approvalNotificationIdentifier(for dedupeKey: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
+        let sanitized = String(dedupeKey.unicodeScalars.map { scalar in
+            allowed.contains(scalar) ? Character(scalar) : "_"
+        })
+        return "codex.approvalRequired.\(sanitized)"
+    }
+
+    func pruneApprovalNotificationDedupe(now: Date) {
+        approvalNotificationDedupedAt = approvalNotificationDedupedAt.filter { _, timestamp in
+            now.timeIntervalSince(timestamp) <= 60
+        }
+    }
+
+    func approvalNotificationBody(for request: CodexApprovalRequest) -> String {
+        if let command = request.command?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !command.isEmpty {
+            return "Approval needed: \(command)"
+        }
+
+        if let reason = request.reason?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !reason.isEmpty {
+            return reason
+        }
+
+        return "Codex needs approval to continue."
     }
 
     // Refreshes the thread list before routing a notification tap to a thread created on another client.

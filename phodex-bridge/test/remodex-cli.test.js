@@ -159,3 +159,51 @@ test("remodex status --json exposes daemon metadata for companion apps", async (
   assert.equal(payload.bridgeStatus?.connectionStatus, "connected");
   assert.equal(payload.pairingSession?.pairingPayload?.sessionId, "session-json");
 });
+
+test("remodex trusted-device disable emits machine-readable result", async () => {
+  const writes = [];
+  const originalWrite = process.stdout.write;
+
+  process.stdout.write = (chunk, encoding, callback) => {
+    writes.push(String(chunk));
+    if (typeof callback === "function") {
+      callback();
+    }
+    return true;
+  };
+
+  try {
+    await main({
+      argv: ["node", "remodex", "trusted-device", "disable", "dev_abc123", "--json"],
+      platform: "darwin",
+      consoleImpl: {
+        log() {},
+        error(message) {
+          throw new Error(`unexpected error: ${message}`);
+        },
+      },
+      exitImpl(code) {
+        throw new Error(`unexpected exit ${code}`);
+      },
+      deps: {
+        setTrustedDeviceEnabled(deviceId, enabled) {
+          return {
+            trustedDevice: {
+              id: deviceId,
+              status: enabled ? "enabled" : "disabled",
+            },
+            trustedDevices: [],
+          };
+        },
+      },
+    });
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+
+  const payload = JSON.parse(writes.join("").trim());
+  assert.equal(payload.ok, true);
+  assert.equal(payload.action, "disable");
+  assert.equal(payload.trustedDevice.id, "dev_abc123");
+  assert.equal(payload.trustedDevice.status, "disabled");
+});

@@ -249,12 +249,13 @@ test("secure transport round-trips encrypted payloads after a trusted reconnect 
   ]);
 });
 
-test("qr bootstrap allows a fresh QR scan to replace the trusted iPhone", () => {
+test("qr bootstrap adds newly trusted phones without invalidating older devices", () => {
   const macIdentity = createOkpKeyPair("ed25519");
   const firstPhoneIdentity = createOkpKeyPair("ed25519");
   const firstPhoneEphemeral = createOkpKeyPair("x25519");
   const secondPhoneIdentity = createOkpKeyPair("ed25519");
   const secondPhoneEphemeral = createOkpKeyPair("x25519");
+  let latestDeviceState = null;
   const secureTransport = createBridgeSecureTransport({
     sessionId: "session-3",
     relayUrl: "wss://relay.example/relay",
@@ -263,6 +264,9 @@ test("qr bootstrap allows a fresh QR scan to replace the trusted iPhone", () => 
       macIdentityPrivateKey: macIdentity.privateKey,
       macIdentityPublicKey: macIdentity.publicKey,
       trustedPhones: {},
+    },
+    onTrustedPhoneUpdate(nextDeviceState) {
+      latestDeviceState = nextDeviceState;
     },
   });
 
@@ -274,6 +278,8 @@ test("qr bootstrap allows a fresh QR scan to replace the trusted iPhone", () => 
     macIdentity,
     phoneIdentity: firstPhoneIdentity,
     phoneEphemeral: firstPhoneEphemeral,
+    deviceDisplayName: "Alice iPhone",
+    deviceKind: "ios",
     handshakeMode: HANDSHAKE_MODE_QR_BOOTSTRAP,
     lastAppliedBridgeOutboundSeq: 0,
   });
@@ -286,9 +292,19 @@ test("qr bootstrap allows a fresh QR scan to replace the trusted iPhone", () => 
     macIdentity,
     phoneIdentity: secondPhoneIdentity,
     phoneEphemeral: secondPhoneEphemeral,
+    deviceDisplayName: "Chrome on macOS",
+    deviceKind: "web",
     handshakeMode: HANDSHAKE_MODE_QR_BOOTSTRAP,
     lastAppliedBridgeOutboundSeq: 0,
   });
+
+  assert.deepEqual(latestDeviceState.trustedPhones, {
+    "phone-3a": firstPhoneIdentity.publicKey,
+    "phone-3b": secondPhoneIdentity.publicKey,
+  });
+  assert.equal(latestDeviceState.trustedPhoneMetadata["phone-3a"].displayName, "Alice iPhone");
+  assert.equal(latestDeviceState.trustedPhoneMetadata["phone-3b"].displayName, "Chrome on macOS");
+  assert.equal(latestDeviceState.trustedPhoneMetadata["phone-3b"].deviceKind, "web");
 });
 
 test("qr bootstrap starts a fresh replay window instead of leaking buffered messages", () => {
@@ -542,6 +558,8 @@ function finishHandshake({
   macIdentity,
   phoneIdentity,
   phoneEphemeral,
+  deviceDisplayName = "",
+  deviceKind = "",
   handshakeMode,
   lastAppliedBridgeOutboundSeq,
   skipResumeState = false,
@@ -558,6 +576,8 @@ function finishHandshake({
       handshakeMode,
       phoneDeviceId,
       phoneIdentityPublicKey: phoneIdentity.publicKey,
+      deviceDisplayName,
+      deviceKind,
       phoneEphemeralPublicKey: phoneEphemeral.publicKey,
       clientNonce: clientNonce.toString("base64"),
     }),

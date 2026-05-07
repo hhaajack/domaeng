@@ -1,13 +1,18 @@
 import { create } from "zustand";
 import type {
   ApprovalRequest,
+  CodexRateLimitBucket,
   CodexThread,
   GitStatus,
   ImageAttachment,
+  InAppNotification,
+  JSONValue,
   ModelOption,
   RuntimeSettings,
   SecureConnectionState,
-  TimelineMessage
+  ThreadRunState,
+  TimelineMessage,
+  WebPushStatus
 } from "../types";
 import { makeImageAttachment } from "../lib/attachments";
 import { parsePairingPayload } from "../lib/pairing";
@@ -16,7 +21,7 @@ import {
   isThreadRolloutMissingError,
   RemodexClient
 } from "../lib/remodexClient";
-import { randomUUID } from "../lib/base64";
+import { idKey, randomUUID } from "../lib/base64";
 import {
   appendLocalUserMessage,
   applyNotification,
@@ -24,6 +29,11 @@ import {
   type TimelineState
 } from "../lib/timeline";
 import { normalizeRuntimeSettings, readRuntimeSettings, writeRuntimeSettings } from "../lib/storage";
+import {
+  disableWebPush,
+  enableWebPush,
+  readWebPushRuntimeState
+} from "../lib/webPush";
 
 interface RemodexStore {
   client: RemodexClient;
@@ -35,11 +45,19 @@ interface RemodexStore {
   locallyStartedThreadIds: Record<string, true>;
   messagesByThread: Record<string, TimelineMessage[]>;
   runningTurnByThread: Record<string, string | undefined>;
+  threadRunStateByThread: Record<string, ThreadRunState | undefined>;
+  inAppNotifications: InAppNotification[];
   pendingApprovals: ApprovalRequest[];
   gitStatus?: GitStatus;
+  rateLimitBuckets: CodexRateLimitBucket[];
+  isLoadingRateLimits: boolean;
+  rateLimitsError?: string;
+  rateLimitsLoadedAt?: number;
   availableModels: ModelOption[];
   modelsError?: string;
   runtimeSettings: RuntimeSettings;
+  webPushStatus: WebPushStatus;
+  webPushError?: string;
   composerText: string;
   attachments: ImageAttachment[];
   queuedDraftsByThread: Record<string, string[]>;
@@ -62,9 +80,14 @@ interface RemodexStore {
   queueDraft: () => void;
   sendQueuedDraft: (threadId: string, index: number) => Promise<void>;
   approve: (request: ApprovalRequest, decision: "accept" | "decline" | "acceptForSession") => Promise<void>;
+  dismissInAppNotification: (id: string) => void;
   setRuntimeSettings: (settings: Partial<RuntimeSettings>) => Promise<void>;
+  refreshRateLimits: () => Promise<void>;
   refreshModels: () => Promise<void>;
   refreshGitStatus: () => Promise<void>;
+  refreshWebPushStatus: () => Promise<void>;
+  enableWebPushNotifications: () => Promise<void>;
+  disableWebPushNotifications: () => Promise<void>;
   commit: (message: string) => Promise<void>;
   push: () => Promise<void>;
   pull: () => Promise<void>;
@@ -84,21 +107,30 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
         set({ secureState: event.state as SecureConnectionState });
         break;
       case "notification":
-        set((state) => applyTimelinePatch(state, applyNotification(state, event.method, event.params)));
-        if (event.method === "turn/completed" && "Notification" in window && Notification.permission === "granted") {
-          new Notification("Remodex", { body: "Turn completed" });
+        if (event.method === "account/rateLimits/updated") {
+          set((state) => ({
+            rateLimitBuckets: applyRateLimitsPayload(event.params, state.rateLimitBuckets, true),
+            rateLimitsError: undefined,
+            rateLimitsLoadedAt: Date.now()
+          }));
+          break;
         }
+        if (event.method === "serverRequest/resolved") {
+          const requestId = resolvedServerRequestId(event.params);
+          if (requestId) {
+            set((state) => ({
+              ...clearResolvedApprovalState(state, requestId)
+            }));
+          }
+        }
+        set((state) => applyThreadActivityUpdate(
+          applyTimelinePatch(state, applyNotification(state, event.method, event.params)),
+          event.method,
+          event.params
+        ));
         break;
       case "approval":
-        set((state) => ({
-          pendingApprovals: [
-            ...state.pendingApprovals.filter((request) => request.id !== event.request.id),
-            event.request
-          ]
-        }));
-        if ("Notification" in window && Notification.permission === "granted") {
-          new Notification("Remodex", { body: "Approval requested" });
-        }
+        set((state) => applyApprovalActivityUpdate(state, event.request));
         break;
       case "serverRequest":
         set((state) => ({
@@ -147,12 +179,6 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
 
   async function ensureWritableThread(threadId: string, runtimeSettings: RuntimeSettings): Promise<string> {
     const thread = get().threads.find((entry) => entry.id === threadId);
-    const localEmptyThread = Boolean(get().locallyStartedThreadIds[threadId])
-      && (get().messagesByThread[threadId] ?? []).length === 0;
-    if (localEmptyThread) {
-      return threadId;
-    }
-
     try {
       const response = await client.resumeThread(threadId, thread?.cwd, runtimeSettings);
       set((state) => applyTimelinePatch(state, decodeThreadRead(state, response.result)));
@@ -249,13 +275,18 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
     locallyStartedThreadIds: {},
     messagesByThread: {},
     runningTurnByThread: {},
+    threadRunStateByThread: {},
+    inAppNotifications: [],
     pendingApprovals: [],
+    rateLimitBuckets: [],
+    isLoadingRateLimits: false,
     availableModels: [],
     runtimeSettings: {
       accessMode: "onRequest",
       autoReview: false,
       planMode: false
     },
+    webPushStatus: "checking",
     composerText: "",
     attachments: [],
     queuedDraftsByThread: {},
@@ -267,6 +298,7 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
       if ("Notification" in window && Notification.permission === "default") {
         void Notification.requestPermission();
       }
+      void get().refreshWebPushStatus();
     },
 
     async connectFromPairingText(rawText) {
@@ -331,10 +363,16 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
         set({ lastError: `Connected, but initial thread refresh failed: ${errorMessage(error)}` });
       }
       void get().refreshModels();
+      void get().refreshRateLimits();
+      void get().refreshWebPushStatus();
     },
 
     async openThread(threadId) {
-      set({ activeThreadId: threadId });
+      set((state) => ({
+        activeThreadId: threadId,
+        threadRunStateByThread: clearThreadOutcomeState(state.threadRunStateByThread, threadId),
+        inAppNotifications: state.inAppNotifications.filter((notification) => notification.threadId !== threadId)
+      }));
       const response = await client.readThread(threadId);
       set((state) => applyTimelinePatch(state, decodeThreadRead(state, response.result)));
       await get().refreshGitStatus();
@@ -435,7 +473,13 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
     async approve(request, decision) {
       await client.approve(request, decision);
       set((state) => ({
-        pendingApprovals: state.pendingApprovals.filter((entry) => entry.id !== request.id)
+        ...clearResolvedApprovalState(state, request.id)
+      }));
+    },
+
+    dismissInAppNotification(id) {
+      set((state) => ({
+        inAppNotifications: state.inAppNotifications.filter((notification) => notification.id !== id)
       }));
     },
 
@@ -443,6 +487,26 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
       const next = normalizeRuntimeSettings({ ...get().runtimeSettings, ...settings });
       await writeRuntimeSettings(next);
       set({ runtimeSettings: next });
+    },
+
+    async refreshRateLimits() {
+      set({ isLoadingRateLimits: true });
+      try {
+        const payload = await client.readRateLimits();
+        set({
+          rateLimitBuckets: applyRateLimitsPayload(payload, [], false),
+          isLoadingRateLimits: false,
+          rateLimitsError: undefined,
+          rateLimitsLoadedAt: Date.now()
+        });
+      } catch (error) {
+        set({
+          rateLimitBuckets: [],
+          isLoadingRateLimits: false,
+          rateLimitsError: errorMessage(error),
+          rateLimitsLoadedAt: Date.now()
+        });
+      }
     },
 
     async refreshModels() {
@@ -477,6 +541,44 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
         set({ gitStatus: await client.gitStatus(cwd) });
       } catch (error) {
         set({ gitStatus: undefined, lastError: errorMessage(error) });
+      }
+    },
+
+    async refreshWebPushStatus() {
+      const nextState = await readWebPushRuntimeState();
+      set({
+        webPushStatus: nextState.status,
+        webPushError: nextState.error
+      });
+    },
+
+    async enableWebPushNotifications() {
+      set({ webPushStatus: "subscribing", webPushError: undefined, lastError: undefined });
+      try {
+        await enableWebPush(client);
+        await get().refreshWebPushStatus();
+      } catch (error) {
+        const message = errorMessage(error);
+        set({
+          webPushStatus: "error",
+          webPushError: message,
+          lastError: message
+        });
+      }
+    },
+
+    async disableWebPushNotifications() {
+      set({ webPushStatus: "subscribing", webPushError: undefined, lastError: undefined });
+      try {
+        await disableWebPush(client);
+        await get().refreshWebPushStatus();
+      } catch (error) {
+        const message = errorMessage(error);
+        set({
+          webPushStatus: "error",
+          webPushError: message,
+          lastError: message
+        });
       }
     },
 
@@ -515,11 +617,615 @@ function applyTimelinePatch<T extends TimelineState>(state: T, next: TimelineSta
   };
 }
 
+function applyThreadActivityUpdate<T extends RemodexStore>(
+  state: T,
+  method: string,
+  params: JSONValue | undefined
+): T {
+  const paramsObject = objectValue(params);
+  const threadId = resolveThreadId(paramsObject);
+  if (!threadId) {
+    return state;
+  }
+
+  if (method === "turn/started" || isActiveThreadStatus(method, paramsObject)) {
+    return {
+      ...state,
+      threadRunStateByThread: {
+        ...state.threadRunStateByThread,
+        [threadId]: "running"
+      }
+    };
+  }
+
+  const outcome = terminalOutcomeForNotification(method, paramsObject);
+  if (!outcome) {
+    return state;
+  }
+
+  const nextRunState = state.activeThreadId === threadId
+    ? clearThreadTerminalState(state.threadRunStateByThread, threadId)
+    : {
+        ...state.threadRunStateByThread,
+        [threadId]: outcome
+      };
+  const notification = state.activeThreadId === threadId
+    ? undefined
+    : makeInAppNotification({
+        kind: outcome,
+        threadId,
+        title: titleForThread(state.threads, threadId),
+        body: outcome === "failed" ? "Run failed" : "Response ready",
+        idSuffix: resolveTurnId(paramsObject) ?? String(Date.now())
+      });
+  const notificationUpdate = notification
+    ? upsertInAppNotification(state.inAppNotifications, notification)
+    : undefined;
+
+  if (notification && notificationUpdate?.shouldAnnounce) {
+    showBrowserNotification(notification);
+  }
+
+  return {
+    ...state,
+    threadRunStateByThread: nextRunState,
+    inAppNotifications: notificationUpdate?.notifications ?? state.inAppNotifications
+  };
+}
+
+function applyApprovalActivityUpdate<T extends RemodexStore>(state: T, request: ApprovalRequest): T {
+  const pendingApprovals = [
+    ...state.pendingApprovals.filter((entry) => {
+      return entry.id !== request.id && approvalRequestKey(entry) !== approvalRequestKey(request);
+    }),
+    request
+  ];
+  const threadId = request.threadId?.trim();
+  if (!threadId) {
+    return {
+      ...state,
+      pendingApprovals
+    };
+  }
+
+  const notification = state.activeThreadId === threadId
+    ? undefined
+    : makeInAppNotification({
+        kind: "approval",
+        threadId,
+        title: titleForThread(state.threads, threadId),
+        body: approvalNotificationBody(request),
+        idSuffix: request.id
+      });
+  const notificationUpdate = notification
+    ? upsertInAppNotification(state.inAppNotifications, notification)
+    : undefined;
+
+  if (notification && notificationUpdate?.shouldAnnounce) {
+    showBrowserNotification(notification);
+  }
+
+  return {
+    ...state,
+    pendingApprovals,
+    threadRunStateByThread: {
+      ...state.threadRunStateByThread,
+      [threadId]: "approval"
+    },
+    inAppNotifications: notificationUpdate?.notifications ?? state.inAppNotifications
+  };
+}
+
+function clearResolvedApprovalState<T extends RemodexStore>(
+  state: T,
+  requestId: string
+): Pick<RemodexStore, "pendingApprovals" | "threadRunStateByThread" | "inAppNotifications"> {
+  const removed = state.pendingApprovals.filter((request) => request.id === requestId);
+  const pendingApprovals = state.pendingApprovals.filter((request) => request.id !== requestId);
+  let threadRunStateByThread = state.threadRunStateByThread;
+  let inAppNotifications = state.inAppNotifications;
+
+  for (const request of removed) {
+    const threadId = request.threadId?.trim();
+    if (!threadId) {
+      continue;
+    }
+    const hasRemainingApproval = pendingApprovals.some((entry) => entry.threadId === threadId);
+    if (hasRemainingApproval) {
+      continue;
+    }
+
+    const currentState = threadRunStateByThread[threadId];
+    if (currentState !== "ready" && currentState !== "failed") {
+      threadRunStateByThread = {
+        ...threadRunStateByThread,
+        [threadId]: state.runningTurnByThread[threadId] ? "running" : undefined
+      };
+    }
+    if (!threadRunStateByThread[threadId]) {
+      const { [threadId]: _removed, ...rest } = threadRunStateByThread;
+      threadRunStateByThread = rest;
+    }
+    inAppNotifications = inAppNotifications.filter((notification) => {
+      return notification.kind !== "approval" || notification.threadId !== threadId;
+    });
+  }
+
+  return {
+    pendingApprovals,
+    threadRunStateByThread,
+    inAppNotifications
+  };
+}
+
+function clearThreadOutcomeState(
+  stateByThread: Record<string, ThreadRunState | undefined>,
+  threadId: string
+): Record<string, ThreadRunState | undefined> {
+  const current = stateByThread[threadId];
+  if (current !== "ready" && current !== "failed") {
+    return stateByThread;
+  }
+  const { [threadId]: _removed, ...rest } = stateByThread;
+  return rest;
+}
+
+function clearThreadTerminalState(
+  stateByThread: Record<string, ThreadRunState | undefined>,
+  threadId: string
+): Record<string, ThreadRunState | undefined> {
+  if (stateByThread[threadId] === "approval" || stateByThread[threadId] == null) {
+    return stateByThread;
+  }
+  const { [threadId]: _removed, ...rest } = stateByThread;
+  return rest;
+}
+
+function makeInAppNotification({
+  kind,
+  threadId,
+  title,
+  body,
+  idSuffix
+}: {
+  kind: InAppNotification["kind"];
+  threadId: string;
+  title: string;
+  body: string;
+  idSuffix: string;
+}): InAppNotification {
+  return {
+    id: `${kind}:${threadId}:${idSuffix}`,
+    kind,
+    threadId,
+    title,
+    body,
+    createdAt: Date.now()
+  };
+}
+
+function upsertInAppNotification(
+  notifications: InAppNotification[],
+  notification: InAppNotification
+): { notifications: InAppNotification[]; shouldAnnounce: boolean } {
+  const signature = inAppNotificationSignature(notification);
+  const hadDuplicate = notifications.some((entry) => {
+    return entry.id === notification.id || inAppNotificationSignature(entry) === signature;
+  });
+  const next = [
+    notification,
+    ...notifications.filter((entry) => {
+      return entry.id !== notification.id && inAppNotificationSignature(entry) !== signature;
+    })
+  ].slice(0, 4);
+  return {
+    notifications: next,
+    shouldAnnounce: !hadDuplicate
+  };
+}
+
+function inAppNotificationSignature(notification: InAppNotification): string {
+  return [
+    notification.kind,
+    notification.threadId,
+    notification.title,
+    notification.body
+  ].join("\u0000");
+}
+
+function approvalRequestKey(request: ApprovalRequest): string {
+  return [
+    request.method,
+    request.threadId ?? "",
+    request.turnId ?? "",
+    request.command ?? "",
+    request.reason ?? "",
+    stableStringify(request.params)
+  ].join("\u0000");
+}
+
+function stableStringify(value: unknown): string {
+  if (value == null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+  const object = value as Record<string, unknown>;
+  return `{${Object.keys(object).sort().map((key) => {
+    return `${JSON.stringify(key)}:${stableStringify(object[key])}`;
+  }).join(",")}}`;
+}
+
+function showBrowserNotification(notification: InAppNotification): void {
+  if (typeof window === "undefined" || !("Notification" in window) || Notification.permission !== "granted") {
+    return;
+  }
+  const browserNotification = new Notification(notification.title, {
+    body: notification.body,
+    tag: notification.id,
+    data: { threadId: notification.threadId }
+  });
+  browserNotification.onclick = () => {
+    window.focus();
+    browserNotification.close();
+    void useRemodexStore.getState().openThread(notification.threadId);
+  };
+}
+
+function terminalOutcomeForNotification(
+  method: string,
+  params: Record<string, unknown>
+): "ready" | "failed" | undefined {
+  if (method === "turn/failed") {
+    return "failed";
+  }
+  if (method === "turn/completed") {
+    const status = turnStatusToken(params);
+    if (status.includes("cancel") || status.includes("abort") || status.includes("interrupt") || status.includes("stop")) {
+      return undefined;
+    }
+    return status.includes("fail") || status.includes("error") ? "failed" : "ready";
+  }
+  if (!isThreadStatusMethod(method)) {
+    return undefined;
+  }
+
+  const normalizedStatus = threadStatusToken(params);
+  if (!normalizedStatus) {
+    return undefined;
+  }
+  if (normalizedStatus.includes("fail") || normalizedStatus.includes("error")) {
+    return "failed";
+  }
+  if (["idle", "notloaded", "completed", "done", "finished"].includes(normalizedStatus)) {
+    return "ready";
+  }
+  return undefined;
+}
+
+function isActiveThreadStatus(method: string, params: Record<string, unknown>): boolean {
+  if (!isThreadStatusMethod(method)) {
+    return false;
+  }
+  return ["active", "running", "processing", "inprogress", "started", "pending"].includes(threadStatusToken(params));
+}
+
+function isThreadStatusMethod(method: string): boolean {
+  return method === "thread/status/changed"
+    || method === "thread/status"
+    || method === "codex/event/thread_status_changed";
+}
+
+function turnStatusToken(params: Record<string, unknown>): string {
+  return normalizeStatusToken(
+    readString(objectValue(params.turn).status)
+      || readString(params.status)
+      || readString(objectValue(params.status).type)
+      || ""
+  );
+}
+
+function threadStatusToken(params: Record<string, unknown>): string {
+  const event = objectValue(params.event);
+  const status = objectValue(params.status);
+  const eventStatus = objectValue(event.status);
+  return normalizeStatusToken(
+    readString(status.type)
+      || readString(status.statusType)
+      || readString(status.status_type)
+      || readString(params.status)
+      || readString(event.status)
+      || readString(eventStatus.type)
+      || readString(eventStatus.statusType)
+      || readString(eventStatus.status_type)
+      || ""
+  );
+}
+
+function normalizeStatusToken(value: string | undefined): string {
+  return (value ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function resolveThreadId(params: Record<string, unknown>): string | undefined {
+  const event = objectValue(params.event);
+  const thread = objectValue(params.thread);
+  const turn = objectValue(params.turn);
+  return readString(params.threadId)
+    || readString(params.thread_id)
+    || readString(params.conversationId)
+    || readString(params.conversation_id)
+    || readString(thread.id)
+    || readString(thread.threadId)
+    || readString(thread.thread_id)
+    || readString(turn.threadId)
+    || readString(turn.thread_id)
+    || readString(event.threadId)
+    || readString(event.thread_id)
+    || readString(event.conversationId)
+    || readString(event.conversation_id);
+}
+
+function resolveTurnId(params: Record<string, unknown>): string | undefined {
+  const event = objectValue(params.event);
+  const turn = objectValue(params.turn);
+  return readString(params.turnId)
+    || readString(params.turn_id)
+    || readString(params.id)
+    || readString(turn.id)
+    || readString(turn.turnId)
+    || readString(turn.turn_id)
+    || readString(event.id)
+    || readString(event.turnId)
+    || readString(event.turn_id);
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function titleForThread(threads: CodexThread[], threadId: string): string {
+  const thread = threads.find((entry) => entry.id === threadId);
+  return thread?.title || thread?.name || "Conversation";
+}
+
+function approvalNotificationBody(request: ApprovalRequest): string {
+  if (request.command?.trim()) {
+    return `Approval needed: ${request.command.trim()}`;
+  }
+  if (request.reason?.trim()) {
+    return request.reason.trim();
+  }
+  return "Codex needs approval to continue.";
+}
+
+function applyRateLimitsPayload(
+  payload: unknown,
+  existing: CodexRateLimitBucket[],
+  mergeWithExisting: boolean
+): CodexRateLimitBucket[] {
+  const decodedBuckets = decodeRateLimitBuckets(payload);
+  const buckets = mergeWithExisting
+    ? mergeRateLimitBuckets(existing, decodedBuckets)
+    : decodedBuckets;
+
+  return [...buckets].sort((left, right) => {
+    const leftDuration = bucketSortDuration(left);
+    const rightDuration = bucketSortDuration(right);
+    if (leftDuration === rightDuration) {
+      return bucketDisplayLabel(left).localeCompare(bucketDisplayLabel(right), undefined, { sensitivity: "base" });
+    }
+    return leftDuration - rightDuration;
+  });
+}
+
+function decodeRateLimitBuckets(payload: unknown): CodexRateLimitBucket[] {
+  const payloadObject = objectValue(payload);
+
+  const keyedRaw = payloadObject.rateLimitsByLimitId ?? payloadObject.rate_limits_by_limit_id;
+  if (keyedRaw != null) {
+    return Object.entries(objectValue(keyedRaw)).flatMap(([limitId, value]) => {
+      const bucket = decodeRateLimitBucket(limitId, value);
+      return bucket ? [bucket] : [];
+    });
+  }
+
+  const rateLimitsRaw = payloadObject.rateLimits ?? payloadObject.rate_limits;
+  if (rateLimitsRaw != null) {
+    const rateLimitsObject = objectValue(rateLimitsRaw);
+    if (containsDirectRateLimitWindows(rateLimitsObject)) {
+      return decodeDirectRateLimitBuckets(rateLimitsObject);
+    }
+    const bucket = decodeRateLimitBucket(undefined, rateLimitsRaw);
+    return bucket ? [bucket] : [];
+  }
+
+  if (payloadObject.result != null) {
+    return decodeRateLimitBuckets(payloadObject.result);
+  }
+
+  if (containsDirectRateLimitWindows(payloadObject)) {
+    return decodeDirectRateLimitBuckets(payloadObject);
+  }
+
+  return [];
+}
+
+function decodeRateLimitBucket(explicitLimitId: string | undefined, value: unknown): CodexRateLimitBucket | null {
+  const object = objectValue(value);
+  const primary = decodeRateLimitWindow(object.primary ?? object.primary_window);
+  const secondary = decodeRateLimitWindow(object.secondary ?? object.secondary_window);
+  if (!primary && !secondary) {
+    return null;
+  }
+
+  return {
+    limitId: firstNonEmptyString([
+      explicitLimitId,
+      readString(object.limitId),
+      readString(object.limit_id),
+      readString(object.id)
+    ]) ?? randomUUID(),
+    limitName: firstNonEmptyString([
+      readString(object.limitName),
+      readString(object.limit_name),
+      readString(object.name)
+    ]),
+    primary,
+    secondary
+  };
+}
+
+function decodeDirectRateLimitBuckets(object: Record<string, unknown>): CodexRateLimitBucket[] {
+  const buckets: CodexRateLimitBucket[] = [];
+  const primary = decodeRateLimitWindow(object.primary ?? object.primary_window);
+  const secondary = decodeRateLimitWindow(object.secondary ?? object.secondary_window);
+
+  if (primary) {
+    buckets.push({
+      limitId: "primary",
+      limitName: firstNonEmptyString([
+        readString(object.limitName),
+        readString(object.limit_name),
+        readString(object.name)
+      ]),
+      primary
+    });
+  }
+
+  if (secondary) {
+    buckets.push({
+      limitId: "secondary",
+      limitName: firstNonEmptyString([
+        readString(object.secondaryName),
+        readString(object.secondary_name)
+      ]),
+      primary: secondary
+    });
+  }
+
+  return buckets;
+}
+
+function decodeRateLimitWindow(value: unknown): CodexRateLimitBucket["primary"] {
+  const object = objectValue(value);
+  if (!Object.keys(object).length) {
+    return undefined;
+  }
+
+  return {
+    usedPercent: readNumber(object.usedPercent) ?? readNumber(object.used_percent) ?? 0,
+    windowDurationMins: readNumber(object.windowDurationMins)
+      ?? readNumber(object.window_duration_mins)
+      ?? readNumber(object.windowMinutes)
+      ?? readNumber(object.window_minutes),
+    resetsAt: readResetTimestamp(object.resetsAt)
+      ?? readResetTimestamp(object.resets_at)
+      ?? readResetTimestamp(object.resetAt)
+      ?? readResetTimestamp(object.reset_at)
+  };
+}
+
+function containsDirectRateLimitWindows(object: Record<string, unknown>): boolean {
+  return object.primary != null
+    || object.secondary != null
+    || object.primary_window != null
+    || object.secondary_window != null;
+}
+
+function mergeRateLimitBuckets(
+  existing: CodexRateLimitBucket[],
+  incoming: CodexRateLimitBucket[]
+): CodexRateLimitBucket[] {
+  if (!existing.length) {
+    return incoming;
+  }
+  if (!incoming.length) {
+    return existing;
+  }
+
+  const merged = new Map(existing.map((bucket) => [bucket.limitId, bucket]));
+  for (const bucket of incoming) {
+    const current = merged.get(bucket.limitId);
+    merged.set(bucket.limitId, current ? {
+      limitId: bucket.limitId,
+      limitName: bucket.limitName ?? current.limitName,
+      primary: bucket.primary ?? current.primary,
+      secondary: bucket.secondary ?? current.secondary
+    } : bucket);
+  }
+  return [...merged.values()];
+}
+
+function bucketSortDuration(bucket: CodexRateLimitBucket): number {
+  return bucket.primary?.windowDurationMins ?? bucket.secondary?.windowDurationMins ?? Number.MAX_SAFE_INTEGER;
+}
+
+function bucketDisplayLabel(bucket: CodexRateLimitBucket): string {
+  return durationLabel(bucket.primary?.windowDurationMins ?? bucket.secondary?.windowDurationMins)
+    ?? bucket.limitName
+    ?? bucket.limitId;
+}
+
+function durationLabel(minutes: number | undefined): string | undefined {
+  if (!minutes || minutes <= 0) {
+    return undefined;
+  }
+  const weekMinutes = 7 * 24 * 60;
+  const dayMinutes = 24 * 60;
+  if (minutes % weekMinutes === 0) {
+    return minutes === weekMinutes ? "Weekly" : `${minutes / weekMinutes}w`;
+  }
+  if (minutes % dayMinutes === 0) {
+    return `${minutes / dayMinutes}d`;
+  }
+  if (minutes % 60 === 0) {
+    return `${minutes / 60}h`;
+  }
+  return `${minutes}m`;
+}
+
+function readNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function readResetTimestamp(value: unknown): number | undefined {
+  const numeric = readNumber(value);
+  if (numeric != null) {
+    return numeric > 10_000_000_000 ? numeric : numeric * 1000;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? undefined : parsed;
+  }
+  return undefined;
+}
+
+function firstNonEmptyString(values: Array<string | undefined>): string | undefined {
+  return values.find((value) => value != null && value.trim().length > 0);
+}
+
 function appendOnce(messages: TimelineMessage[], next: TimelineMessage): TimelineMessage[] {
   if (messages.some((message) => message.text === next.text && message.role === next.role && message.kind === next.kind)) {
     return messages;
   }
   return [...messages, next];
+}
+
+function resolvedServerRequestId(params: unknown): string | undefined {
+  if (!params || typeof params !== "object" || Array.isArray(params)) {
+    return undefined;
+  }
+  const object = params as Record<string, unknown>;
+  const value = object.requestId ?? object.requestID ?? object.id;
+  return value == null ? undefined : idKey(value);
 }
 
 function findLatestLocalUserMessageIndex(

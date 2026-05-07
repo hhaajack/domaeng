@@ -115,9 +115,7 @@ extension CodexService {
                 schedulePostConnectSyncPass()
             }
             Task { @MainActor [weak self] in
-                await self?.refreshBridgeManagedState(
-                    allowAvailableBridgeUpdatePrompt: self?.isAppInForeground ?? false
-                )
+                await self?.refreshBridgeManagedState()
                 self?.startGPTLoginSyncIfNeeded()
                 await self?.syncBridgeKeepMacAwakePreferenceIfNeeded()
             }
@@ -162,7 +160,6 @@ extension CodexService {
         supportsTurnPagination = true
         hasPresentedThreadForkBridgeUpdatePrompt = false
         hasPresentedMinimumBridgePackageUpdatePrompt = false
-        lastPresentedAvailableBridgePackageVersion = nil
         clearAllRunningState()
         readyThreadIDs.removeAll()
         failedThreadIDs.removeAll()
@@ -178,7 +175,6 @@ extension CodexService {
         supportsTurnCollaborationMode = false
         hasResolvedRateLimitsSnapshot = false
         bridgeInstalledVersion = nil
-        latestBridgePackageVersion = nil
         clearConnectionSyncState()
         clearHydrationCaches()
         resumedThreadIDs.removeAll()
@@ -557,7 +553,6 @@ extension CodexService {
         supportsTurnPagination = true
         hasPresentedThreadForkBridgeUpdatePrompt = false
         hasPresentedMinimumBridgePackageUpdatePrompt = false
-        lastPresentedAvailableBridgePackageVersion = nil
         clearAllRunningState()
         readyThreadIDs.removeAll()
         failedThreadIDs.removeAll()
@@ -571,7 +566,6 @@ extension CodexService {
         supportsStructuredMentionInput = true
         supportsTurnCollaborationMode = false
         bridgeInstalledVersion = nil
-        latestBridgePackageVersion = nil
         resumedThreadIDs.removeAll()
         clearHydrationCaches()
         resetSecureTransportState()

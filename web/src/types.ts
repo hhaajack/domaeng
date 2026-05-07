@@ -30,6 +30,8 @@ export interface PhoneIdentityState {
   phoneDeviceId: string;
   phoneIdentityPrivateKey: string;
   phoneIdentityPublicKey: string;
+  deviceDisplayName?: string;
+  deviceKind?: string;
 }
 
 export interface TrustedMacRecord {
@@ -119,6 +121,54 @@ export interface ApprovalRequest {
   turnId?: string;
   params?: JSONValue;
 }
+
+export interface CodexRateLimitWindow {
+  usedPercent: number;
+  windowDurationMins?: number;
+  resetsAt?: number;
+}
+
+export interface CodexRateLimitBucket {
+  limitId: string;
+  limitName?: string;
+  primary?: CodexRateLimitWindow;
+  secondary?: CodexRateLimitWindow;
+}
+
+export interface CodexRateLimitDisplayRow {
+  id: string;
+  label: string;
+  window: CodexRateLimitWindow;
+}
+
+export type ThreadRunState = "approval" | "running" | "ready" | "failed";
+
+export interface InAppNotification {
+  id: string;
+  threadId: string;
+  kind: "approval" | "ready" | "failed";
+  title: string;
+  body: string;
+  createdAt: number;
+}
+
+export interface WebPushSubscriptionPayload {
+  endpoint: string;
+  expirationTime?: number | null;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+}
+
+export type WebPushStatus =
+  | "checking"
+  | "unsupported"
+  | "insecure"
+  | "disabled"
+  | "subscribing"
+  | "enabled"
+  | "error";
 
 export interface GitStatusFile {
   path: string;

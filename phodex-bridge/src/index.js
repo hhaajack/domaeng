@@ -5,7 +5,14 @@
 // Depends on: ./bridge, ./secure-device-state, ./session-state, ./rollout-watch, ./macos-launch-agent
 
 const { startBridge } = require("./bridge");
-const { readBridgeDeviceState, resetBridgeDeviceState } = require("./secure-device-state");
+const {
+  readBridgeDeviceState,
+  readTrustedDevicesSnapshot,
+  renameTrustedDevice,
+  revokeTrustedDevice,
+  resetBridgeDeviceState,
+  setTrustedDeviceEnabled,
+} = require("./secure-device-state");
 const { openLastActiveThread } = require("./session-state");
 const { watchThreadRollout } = require("./rollout-watch");
 const { readBridgeConfig } = require("./codex-desktop-refresher");
@@ -25,12 +32,16 @@ module.exports = {
   printMacOSBridgeServiceStatus,
   readBridgeConfig,
   readBridgeDeviceState,
+  readTrustedDevicesSnapshot,
+  renameTrustedDevice,
+  revokeTrustedDevice,
   resetMacOSBridgePairing,
   startBridge,
   runMacOSBridgeService,
   startMacOSBridgeService,
   stopMacOSBridgeService,
   resetBridgePairing: resetBridgeDeviceState,
+  setTrustedDeviceEnabled,
   openLastActiveThread,
   watchThreadRollout,
 };

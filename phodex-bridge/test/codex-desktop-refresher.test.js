@@ -205,8 +205,9 @@ test("readBridgeConfig keeps safe defaults and explicit overrides", () => {
   assert.equal(sharedRuntimeOptOutConfig.refreshEnabled, false);
 });
 
-test("readBridgeConfig uses only the packaged relay default outside a source checkout", () => {
+test("readBridgeConfig derives a push URL from the active relay default", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "remodex-package-"));
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "remodex-state-"));
   const srcDir = path.join(tempRoot, "src");
   fs.mkdirSync(srcDir, { recursive: true });
   fs.writeFileSync(
@@ -216,17 +217,61 @@ test("readBridgeConfig uses only the packaged relay default outside a source che
   );
 
   const config = readBridgeConfig({
-    env: {},
+    env: {
+      REMODEX_DEVICE_STATE_DIR: stateDir,
+    },
     runtimeRoot: tempRoot,
     fsImpl: fs,
   });
 
   assert.equal(config.relayUrl, "wss://relay.example/relay");
-  assert.equal(config.pushServiceUrl, "");
+  assert.equal(config.pushServiceUrl, "https://relay.example");
+});
+
+test("readBridgeConfig keeps the persisted daemon relay unless an env override is set", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "remodex-package-"));
+  const srcDir = path.join(tempRoot, "src");
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "remodex-state-"));
+  fs.mkdirSync(srcDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(srcDir, "private-defaults.json"),
+    JSON.stringify({
+      relayUrl: "wss://packaged.example/relay",
+      pushServiceUrl: "https://packaged.example",
+    }),
+    "utf8"
+  );
+  fs.writeFileSync(
+    path.join(stateDir, "daemon-config.json"),
+    JSON.stringify({ relayUrl: "ws://127.0.0.1:9000/relay" }),
+    "utf8"
+  );
+
+  const persistedConfig = readBridgeConfig({
+    env: {
+      REMODEX_DEVICE_STATE_DIR: stateDir,
+    },
+    runtimeRoot: tempRoot,
+    fsImpl: fs,
+  });
+  const explicitConfig = readBridgeConfig({
+    env: {
+      REMODEX_DEVICE_STATE_DIR: stateDir,
+      REMODEX_RELAY: "wss://self-host.example/relay",
+    },
+    runtimeRoot: tempRoot,
+    fsImpl: fs,
+  });
+
+  assert.equal(persistedConfig.relayUrl, "ws://127.0.0.1:9000/relay");
+  assert.equal(persistedConfig.pushServiceUrl, "http://127.0.0.1:9000");
+  assert.equal(explicitConfig.relayUrl, "wss://self-host.example/relay");
+  assert.equal(explicitConfig.pushServiceUrl, "https://self-host.example");
 });
 
 test("readBridgeConfig uses a packaged push default only when it is explicitly provided", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "remodex-package-"));
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "remodex-state-"));
   const srcDir = path.join(tempRoot, "src");
   fs.mkdirSync(srcDir, { recursive: true });
   fs.writeFileSync(
@@ -239,7 +284,9 @@ test("readBridgeConfig uses a packaged push default only when it is explicitly p
   );
 
   const config = readBridgeConfig({
-    env: {},
+    env: {
+      REMODEX_DEVICE_STATE_DIR: stateDir,
+    },
     runtimeRoot: tempRoot,
     fsImpl: fs,
   });
@@ -279,7 +326,7 @@ test("readBridgeConfig preserves reverse-proxy subpaths when deriving push URLs"
   assert.equal(config.pushServiceUrl, "https://relay.example/remodex");
 });
 
-test("readBridgeConfig disables managed push defaults when a self-hosted relay override is set", () => {
+test("readBridgeConfig derives push from a self-hosted relay override instead of packaged defaults", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "remodex-package-"));
   const srcDir = path.join(tempRoot, "src");
   fs.mkdirSync(srcDir, { recursive: true });
@@ -298,7 +345,7 @@ test("readBridgeConfig disables managed push defaults when a self-hosted relay o
   });
 
   assert.equal(config.relayUrl, "wss://self-host.example/relay");
-  assert.equal(config.pushServiceUrl, "");
+  assert.equal(config.pushServiceUrl, "https://self-host.example");
 });
 
 test("thread/start falls back once to the new-thread route when thread id is still unknown", async () => {

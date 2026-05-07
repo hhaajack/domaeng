@@ -63,6 +63,55 @@ test("push service stores device registration and sends one completion alert", a
   assert.equal(sent[0].payload.threadId, "thread-1");
 });
 
+test("push service sends one attention alert for approval requests", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "remodex-push-attention-state-"));
+  const sent = [];
+  const service = createPushSessionService({
+    apnsClient: {
+      isConfigured: () => true,
+      async sendNotification(payload) {
+        sent.push(payload);
+      },
+    },
+    canRegisterSession: () => true,
+    stateStore: createFileBackedPushStateStore({
+      stateFilePath: path.join(tempDir, "push-state.json"),
+    }),
+  });
+
+  await service.registerDevice({
+    sessionId: "session-approval",
+    notificationSecret: "secret-approval",
+    deviceToken: "aa bb cc",
+    alertsEnabled: true,
+  });
+
+  await service.notifyAttention({
+    sessionId: "session-approval",
+    notificationSecret: "secret-approval",
+    threadId: "thread-approval",
+    turnId: "turn-approval",
+    requestId: "approval-1",
+    dedupeKey: "attention-1",
+    title: "Ship review",
+    body: "Approval needed: npm test",
+  });
+  await service.notifyAttention({
+    sessionId: "session-approval",
+    notificationSecret: "secret-approval",
+    threadId: "thread-approval",
+    requestId: "approval-1",
+    dedupeKey: "attention-1",
+  });
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].payload.source, "codex.approvalRequired");
+  assert.equal(sent[0].payload.threadId, "thread-approval");
+  assert.equal(sent[0].payload.turnId, "turn-approval");
+  assert.equal(sent[0].payload.requestId, "approval-1");
+  assert.equal(sent[0].body, "Approval needed: npm test");
+});
+
 test("push service rejects registration when the relay session is not active", async () => {
   const service = createPushSessionService({
     apnsClient: {
