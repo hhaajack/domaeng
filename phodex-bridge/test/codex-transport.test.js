@@ -93,6 +93,77 @@ test("spawn launch plans add the bundled Codex app binary as a fallback on macOS
   }
 });
 
+test("spawn launch plans can add app-server listen arguments", () => {
+  const launches = createCodexLaunchPlans({
+    env: { PATH: "/usr/bin:/bin" },
+    platform: "darwin",
+    appServerArgs: ["app-server", "--listen", "ws://127.0.0.1:4567"],
+    fsImpl: {
+      statSync() {
+        throw new Error("missing");
+      },
+    },
+  });
+
+  assert.deepEqual(launches[0].args, ["app-server", "--listen", "ws://127.0.0.1:4567"]);
+  assert.equal(
+    launches[0].description,
+    "`codex app-server --listen ws://127.0.0.1:4567`"
+  );
+});
+
+test("managed websocket transport spawns a local app-server and flushes queued messages after open", async () => {
+  FakeWebSocket.latestInstance = null;
+  const spawnCalls = [];
+  const child = createFakeChild();
+  const transport = createCodexTransport({
+    managedWebSocket: true,
+    managedWebSocketPort: 4567,
+    env: { PATH: "/usr/bin:/bin" },
+    spawnImpl(command, args, options) {
+      spawnCalls.push({ command, args, options });
+      return child;
+    },
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  transport.send('{"id":"queued","method":"initialize"}');
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(spawnCalls.length, 1);
+  assert.equal(spawnCalls[0].command, "codex");
+  assert.deepEqual(spawnCalls[0].args, [
+    "app-server",
+    "--listen",
+    "ws://127.0.0.1:4567",
+  ]);
+
+  let startedInfo = null;
+  transport.onStarted((info) => {
+    startedInfo = info;
+  });
+
+  child.emit("spawn");
+  const socket = FakeWebSocket.latestInstance;
+  assert.ok(socket);
+  assert.equal(socket.endpoint, "ws://127.0.0.1:4567");
+  assert.deepEqual(socket.sentMessages, []);
+
+  socket.readyState = FakeWebSocket.OPEN;
+  socket.emit("open");
+
+  assert.deepEqual(socket.sentMessages, ['{"id":"queued","method":"initialize"}']);
+  assert.deepEqual(startedInfo, {
+    mode: "managed-websocket",
+    launchDescription: "`codex app-server --listen ws://127.0.0.1:4567`",
+    endpoint: "ws://127.0.0.1:4567",
+  });
+  assert.equal(
+    transport.describe(),
+    "`codex app-server --listen ws://127.0.0.1:4567` (ws://127.0.0.1:4567)"
+  );
+});
+
 test("spawn launch plans keep the default codex command first even when a bundled fallback exists", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "remodex-codex-path-"));
   const appPath = path.join(tempDir, "Codex.app");

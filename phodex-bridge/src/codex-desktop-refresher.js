@@ -14,10 +14,13 @@ const DEFAULT_BUNDLE_ID = "com.openai.codex";
 const DEFAULT_APP_PATH = "/Applications/Codex.app";
 const DEFAULT_DEBOUNCE_MS = 1200;
 const DEFAULT_FALLBACK_NEW_THREAD_MS = 2_000;
-const DEFAULT_MID_RUN_REFRESH_THROTTLE_MS = 3_000;
 const DEFAULT_ROLLOUT_LOOKUP_TIMEOUT_MS = 5_000;
 const DEFAULT_ROLLOUT_IDLE_TIMEOUT_MS = 10_000;
 const DEFAULT_CUSTOM_REFRESH_FAILURE_THRESHOLD = 3;
+const DEFAULT_COMPLETION_REFRESH_MODE = "relaunch";
+const DEFAULT_RELAUNCH_WAIT_MS = 300;
+const DEFAULT_APP_BOOT_WAIT_MS = 1_200;
+const DESKTOP_REFRESH_TIMEOUT_MS = 20_000;
 const REFRESH_SCRIPT_PATH = path.join(__dirname, "scripts", "codex-refresh.applescript");
 const NEW_THREAD_DEEP_LINK = "codex://threads/new";
 
@@ -30,14 +33,18 @@ class CodexDesktopRefresher {
     appPath = DEFAULT_APP_PATH,
     logPrefix = "[remodex]",
     fallbackNewThreadMs = DEFAULT_FALLBACK_NEW_THREAD_MS,
-    midRunRefreshThrottleMs = DEFAULT_MID_RUN_REFRESH_THROTTLE_MS,
     rolloutLookupTimeoutMs = DEFAULT_ROLLOUT_LOOKUP_TIMEOUT_MS,
     rolloutIdleTimeoutMs = DEFAULT_ROLLOUT_IDLE_TIMEOUT_MS,
     now = () => Date.now(),
     refreshExecutor = null,
+    commandExecutor = execFilePromise,
+    sleepFn = sleep,
     watchThreadRolloutFactory = createThreadRolloutActivityWatcher,
     refreshBackend = null,
     customRefreshFailureThreshold = DEFAULT_CUSTOM_REFRESH_FAILURE_THRESHOLD,
+    completionRefreshMode = DEFAULT_COMPLETION_REFRESH_MODE,
+    relaunchWaitMs = DEFAULT_RELAUNCH_WAIT_MS,
+    appBootWaitMs = DEFAULT_APP_BOOT_WAIT_MS,
   } = {}) {
     this.enabled = enabled;
     this.debounceMs = debounceMs;
@@ -46,15 +53,19 @@ class CodexDesktopRefresher {
     this.appPath = appPath;
     this.logPrefix = logPrefix;
     this.fallbackNewThreadMs = fallbackNewThreadMs;
-    this.midRunRefreshThrottleMs = midRunRefreshThrottleMs;
     this.rolloutLookupTimeoutMs = rolloutLookupTimeoutMs;
     this.rolloutIdleTimeoutMs = rolloutIdleTimeoutMs;
     this.now = now;
     this.refreshExecutor = refreshExecutor;
+    this.commandExecutor = commandExecutor;
+    this.sleepFn = sleepFn;
     this.watchThreadRolloutFactory = watchThreadRolloutFactory;
     this.refreshBackend = refreshBackend
       || (this.refreshCommand ? "command" : (this.refreshExecutor ? "command" : "applescript"));
     this.customRefreshFailureThreshold = customRefreshFailureThreshold;
+    this.completionRefreshMode = normalizeCompletionRefreshMode(completionRefreshMode);
+    this.relaunchWaitMs = relaunchWaitMs;
+    this.appBootWaitMs = appBootWaitMs;
 
     this.mode = "idle";
     this.pendingNewThread = false;
@@ -68,7 +79,6 @@ class CodexDesktopRefresher {
     this.lastRefreshAt = 0;
     this.lastRefreshSignature = "";
     this.lastTurnIdRefreshed = null;
-    this.lastMidRunRefreshAt = 0;
     this.refreshTimer = null;
     this.refreshRunning = false;
     this.fallbackTimer = null;
@@ -92,7 +102,7 @@ class CodexDesktopRefresher {
     if (method === "thread/start") {
       const target = resolveInboundTarget(method, parsed);
       if (target?.threadId) {
-        this.queueRefresh("phone", target, `phone ${method}`);
+        this.noteRefreshTarget(target);
         this.ensureWatcher(target.threadId);
         return;
       }
@@ -110,7 +120,7 @@ class CodexDesktopRefresher {
         return;
       }
 
-      this.queueRefresh("phone", target, `phone ${method}`);
+      this.noteRefreshTarget(target);
       if (target.threadId) {
         this.ensureWatcher(target.threadId);
       }
@@ -141,7 +151,7 @@ class CodexDesktopRefresher {
       const target = resolveOutboundTarget(method, parsed);
       this.pendingNewThread = false;
       this.clearFallbackTimer();
-      this.queueRefresh("phone", target, `codex ${method}`);
+      this.noteRefreshTarget(target);
       if (target?.threadId) {
         this.mode = "watching_thread";
         this.ensureWatcher(target.threadId);
@@ -167,10 +177,13 @@ class CodexDesktopRefresher {
   }
 
   queueCompletionRefresh(target, turnId, reason) {
-    this.noteCompletionTarget(target);
+    const completionTarget = target?.url
+      ? target
+      : this.currentPendingTarget();
+    this.noteCompletionTarget(completionTarget);
     this.pendingCompletionRefresh = true;
     this.pendingCompletionTurnId = turnId;
-    this.stopWatcherAfterRefreshThreadId = target?.threadId || null;
+    this.stopWatcherAfterRefreshThreadId = completionTarget?.threadId || null;
     this.scheduleRefresh(reason);
   }
 
@@ -186,6 +199,17 @@ class CodexDesktopRefresher {
   clearPendingTarget() {
     this.pendingTargetUrl = "";
     this.pendingTargetThreadId = "";
+  }
+
+  currentPendingTarget() {
+    if (!this.pendingTargetUrl) {
+      return null;
+    }
+
+    return {
+      threadId: this.pendingTargetThreadId || null,
+      url: this.pendingTargetUrl,
+    };
   }
 
   noteCompletionTarget(target) {
@@ -274,7 +298,10 @@ class CodexDesktopRefresher {
       ) {
         this.log(`refresh skipped (duplicate target): ${refreshSignature}`);
       } else {
-        await this.executeRefresh(targetUrl);
+        await this.executeRefresh(targetUrl, {
+          forceRelaunch: shouldForceCompletionRefresh
+            && this.completionRefreshMode === "relaunch",
+        });
         this.lastRefreshAt = this.now();
         this.lastRefreshSignature = refreshSignature;
         this.consecutiveRefreshFailures = 0;
@@ -303,16 +330,28 @@ class CodexDesktopRefresher {
     }
   }
 
-  executeRefresh(targetUrl) {
+  executeRefresh(targetUrl, { forceRelaunch = false } = {}) {
     if (this.refreshExecutor) {
-      return this.refreshExecutor(targetUrl || "");
+      return this.refreshExecutor(targetUrl || "", { forceRelaunch });
     }
 
     if (this.refreshCommand) {
-      return execFilePromise("/bin/sh", ["-lc", this.refreshCommand]);
+      return this.commandExecutor("/bin/sh", ["-lc", this.refreshCommand]);
     }
 
-    return execFilePromise("osascript", [
+    if (forceRelaunch) {
+      return forceRelaunchCodexApp({
+        targetUrl: targetUrl || "",
+        bundleId: this.bundleId,
+        appPath: this.appPath,
+        executor: this.commandExecutor,
+        sleepFn: this.sleepFn,
+        relaunchWaitMs: this.relaunchWaitMs,
+        appBootWaitMs: this.appBootWaitMs,
+      });
+    }
+
+    return this.commandExecutor("osascript", [
       REFRESH_SCRIPT_PATH,
       this.bundleId,
       this.appPath,
@@ -423,13 +462,13 @@ class CodexDesktopRefresher {
     this.lastRolloutSize = null;
   }
 
-  // Converts rollout growth into occasional refreshes without spamming the desktop.
+  // Rollout activity is used as readiness signal only. The desktop route bounce
+  // happens after completion so Codex does not keep flashing back to the new-chat route.
   handleWatcherEvent(event) {
     if (!event?.threadId || event.threadId !== this.activeWatchedThreadId) {
       return;
     }
 
-    const previousSize = this.lastRolloutSize;
     this.lastRolloutSize = event.size;
     this.noteRefreshTarget({
       threadId: event.threadId,
@@ -437,35 +476,9 @@ class CodexDesktopRefresher {
     });
 
     if (event.reason === "materialized") {
-      this.queueRefresh("rollout_materialized", {
-        threadId: event.threadId,
-        url: buildThreadDeepLink(event.threadId),
-      }, `rollout ${event.reason}`);
+      this.log(`rollout materialized thread=${event.threadId}`);
       return;
     }
-
-    if (event.reason !== "growth") {
-      return;
-    }
-
-    if (previousSize == null) {
-      this.queueRefresh("rollout_growth", {
-        threadId: event.threadId,
-        url: buildThreadDeepLink(event.threadId),
-      }, "rollout first-growth");
-      this.lastMidRunRefreshAt = this.now();
-      return;
-    }
-
-    if (this.now() - this.lastMidRunRefreshAt < this.midRunRefreshThrottleMs) {
-      return;
-    }
-
-    this.lastMidRunRefreshAt = this.now();
-    this.queueRefresh("rollout_growth", {
-      threadId: event.threadId,
-      url: buildThreadDeepLink(event.threadId),
-    }, "rollout mid-run");
   }
 
   log(message) {
@@ -547,6 +560,14 @@ function readBridgeConfig({
     "",
     env
   );
+  const explicitSharedRuntimeEnabled = readOptionalBooleanEnv(["REMODEX_SHARED_CODEX_RUNTIME"], env);
+  const sharedRuntimeEnabled = explicitSharedRuntimeEnabled == null
+    ? platform === "darwin" && !codexEndpoint
+    : explicitSharedRuntimeEnabled;
+  const explicitDesktopSharedRuntimeEnabled = readOptionalBooleanEnv(["REMODEX_DESKTOP_SHARED_RUNTIME"], env);
+  const desktopSharedRuntimeEnabled = explicitDesktopSharedRuntimeEnabled == null
+    ? false
+    : platform === "darwin" && explicitDesktopSharedRuntimeEnabled;
   const refreshCommand = readFirstDefinedEnv(
     ["REMODEX_REFRESH_COMMAND", "PHODEX_ON_PHONE_MESSAGE"],
     "",
@@ -557,7 +578,8 @@ function readBridgeConfig({
   const persistedKeepMacAwakeEnabled = typeof daemonConfig.keepMacAwakeEnabled === "boolean"
     ? daemonConfig.keepMacAwakeEnabled
     : null;
-  // Desktop refresh is opt-in for now because Codex.app still lacks true live updates.
+  // Desktop mutation is opt-in until the shared runtime path can attach without
+  // disrupting Codex.app login/startup.
   const defaultRefreshEnabled = false;
   return {
     relayUrl,
@@ -582,7 +604,19 @@ function readBridgeConfig({
       : explicitKeepMacAwakeEnabled,
     codexEndpoint,
     desktopIpcSocketPath: readFirstDefinedEnv(["REMODEX_DESKTOP_IPC_SOCKET"], "", env),
+    sharedRuntimeEnabled,
+    sharedRuntimeHost: readFirstDefinedEnv(["REMODEX_SHARED_CODEX_RUNTIME_HOST"], "127.0.0.1", env),
+    sharedRuntimePort: parseIntegerEnv(
+      readFirstDefinedEnv(["REMODEX_SHARED_CODEX_RUNTIME_PORT"], "0", env),
+      0
+    ),
+    desktopSharedRuntimeEnabled,
     refreshCommand,
+    completionRefreshMode: normalizeCompletionRefreshMode(readFirstDefinedEnv(
+      ["REMODEX_COMPLETION_REFRESH_MODE"],
+      DEFAULT_COMPLETION_REFRESH_MODE,
+      env
+    )),
     codexBundleId: readFirstDefinedEnv(["REMODEX_CODEX_BUNDLE_ID"], DEFAULT_BUNDLE_ID, env),
     codexAppPath: DEFAULT_APP_PATH,
   };
@@ -618,9 +652,63 @@ function isSourceCheckout(runtimeRoot, fsImpl) {
     && fsImpl.existsSync(path.join(repoRoot, ".git"));
 }
 
-function execFilePromise(command, args) {
+async function forceRelaunchCodexApp({
+  targetUrl,
+  bundleId,
+  appPath,
+  executor,
+  sleepFn,
+  relaunchWaitMs,
+  appBootWaitMs,
+}) {
+  const appName = path.basename(appPath, ".app");
+
+  try {
+    await executor("pkill", ["-x", appName], {
+      timeout: DESKTOP_REFRESH_TIMEOUT_MS,
+    });
+  } catch (error) {
+    if (error?.code !== 1) {
+      throw error;
+    }
+  }
+
+  await sleepFn(relaunchWaitMs);
+  await openCodexApp({ bundleId, appPath, executor });
+  await sleepFn(appBootWaitMs);
+
+  if (targetUrl) {
+    await openCodexTarget(targetUrl, { bundleId, appPath, executor });
+  }
+}
+
+async function openCodexApp({ bundleId, appPath, executor }) {
+  try {
+    await executor("open", ["-b", bundleId], {
+      timeout: DESKTOP_REFRESH_TIMEOUT_MS,
+    });
+  } catch {
+    await executor("open", ["-a", appPath], {
+      timeout: DESKTOP_REFRESH_TIMEOUT_MS,
+    });
+  }
+}
+
+async function openCodexTarget(targetUrl, { bundleId, appPath, executor }) {
+  try {
+    await executor("open", ["-b", bundleId, targetUrl], {
+      timeout: DESKTOP_REFRESH_TIMEOUT_MS,
+    });
+  } catch {
+    await executor("open", ["-a", appPath, targetUrl], {
+      timeout: DESKTOP_REFRESH_TIMEOUT_MS,
+    });
+  }
+}
+
+function execFilePromise(command, args, options = {}) {
   return new Promise((resolve, reject) => {
-    execFile(command, args, (error, stdout, stderr) => {
+    execFile(command, args, options, (error, stdout, stderr) => {
       if (error) {
         error.stdout = stdout;
         error.stderr = stderr;
@@ -743,6 +831,22 @@ function parseBooleanEnv(value) {
 function parseIntegerEnv(value, fallback) {
   const parsed = Number.parseInt(String(value), 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeCompletionRefreshMode(value) {
+  const normalized = typeof value === "string"
+    ? value.trim().toLowerCase()
+    : "";
+
+  if (["remount", "route", "applescript"].includes(normalized)) {
+    return "remount";
+  }
+
+  return DEFAULT_COMPLETION_REFRESH_MODE;
 }
 
 function extractErrorMessage(error) {

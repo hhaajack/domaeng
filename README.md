@@ -304,14 +304,20 @@ remodex watch
 | `REMODEX_RELAY` | empty in source checkouts; optional in published packages | Session base URL used for QR bootstrap, trusted-session resolve, and phone/Mac session routing |
 | `REMODEX_PUSH_SERVICE_URL` | disabled by default | Optional HTTP base URL for managed push registration/completion |
 | `REMODEX_CODEX_ENDPOINT` | — | Connect to an existing Codex WebSocket instead of spawning a local `codex app-server` |
-| `REMODEX_REFRESH_ENABLED` | `false` | Auto-refresh Codex.app when phone activity is detected (`true` enables it explicitly) |
+| `REMODEX_SHARED_CODEX_RUNTIME` | `true` on macOS | Start the bridge Codex runtime as a localhost WebSocket app-server |
+| `REMODEX_SHARED_CODEX_RUNTIME_PORT` | `0` | Localhost port for the shared Codex runtime (`0` chooses a free port) |
+| `REMODEX_DESKTOP_SHARED_RUNTIME` | `false` | Experimental: relaunch `Codex.app` onto the bridge/shared Codex WebSocket endpoint |
+| `REMODEX_REFRESH_ENABLED` | `false` | Old deep-link refresh fallback for phone-authored activity (`true` enables it explicitly) |
 | `REMODEX_REFRESH_DEBOUNCE_MS` | `1200` | Debounce window (ms) for coalescing refresh events |
 | `REMODEX_REFRESH_COMMAND` | — | Custom shell command to run instead of the built-in AppleScript refresh |
 | `REMODEX_CODEX_BUNDLE_ID` | `com.openai.codex` | macOS bundle ID of the Codex app |
 | `CODEX_HOME` | `~/.codex` | Codex data directory (used here for `sessions/` rollout files) |
 
 ```sh
-# Enable desktop refresh explicitly
+# Try the experimental Desktop shared-runtime sync path
+REMODEX_DESKTOP_SHARED_RUNTIME=true remodex up
+
+# Use the old route-refresh fallback
 REMODEX_REFRESH_ENABLED=true remodex up
 
 # Connect to an existing Codex instance
@@ -396,25 +402,21 @@ Remodex works with both the Codex CLI and the Codex desktop app (`Codex.app`). U
 
 What is live today:
 
-- The iPhone conversation is live while the bridge session is connected.
-- The Mac-side Codex runtime is the real runtime doing the work.
+- The iPhone/web conversation is live while the bridge session is connected.
+- On macOS, Remodex can start the bridge-owned Codex runtime as a localhost WebSocket `codex app-server`.
+- Relaunching `Codex.app` onto that shared runtime is still experimental and opt-in with `REMODEX_DESKTOP_SHARED_RUNTIME=true`.
+- When that experimental path is enabled, the goal is for live thread events and approval decisions to flow through the shared runtime instead of waiting for a disk-backed route refresh.
 
-What is not fully live today:
+Remodex still includes a hand-off button in the iPhone app. It opens the matching thread in `Codex.app` when you want to explicitly switch focus to the Mac.
 
-- `Codex.app` does not act like a second live subscriber to the active run by default.
-- The desktop app catches up from the persisted session files and can be nudged with the optional refresh workaround below.
-- True phone-to-desktop live sync in the `Codex.app` GUI is not supported today.
-
-To make that limitation more practical, Remodex also includes a hand-off button in the iPhone app. It lets you explicitly continue the current chat on your Mac by opening the matching thread in `Codex.app` when you are ready to switch devices.
-
-**Known limitation**: The Codex desktop app does not live-reload when an external `app-server` process writes new data to disk. Threads created or updated from your phone won't appear in the desktop app until it remounts that route. Remodex keeps desktop refresh off by default for now because the current deep-link bounce is still disruptive. You can still enable it manually if you want the old remount workaround.
+The old refresh workaround is also available:
 
 ```sh
 # Enable the old deep-link refresh workaround manually
-REMODEX_REFRESH_ENABLED=true remodex up
+REMODEX_SHARED_CODEX_RUNTIME=false REMODEX_REFRESH_ENABLED=true remodex up
 ```
 
-This triggers a debounced deep-link bounce (`codex://settings` → `codex://threads/<id>`) that forces the desktop app to remount the current thread without interrupting any running tasks. While a turn is running, Remodex also watches the persisted rollout for that thread and issues occasional throttled refreshes so long responses become visible on Mac without a full app relaunch. If the local desktop path is unavailable, the bridge self-disables desktop refresh for the rest of that run instead of retrying noisily forever.
+This triggers a debounced deep-link bounce (`codex://settings` → `codex://threads/<id>`) that forces the desktop app to remount the current thread after the turn completes. If the local desktop path is unavailable, the bridge self-disables desktop refresh for the rest of that run instead of retrying noisily forever.
 
 ## Connection Resilience
 
@@ -454,10 +456,10 @@ Run `remodex reset-pairing`, then start the bridge again with `remodex up`. You 
 Yes — set `REMODEX_CODEX_ENDPOINT=ws://host:port` to skip spawning a local `codex app-server`.
 
 **Why don't my phone threads show up in the Codex desktop app immediately?**
-The desktop app reads session data from disk (`~/.codex/sessions`) but doesn't live-reload when an external process writes new data. Your phone still gets the live stream; it is the desktop GUI that lags unless you explicitly enable the refresh workaround with `REMODEX_REFRESH_ENABLED=true`.
+Desktop sync is currently opt-in. Set `REMODEX_DESKTOP_SHARED_RUNTIME=true` to try the shared-runtime path, or `REMODEX_REFRESH_ENABLED=true` to try the older route-refresh fallback.
 
 **Does Remodex support true live sync between phone and `Codex.app`?**
-No. The phone session is live, but the `Codex.app` GUI is not a true live mirror of the active run. To help with that, the iPhone app includes a `Hand off to Mac app` button so you can explicitly continue the same thread on your Mac.
+The experimental macOS shared-runtime path is intended to do that, but it is not the default because it has to relaunch `Codex.app` onto a local WebSocket app-server.
 
 **Can I self-host the relay?**
 Yes. That is the intended forking path. The transport and push-service code are in [`relay/`](relay/); point `REMODEX_RELAY` at the instance you run.

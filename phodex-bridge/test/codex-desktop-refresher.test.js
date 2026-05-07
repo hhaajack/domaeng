@@ -73,6 +73,17 @@ test("readBridgeConfig keeps safe defaults and explicit overrides", () => {
       },
     },
   });
+  const remountCompletionConfig = readBridgeConfig({
+    env: { REMODEX_COMPLETION_REFRESH_MODE: "remount" },
+    platform: "darwin",
+    runtimeRoot: "/tmp/remodex-package",
+    fsImpl: {
+      existsSync: () => false,
+      readFileSync: () => {
+        throw new Error("unexpected read");
+      },
+    },
+  });
   const linuxConfig = readBridgeConfig({
     env: {},
     platform: "linux",
@@ -125,18 +136,42 @@ test("readBridgeConfig keeps safe defaults and explicit overrides", () => {
       },
     },
   });
+  const sharedRuntimeOptOutConfig = readBridgeConfig({
+    env: {
+      REMODEX_SHARED_CODEX_RUNTIME: "false",
+    },
+    platform: "darwin",
+    runtimeRoot: "/tmp/remodex-package",
+    fsImpl: {
+      existsSync: () => false,
+      readFileSync: () => {
+        throw new Error("unexpected read");
+      },
+    },
+  });
+  assert.equal(macConfig.sharedRuntimeEnabled, true);
+  assert.equal(macConfig.desktopSharedRuntimeEnabled, false);
+  assert.equal(macConfig.sharedRuntimeHost, "127.0.0.1");
+  assert.equal(macConfig.sharedRuntimePort, 0);
   assert.equal(macConfig.refreshEnabled, false);
+  assert.equal(macConfig.completionRefreshMode, "relaunch");
   assert.equal(macConfig.keepMacAwakeEnabled, false);
   assert.equal(macConfig.relayUrl, "");
   assert.equal(macConfig.pushServiceUrl, "");
   assert.equal(persistedKeepAwakeConfig.keepMacAwakeEnabled, false);
+  assert.equal(macEndpointConfig.sharedRuntimeEnabled, false);
+  assert.equal(macEndpointConfig.desktopSharedRuntimeEnabled, false);
   assert.equal(macEndpointConfig.refreshEnabled, false);
+  assert.equal(remountCompletionConfig.completionRefreshMode, "remount");
   assert.equal(linuxConfig.refreshEnabled, false);
   assert.equal(linuxCommandConfig.refreshEnabled, false);
   assert.equal(explicitOnConfig.refreshEnabled, true);
   assert.equal(explicitOnConfig.desktopIpcSocketPath, "/tmp/remodex-ipc.sock");
   assert.equal(explicitOffConfig.refreshEnabled, false);
   assert.equal(explicitOffConfig.keepMacAwakeEnabled, false);
+  assert.equal(sharedRuntimeOptOutConfig.sharedRuntimeEnabled, false);
+  assert.equal(sharedRuntimeOptOutConfig.desktopSharedRuntimeEnabled, false);
+  assert.equal(sharedRuntimeOptOutConfig.refreshEnabled, false);
 });
 
 test("readBridgeConfig uses only the packaged relay default outside a source checkout", () => {
@@ -257,9 +292,10 @@ test("thread/start falls back once to the new-thread route when thread id is sti
   refresher.handleTransportReset();
 });
 
-test("thread/started cancels the fallback and refreshes the concrete thread route", async () => {
+test("thread/started cancels the fallback and waits for completion before refreshing", async () => {
   const refreshCalls = [];
   const watchedThreads = [];
+  let watcherHooks = null;
   let stopCount = 0;
   const refresher = new CodexDesktopRefresher({
     enabled: true,
@@ -268,7 +304,9 @@ test("thread/started cancels the fallback and refreshes the concrete thread rout
     refreshExecutor: async (targetUrl) => {
       refreshCalls.push(targetUrl);
     },
-    watchThreadRolloutFactory: ({ threadId }) => {
+    watchThreadRolloutFactory: (hooks) => {
+      watcherHooks = hooks;
+      const { threadId } = hooks;
       watchedThreads.push(threadId);
       return {
         stop() {
@@ -294,17 +332,35 @@ test("thread/started cancels the fallback and refreshes the concrete thread rout
 
   await wait(25);
 
-  assert.deepEqual(refreshCalls, ["codex://threads/thread-123"]);
+  assert.deepEqual(refreshCalls, []);
   assert.deepEqual(watchedThreads, ["thread-123"]);
 
   await wait(30);
+  assert.deepEqual(refreshCalls, []);
+
+  watcherHooks.onEvent({
+    reason: "materialized",
+    threadId: "thread-123",
+    size: 10,
+  });
+  await wait(10);
+  assert.deepEqual(refreshCalls, []);
+
+  refresher.handleOutbound(JSON.stringify({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-123",
+      turnId: "turn-123",
+    },
+  }));
+  await wait(10);
   assert.deepEqual(refreshCalls, ["codex://threads/thread-123"]);
 
   refresher.handleTransportReset();
   assert.equal(stopCount, 1);
 });
 
-test("rollout growth refreshes are throttled during long runs", async () => {
+test("rollout growth does not refresh during long runs", async () => {
   const refreshCalls = [];
   let watcherHooks = null;
   let currentTime = 0;
@@ -312,7 +368,6 @@ test("rollout growth refreshes are throttled during long runs", async () => {
   const refresher = new CodexDesktopRefresher({
     enabled: true,
     debounceMs: 0,
-    midRunRefreshThrottleMs: 3_000,
     now: () => currentTime,
     refreshExecutor: async (targetUrl) => {
       refreshCalls.push(targetUrl);
@@ -334,19 +389,18 @@ test("rollout growth refreshes are throttled during long runs", async () => {
 
   currentTime = 1_000;
   watcherHooks.onEvent({
-    reason: "growth",
+    reason: "materialized",
     threadId: "thread-456",
-    size: 10,
+    size: 8,
   });
   await wait(10);
-  assert.deepEqual(refreshCalls, ["codex://threads/thread-456"]);
+  assert.deepEqual(refreshCalls, []);
 
-  refreshCalls.length = 0;
   currentTime = 2_000;
   watcherHooks.onEvent({
     reason: "growth",
     threadId: "thread-456",
-    size: 15,
+    size: 10,
   });
   await wait(10);
   assert.deepEqual(refreshCalls, []);
@@ -355,14 +409,24 @@ test("rollout growth refreshes are throttled during long runs", async () => {
   watcherHooks.onEvent({
     reason: "growth",
     threadId: "thread-456",
+    size: 15,
+  });
+  await wait(10);
+  assert.deepEqual(refreshCalls, []);
+
+  currentTime = 8_000;
+  watcherHooks.onEvent({
+    reason: "growth",
+    threadId: "thread-456",
     size: 20,
   });
   await wait(10);
-  assert.deepEqual(refreshCalls, ["codex://threads/thread-456"]);
+  assert.deepEqual(refreshCalls, []);
 });
 
-test("turn/completed bypasses duplicate-target dedupe and still stops the watcher", async () => {
+test("turn/completed refreshes once per turn and stops the watcher", async () => {
   const refreshCalls = [];
+  let watcherHooks = null;
   let stopCount = 0;
   let currentTime = 3_000;
 
@@ -373,11 +437,14 @@ test("turn/completed bypasses duplicate-target dedupe and still stops the watche
     refreshExecutor: async (targetUrl) => {
       refreshCalls.push(targetUrl);
     },
-    watchThreadRolloutFactory: () => ({
-      stop() {
-        stopCount += 1;
-      },
-    }),
+    watchThreadRolloutFactory: (hooks) => {
+      watcherHooks = hooks;
+      return {
+        stop() {
+          stopCount += 1;
+        },
+      };
+    },
   });
 
   refresher.handleInbound(JSON.stringify({
@@ -386,6 +453,13 @@ test("turn/completed bypasses duplicate-target dedupe and still stops the watche
       threadId: "thread-789",
     },
   }));
+  await wait(10);
+
+  watcherHooks.onEvent({
+    reason: "materialized",
+    threadId: "thread-789",
+    size: 12,
+  });
   await wait(10);
 
   currentTime = 4_500;
@@ -410,9 +484,67 @@ test("turn/completed bypasses duplicate-target dedupe and still stops the watche
 
   assert.deepEqual(refreshCalls, [
     "codex://threads/thread-789",
-    "codex://threads/thread-789",
   ]);
   assert.equal(stopCount, 1);
+});
+
+test("turn/completed relaunches Codex by default so desktop rereads the rollout", async () => {
+  const commandCalls = [];
+  const sleepCalls = [];
+  let watcherHooks = null;
+
+  const refresher = new CodexDesktopRefresher({
+    enabled: true,
+    debounceMs: 0,
+    bundleId: "com.openai.codex",
+    appPath: "/Applications/Codex.app",
+    commandExecutor: async (command, args, options) => {
+      commandCalls.push([command, args, options]);
+      if (command === "pkill") {
+        const error = new Error("not running");
+        error.code = 1;
+        throw error;
+      }
+
+      return { stdout: "", stderr: "" };
+    },
+    sleepFn: async (ms) => {
+      sleepCalls.push(ms);
+    },
+    watchThreadRolloutFactory: (hooks) => {
+      watcherHooks = hooks;
+      return { stop() {} };
+    },
+  });
+
+  refresher.handleInbound(JSON.stringify({
+    method: "turn/start",
+    params: {
+      threadId: "thread-relaunch",
+    },
+  }));
+  await wait(10);
+
+  watcherHooks.onEvent({
+    reason: "materialized",
+    threadId: "thread-relaunch",
+    size: 12,
+  });
+  refresher.handleOutbound(JSON.stringify({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-relaunch",
+      turnId: "turn-relaunch",
+    },
+  }));
+  await wait(10);
+
+  assert.deepEqual(commandCalls.map(([command, args]) => [command, args]), [
+    ["pkill", ["-x", "Codex"]],
+    ["open", ["-b", "com.openai.codex"]],
+    ["open", ["-b", "com.openai.codex", "codex://threads/thread-relaunch"]],
+  ]);
+  assert.deepEqual(sleepCalls, [300, 1200]);
 });
 
 test("turn/completed is retried after a slow in-flight refresh finishes", async () => {
@@ -445,7 +577,16 @@ test("turn/completed is retried after a slow in-flight refresh finishes", async 
     method: "turn/completed",
     params: {
       threadId: "thread-slow",
-      turnId: "turn-slow",
+      turnId: "turn-slow-1",
+    },
+  }));
+  await wait(10);
+
+  refresher.handleOutbound(JSON.stringify({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-slow",
+      turnId: "turn-slow-2",
     },
   }));
   await wait(10);
@@ -464,6 +605,7 @@ test("turn/completed is retried after a slow in-flight refresh finishes", async 
 test("completion refresh keeps its own thread target even if another thread queues behind it", async () => {
   const refreshCalls = [];
   let stopCount = 0;
+  const watcherHooksByThread = new Map();
 
   const refresher = new CodexDesktopRefresher({
     enabled: true,
@@ -471,13 +613,17 @@ test("completion refresh keeps its own thread target even if another thread queu
     refreshExecutor: async (targetUrl) => {
       refreshCalls.push(targetUrl);
     },
-    watchThreadRolloutFactory: ({ threadId }) => ({
-      stop() {
-        if (threadId === "thread-a") {
-          stopCount += 1;
-        }
-      },
-    }),
+    watchThreadRolloutFactory: (hooks) => {
+      const { threadId } = hooks;
+      watcherHooksByThread.set(threadId, hooks);
+      return {
+        stop() {
+          if (threadId === "thread-a") {
+            stopCount += 1;
+          }
+        },
+      };
+    },
   });
 
   refresher.handleInbound(JSON.stringify({
@@ -499,6 +645,15 @@ test("completion refresh keeps its own thread target even if another thread queu
     method: "turn/start",
     params: { threadId: "thread-b" },
   }));
+  watcherHooksByThread.get("thread-b").onEvent({
+    reason: "materialized",
+    threadId: "thread-b",
+    size: 20,
+  });
+  refresher.queueRefresh("rollout_materialized", {
+    threadId: "thread-b",
+    url: "codex://threads/thread-b",
+  }, "rollout materialized");
   refresher.clearRefreshTimer();
   await refresher.runPendingRefresh();
   await refresher.runPendingRefresh();
@@ -558,6 +713,13 @@ test("handleTransportReset clears duplicate-target memory so the next refresh ca
     method: "turn/start",
     params: { threadId: "thread-reset-dedupe" },
   }));
+  refresher.handleOutbound(JSON.stringify({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-reset-dedupe",
+      turnId: "turn-reset-dedupe-1",
+    },
+  }));
   await wait(10);
 
   refresher.handleTransportReset();
@@ -566,6 +728,13 @@ test("handleTransportReset clears duplicate-target memory so the next refresh ca
   refresher.handleInbound(JSON.stringify({
     method: "turn/start",
     params: { threadId: "thread-reset-dedupe" },
+  }));
+  refresher.handleOutbound(JSON.stringify({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-reset-dedupe",
+      turnId: "turn-reset-dedupe-2",
+    },
   }));
   await wait(10);
 
@@ -598,6 +767,13 @@ test("desktop refresh disables itself after a desktop-unavailable AppleScript fa
     method: "turn/start",
     params: {
       threadId: "thread-disable-1",
+    },
+  }));
+  refresher.handleOutbound(JSON.stringify({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-disable-1",
+      turnId: "turn-disable-1",
     },
   }));
   await wait(10);
@@ -633,6 +809,13 @@ test("custom refresh commands only disable after repeated failures", async () =>
     refresher.handleInbound(JSON.stringify({
       method: "turn/start",
       params: { threadId },
+    }));
+    refresher.handleOutbound(JSON.stringify({
+      method: "turn/completed",
+      params: {
+        threadId,
+        turnId: `${threadId}-turn`,
+      },
     }));
     await wait(10);
   }

@@ -14,6 +14,7 @@ const {
   CodexDesktopRefresher,
   readBridgeConfig,
 } = require("./codex-desktop-refresher");
+const { CodexDesktopSharedRuntime } = require("./codex-desktop-shared-runtime");
 const { createCodexTransport } = require("./codex-transport");
 const { createThreadRolloutActivityWatcher } = require("./rollout-watch");
 const { printQR } = require("./qr");
@@ -57,6 +58,8 @@ const execFileAsync = promisify(execFile);
 const RELAY_WATCHDOG_PING_INTERVAL_MS = 10_000;
 // Keep the watchdog above the relay heartbeat cadence so quiet healthy sockets survive idle gaps.
 const RELAY_WATCHDOG_STALE_AFTER_MS = 70_000;
+const RELAY_CLOSE_INVALID_SESSION_OR_ROLE = 4000;
+const RELAY_CLOSE_REPLACED_BY_NEW_MAC = 4001;
 const BRIDGE_STATUS_HEARTBEAT_INTERVAL_MS = 5_000;
 const STALE_RELAY_STATUS_MESSAGE = "Relay heartbeat stalled; reconnect pending.";
 const RELAY_HISTORY_IMAGE_REFERENCE_URL = "remodex://history-image-elided";
@@ -122,6 +125,11 @@ function startBridge({
     debounceMs: config.refreshDebounceMs,
     refreshCommand: config.refreshCommand,
     bundleId: config.codexBundleId,
+    appPath: config.codexAppPath,
+    completionRefreshMode: config.completionRefreshMode,
+  });
+  const desktopSharedRuntime = new CodexDesktopSharedRuntime({
+    enabled: config.desktopSharedRuntimeEnabled,
     appPath: config.codexAppPath,
   });
   const pushServiceClient = createPushNotificationServiceClient({
@@ -191,8 +199,8 @@ function startBridge({
     socket.send(wireMessage);
     return true;
   }
-  // Only the spawned local runtime needs rollout mirroring; a real endpoint
-  // already provides the authoritative live stream for resumed threads.
+  // Endpoint mode is assumed to provide its own authoritative live stream.
+  // Bridge-owned runtimes keep the rollout mirror as a catch-up fallback.
   const rolloutLiveMirror = !config.codexEndpoint
     ? createRolloutLiveMirrorController({
       sendApplicationResponse,
@@ -209,6 +217,9 @@ function startBridge({
 
   const codex = createCodexTransport({
     endpoint: config.codexEndpoint,
+    managedWebSocket: Boolean(config.sharedRuntimeEnabled && !config.codexEndpoint),
+    managedWebSocketHost: config.sharedRuntimeHost,
+    managedWebSocketPort: config.sharedRuntimePort,
     env: process.env,
     appPath: config.codexAppPath,
     logPrefix: "[remodex]",
@@ -244,8 +255,14 @@ function startBridge({
     process.exit(1);
   });
   // Marks the local Codex runtime as launchable before relay/network recovery updates.
-  codex.onStarted(() => {
+  codex.onStarted((info = {}) => {
     codexLaunchState = "connected";
+    const sharedEndpoint = info.endpoint || config.codexEndpoint;
+    if (sharedEndpoint && config.desktopSharedRuntimeEnabled) {
+      desktopSharedRuntime.activate(sharedEndpoint).catch((error) => {
+        console.error(`[remodex] Failed to attach Codex.app to shared runtime: ${error.message}`);
+      });
+    }
     if (!lastPublishedBridgeStatus) {
       return;
     }
@@ -353,7 +370,7 @@ function startBridge({
       return;
     }
 
-    if (closeCode === 4000 || closeCode === 4001) {
+    if (closeCode === RELAY_CLOSE_INVALID_SESSION_OR_ROLE) {
       logConnectionStatus("disconnected");
       shutdown(codex, () => socket, () => {
         isShuttingDown = true;
@@ -370,7 +387,9 @@ function startBridge({
     }
 
     reconnectAttempt += 1;
-    const delayMs = Math.min(1_000 * reconnectAttempt, 5_000);
+    const delayMs = closeCode === RELAY_CLOSE_REPLACED_BY_NEW_MAC
+      ? 5_000 + Math.floor(Math.random() * 2_000)
+      : Math.min(1_000 * reconnectAttempt, 5_000);
     logConnectionStatus("connecting");
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
@@ -429,9 +448,15 @@ function startBridge({
       markRelayActivity();
     });
 
-    nextSocket.on("close", (code) => {
+    nextSocket.on("close", (code, reason) => {
       if (socket === nextSocket) {
         clearRelayWatchdog();
+      }
+      const closeReason = reason ? reason.toString("utf8") : "";
+      if (code === RELAY_CLOSE_INVALID_SESSION_OR_ROLE
+        || code === RELAY_CLOSE_REPLACED_BY_NEW_MAC
+        || closeReason) {
+        console.warn(`[remodex] relay closed code=${code}${closeReason ? ` reason=${closeReason}` : ""}`);
       }
       logConnectionStatus("disconnected");
       if (socket === nextSocket) {
@@ -496,6 +521,7 @@ function startBridge({
     rolloutLiveMirror?.stopAll();
     desktopIpcActionFollower?.stopAll();
     desktopRefresher.handleTransportReset();
+    void desktopSharedRuntime.shutdown();
     failBridgeManagedCodexRequests(new Error("Codex transport closed before the bridge request completed."));
     forwardedRequestMethodsById.clear();
     if (socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) {
@@ -506,6 +532,7 @@ function startBridge({
   process.on("SIGINT", () => shutdown(codex, () => socket, () => {
     isShuttingDown = true;
     bridgeWakeAssertion.stop();
+    void desktopSharedRuntime.shutdown();
     clearReconnectTimer();
     clearRelayWatchdog();
     clearBridgeStatusHeartbeat();
@@ -513,6 +540,7 @@ function startBridge({
   process.on("SIGTERM", () => shutdown(codex, () => socket, () => {
     isShuttingDown = true;
     bridgeWakeAssertion.stop();
+    void desktopSharedRuntime.shutdown();
     clearReconnectTimer();
     clearRelayWatchdog();
     clearBridgeStatusHeartbeat();
