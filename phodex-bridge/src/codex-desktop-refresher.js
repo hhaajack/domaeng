@@ -17,7 +17,7 @@ const DEFAULT_FALLBACK_NEW_THREAD_MS = 2_000;
 const DEFAULT_ROLLOUT_LOOKUP_TIMEOUT_MS = 5_000;
 const DEFAULT_ROLLOUT_IDLE_TIMEOUT_MS = 10_000;
 const DEFAULT_CUSTOM_REFRESH_FAILURE_THRESHOLD = 3;
-const DEFAULT_COMPLETION_REFRESH_MODE = "relaunch";
+const DEFAULT_COMPLETION_REFRESH_MODE = "remount";
 const DEFAULT_RELAUNCH_WAIT_MS = 300;
 const DEFAULT_APP_BOOT_WAIT_MS = 1_200;
 const DESKTOP_REFRESH_TIMEOUT_MS = 20_000;
@@ -861,6 +861,10 @@ function normalizeCompletionRefreshMode(value) {
 
   if (["remount", "route", "applescript"].includes(normalized)) {
     return "remount";
+  }
+
+  if (normalized === "relaunch") {
+    return "relaunch";
   }
 
   return DEFAULT_COMPLETION_REFRESH_MODE;

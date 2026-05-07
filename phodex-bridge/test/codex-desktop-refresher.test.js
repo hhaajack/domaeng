@@ -102,6 +102,17 @@ test("readBridgeConfig keeps safe defaults and explicit overrides", () => {
       },
     },
   });
+  const relaunchCompletionConfig = readBridgeConfig({
+    env: { REMODEX_COMPLETION_REFRESH_MODE: "relaunch" },
+    platform: "darwin",
+    runtimeRoot: "/tmp/remodex-package",
+    fsImpl: {
+      existsSync: () => false,
+      readFileSync: () => {
+        throw new Error("unexpected read");
+      },
+    },
+  });
   const linuxConfig = readBridgeConfig({
     env: {},
     platform: "linux",
@@ -172,7 +183,7 @@ test("readBridgeConfig keeps safe defaults and explicit overrides", () => {
   assert.equal(macConfig.sharedRuntimeHost, "127.0.0.1");
   assert.equal(macConfig.sharedRuntimePort, 0);
   assert.equal(macConfig.refreshEnabled, false);
-  assert.equal(macConfig.completionRefreshMode, "relaunch");
+  assert.equal(macConfig.completionRefreshMode, "remount");
   assert.equal(macConfig.keepMacAwakeEnabled, false);
   assert.equal(macConfig.relayUrl, "");
   assert.equal(macConfig.pushServiceUrl, "");
@@ -182,6 +193,7 @@ test("readBridgeConfig keeps safe defaults and explicit overrides", () => {
   assert.equal(macEndpointConfig.desktopSharedRuntimeEnabled, false);
   assert.equal(macEndpointConfig.refreshEnabled, false);
   assert.equal(remountCompletionConfig.completionRefreshMode, "remount");
+  assert.equal(relaunchCompletionConfig.completionRefreshMode, "relaunch");
   assert.equal(linuxConfig.refreshEnabled, false);
   assert.equal(linuxCommandConfig.refreshEnabled, false);
   assert.equal(explicitOnConfig.refreshEnabled, true);
@@ -536,7 +548,7 @@ test("turn/completed refreshes once per turn and stops the watcher", async () =>
   assert.equal(stopCount, 1);
 });
 
-test("turn/completed relaunches Codex by default so desktop rereads the rollout", async () => {
+test("turn/completed remounts Codex by default without killing the app", async () => {
   const commandCalls = [];
   const sleepCalls = [];
   let watcherHooks = null;
@@ -548,12 +560,6 @@ test("turn/completed relaunches Codex by default so desktop rereads the rollout"
     appPath: "/Applications/Codex.app",
     commandExecutor: async (command, args, options) => {
       commandCalls.push([command, args, options]);
-      if (command === "pkill") {
-        const error = new Error("not running");
-        error.code = 1;
-        throw error;
-      }
-
       return { stdout: "", stderr: "" };
     },
     sleepFn: async (ms) => {
@@ -587,12 +593,12 @@ test("turn/completed relaunches Codex by default so desktop rereads the rollout"
   }));
   await wait(10);
 
-  assert.deepEqual(commandCalls.map(([command, args]) => [command, args]), [
-    ["pkill", ["-x", "Codex"]],
-    ["open", ["-b", "com.openai.codex"]],
-    ["open", ["-b", "com.openai.codex", "codex://threads/thread-relaunch"]],
-  ]);
-  assert.deepEqual(sleepCalls, [300, 1200]);
+  assert.equal(commandCalls.length, 1);
+  assert.equal(commandCalls[0][0], "osascript");
+  assert.equal(commandCalls[0][1][1], "com.openai.codex");
+  assert.equal(commandCalls[0][1][2], "/Applications/Codex.app");
+  assert.equal(commandCalls[0][1][3], "codex://threads/thread-relaunch");
+  assert.deepEqual(sleepCalls, []);
 });
 
 test("turn/completed is retried after a slow in-flight refresh finishes", async () => {

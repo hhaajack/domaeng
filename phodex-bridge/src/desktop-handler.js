@@ -1,5 +1,5 @@
 // FILE: desktop-handler.js
-// Purpose: Handles explicit desktop handoff, display wake, and bridge preference RPCs for Codex.app.
+// Purpose: Handles explicit desktop handoff, safe refresh, display wake, and bridge preference RPCs for Codex.app.
 // Layer: Bridge handler
 // Exports: handleDesktopRequest
 // Depends on: child_process, fs, os, path, ./rollout-watch
@@ -122,12 +122,66 @@ async function handleDesktopMethod(method, params, options = {}) {
       return wakeDisplay({
         executor,
       });
+    case "desktop/refreshThread":
+      return refreshDesktopThread(params, {
+        env,
+        fsModule,
+        refreshThread: options.refreshDesktopThread,
+      });
     case "desktop/preferences/read":
       return readBridgePreferences(options);
     case "desktop/preferences/update":
       return updateBridgePreferences(params, options);
     default:
       throw desktopError("unknown_method", `Unknown desktop method: ${method}`);
+  }
+}
+
+// Acknowledges web/mobile refresh requests as best-effort bridge work. The default
+// path never kills or launches Codex.app; callers can opt into a non-destructive
+// queued refresh through options.refreshDesktopThread.
+async function refreshDesktopThread(params, { env, fsModule, refreshThread }) {
+  const threadId = resolveThreadId(params);
+  if (!threadId) {
+    throw desktopError("missing_thread_id", "A thread id is required to refresh desktop.");
+  }
+  if (!isValidDesktopThreadId(threadId)) {
+    throw desktopError("invalid_thread_id", "The requested desktop thread id is not valid.");
+  }
+
+  const targetUrl = `codex://threads/${threadId}`;
+  const desktopKnown = isThreadLikelyKnownOnDesktop(threadId, { env, fsModule });
+
+  if (typeof refreshThread !== "function") {
+    return {
+      success: true,
+      threadId,
+      targetUrl,
+      desktopKnown,
+      refreshQueued: false,
+      skippedReason: "unsupported_bridge_refresh",
+    };
+  }
+
+  try {
+    const result = await refreshThread({ threadId, targetUrl, desktopKnown });
+    return {
+      success: true,
+      threadId,
+      targetUrl,
+      desktopKnown,
+      refreshQueued: Boolean(result?.queued),
+      skippedReason: normalizeNonEmptyString(result?.skippedReason),
+    };
+  } catch {
+    return {
+      success: true,
+      threadId,
+      targetUrl,
+      desktopKnown,
+      refreshQueued: false,
+      skippedReason: "refresh_failed",
+    };
   }
 }
 
@@ -272,15 +326,6 @@ async function continueOnDesktop(
   }
 
   try {
-    await forceRelaunchCodexApp({
-      bundleId,
-      appPath,
-      executor,
-      isAppRunning,
-      sleepFn,
-      relaunchWaitMs,
-      appBootWaitMs,
-    });
     await openWhenThreadReady(threadId, targetUrl, {
       bundleId,
       appPath,
@@ -294,14 +339,14 @@ async function continueOnDesktop(
   } catch (error) {
     throw desktopError(
       "handoff_failed",
-      "Could not force close and reopen Codex.app on this Mac.",
+      "Could not open this Codex thread on this Mac.",
       error
     );
   }
 
   return {
     success: true,
-    relaunched: true,
+    relaunched: false,
     targetUrl,
     threadId,
     desktopKnown,
@@ -477,50 +522,6 @@ async function openWhenThreadReady(
   await openCodexTarget(targetUrl, { bundleId, appPath, executor });
 }
 
-async function forceRelaunchCodexApp({
-  bundleId,
-  appPath,
-  executor,
-  isAppRunning,
-  sleepFn,
-  relaunchWaitMs,
-  appBootWaitMs,
-}) {
-  const appName = path.basename(appPath, ".app");
-
-  try {
-    await executor("pkill", ["-x", appName], {
-      timeout: HANDOFF_TIMEOUT_MS,
-    });
-  } catch (error) {
-    if (error?.code !== 1) {
-      throw error;
-    }
-  }
-
-  await waitForAppExit(appPath, executor, isAppRunning);
-  await sleepFn(relaunchWaitMs);
-  await openCodexApp({ bundleId, appPath, executor });
-  await sleepFn(appBootWaitMs);
-}
-
-async function waitForAppExit(appPath, executor, isAppRunning) {
-  const deadline = Date.now() + HANDOFF_TIMEOUT_MS;
-
-  while (Date.now() < deadline) {
-    const isRunning = typeof isAppRunning === "function"
-      ? await isAppRunning(appPath)
-      : await detectRunningCodexApp(appPath, executor);
-    if (!isRunning) {
-      return;
-    }
-
-    await sleep(100);
-  }
-
-  throw desktopError("handoff_timeout", "Timed out waiting for Codex.app to close.");
-}
-
 function hasDesktopRolloutForThread(threadId, { env, fsModule }) {
   const sessionsRoot = resolveSessionsRootForEnv(env);
   return findRolloutFileForThread(sessionsRoot, threadId, { fsModule }) != null;
@@ -547,6 +548,10 @@ async function waitForThreadMaterialization(
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeNonEmptyString(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 module.exports = {

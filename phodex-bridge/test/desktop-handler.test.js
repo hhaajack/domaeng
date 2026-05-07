@@ -9,10 +9,9 @@ const assert = require("node:assert/strict");
 
 const { handleDesktopRequest } = require("../src/desktop-handler");
 
-test("desktop/continueOnMac relaunches Codex for the requested thread", async () => {
+test("desktop/continueOnMac opens the requested thread without relaunching Codex", async () => {
   const executorCalls = [];
   const responses = [];
-  let running = true;
 
   const handled = handleDesktopRequest(JSON.stringify({
     id: "request-1",
@@ -28,12 +27,9 @@ test("desktop/continueOnMac relaunches Codex for the requested thread", async ()
     appPath: "/Applications/Codex.app",
     executor: async (...args) => {
       executorCalls.push(args);
-      if (args[0] === "pkill") {
-        running = false;
-      }
       return { stdout: "", stderr: "" };
     },
-    isAppRunning: async () => running,
+    isAppRunning: async () => true,
     sleepFn: async () => {},
     threadMaterializeWaitMs: 0,
   });
@@ -42,19 +38,9 @@ test("desktop/continueOnMac relaunches Codex for the requested thread", async ()
 
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  assert.equal(executorCalls.length, 3);
-  assert.equal(executorCalls[0][0], "pkill");
+  assert.equal(executorCalls.length, 1);
+  assert.equal(executorCalls[0][0], "open");
   assert.deepEqual(executorCalls[0][1], [
-    "-x",
-    "Codex",
-  ]);
-  assert.equal(executorCalls[1][0], "open");
-  assert.deepEqual(executorCalls[1][1], [
-    "-b",
-    "com.openai.codex",
-  ]);
-  assert.equal(executorCalls[2][0], "open");
-  assert.deepEqual(executorCalls[2][1], [
     "-b",
     "com.openai.codex",
     "codex://threads/thread-123",
@@ -63,7 +49,7 @@ test("desktop/continueOnMac relaunches Codex for the requested thread", async ()
     id: "request-1",
     result: {
       success: true,
-      relaunched: true,
+      relaunched: false,
       targetUrl: "codex://threads/thread-123",
       threadId: "thread-123",
       desktopKnown: false,
@@ -113,10 +99,9 @@ test("desktop/continueOnMac boots Codex before deep-linking unknown threads", as
   assert.equal(responses[0].result?.relaunched, false);
 });
 
-test("desktop/continueOnMac relaunches when a desktop-known thread is requested and Codex is already open", async () => {
+test("desktop/continueOnMac deep-links when a desktop-known thread is requested and Codex is already open", async () => {
   const executorCalls = [];
   const responses = [];
-  let running = true;
   const fakeFS = {
     existsSync(targetPath) {
       return /[\\/]sessions$/.test(targetPath);
@@ -154,36 +139,69 @@ test("desktop/continueOnMac relaunches when a desktop-known thread is requested 
     fsModule: fakeFS,
     executor: async (...args) => {
       executorCalls.push(args);
-      if (args[0] === "pkill") {
-        running = false;
-      }
       return { stdout: "", stderr: "" };
     },
-    isAppRunning: async () => running,
+    isAppRunning: async () => true,
     sleepFn: async () => {},
   });
 
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  assert.equal(executorCalls.length, 3);
-  assert.equal(executorCalls[0][0], "pkill");
+  assert.equal(executorCalls.length, 1);
+  assert.equal(executorCalls[0][0], "open");
   assert.deepEqual(executorCalls[0][1], [
-    "-x",
-    "Codex",
-  ]);
-  assert.equal(executorCalls[1][0], "open");
-  assert.deepEqual(executorCalls[1][1], [
-    "-b",
-    "com.openai.codex",
-  ]);
-  assert.equal(executorCalls[2][0], "open");
-  assert.deepEqual(executorCalls[2][1], [
     "-b",
     "com.openai.codex",
     "codex://threads/thread-desktop-known",
   ]);
-  assert.equal(responses[0].result?.relaunched, true);
+  assert.equal(responses[0].result?.relaunched, false);
   assert.equal(responses[0].result?.desktopKnown, true);
+});
+
+test("desktop/refreshThread acknowledges a best-effort queued refresh", async () => {
+  const responses = [];
+  const refreshRequests = [];
+
+  handleDesktopRequest(JSON.stringify({
+    id: "request-refresh",
+    method: "desktop/refreshThread",
+    params: {
+      threadId: "thread-refresh",
+    },
+  }), (response) => {
+    responses.push(JSON.parse(response));
+  }, {
+    platform: "darwin",
+    fsModule: {
+      existsSync: () => false,
+    },
+    refreshDesktopThread(request) {
+      refreshRequests.push(request);
+      return {
+        queued: false,
+        skippedReason: "refresh_disabled",
+      };
+    },
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(refreshRequests, [{
+    threadId: "thread-refresh",
+    targetUrl: "codex://threads/thread-refresh",
+    desktopKnown: false,
+  }]);
+  assert.deepEqual(responses, [{
+    id: "request-refresh",
+    result: {
+      success: true,
+      threadId: "thread-refresh",
+      targetUrl: "codex://threads/thread-refresh",
+      desktopKnown: false,
+      refreshQueued: false,
+      skippedReason: "refresh_disabled",
+    },
+  }]);
 });
 
 test("desktop/continueOnMac boots Codex before deep-linking when the thread already exists locally but Codex is closed", async () => {

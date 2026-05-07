@@ -578,6 +578,7 @@ function startBridge({
       appPath: config.codexAppPath,
       readBridgePreferences,
       updateBridgePreferences,
+      refreshDesktopThread,
     })) {
       return;
     }
@@ -629,6 +630,21 @@ function startBridge({
         title: name,
       },
     }));
+  }
+
+  function refreshDesktopThread({ threadId, targetUrl }) {
+    if (!desktopRefresher.canRefresh()) {
+      return {
+        queued: false,
+        skippedReason: "refresh_disabled",
+      };
+    }
+
+    desktopRefresher.queueRefresh("explicit_refresh", {
+      threadId,
+      url: targetUrl,
+    }, "desktop/refreshThread");
+    return { queued: true };
   }
 
   function handleBridgeManagedThreadTurnsListRequest(rawMessage) {
