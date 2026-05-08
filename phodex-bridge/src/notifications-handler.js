@@ -4,7 +4,7 @@
 // Exports: createNotificationsHandler
 // Depends on: none
 
-function createNotificationsHandler({ pushServiceClient, logPrefix = "[remodex]" } = {}) {
+function createNotificationsHandler({ pushServiceClient, logPrefix = "[domaeng]" } = {}) {
   function handleNotificationsRequest(rawMessage, sendResponse) {
     let parsed;
     try {

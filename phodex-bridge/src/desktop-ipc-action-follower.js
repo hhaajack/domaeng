@@ -60,7 +60,7 @@ function createDesktopIpcActionFollower({
   sendApplicationResponse,
   sendRuntimeFallback = null,
   readConversationState = null,
-  logPrefix = "[remodex]",
+  logPrefix = "[domaeng]",
   socketPath = resolveDefaultIpcSocketPath(),
   netModule = net,
   now = () => Date.now(),

@@ -11,7 +11,7 @@ const path = require("path");
 const { version } = require("../package.json");
 const { main } = require("../bin/remodex");
 
-test("remodex --version prints the package version", () => {
+test("domaeng --version prints the package version", () => {
   const cliPath = path.join(__dirname, "..", "bin", "remodex.js");
   const output = execFileSync(process.execPath, [cliPath, "--version"], {
     encoding: "utf8",
@@ -20,12 +20,12 @@ test("remodex --version prints the package version", () => {
   assert.equal(output, version);
 });
 
-test("remodex restart reuses the macOS service start flow", async () => {
+test("domaeng restart reuses the macOS service start flow", async () => {
   const calls = [];
   const messages = [];
 
   await main({
-    argv: ["node", "remodex", "restart"],
+    argv: ["node", "domaeng", "restart"],
     platform: "darwin",
     consoleImpl: {
       log(message) {
@@ -57,16 +57,16 @@ test("remodex restart reuses the macOS service start flow", async () => {
     ["start-service", { waitForPairing: false }],
   ]);
   assert.deepEqual(messages, [
-    "[remodex] macOS bridge service restarted.",
+    "[domaeng] macOS bridge service restarted.",
   ]);
 });
 
-test("remodex up shows a startup indicator while waiting for the pairing QR", async () => {
+test("domaeng up shows a startup indicator while waiting for the pairing QR", async () => {
   const calls = [];
   const messages = [];
 
   await main({
-    argv: ["node", "remodex", "up"],
+    argv: ["node", "domaeng", "up"],
     platform: "darwin",
     consoleImpl: {
       log(message) {
@@ -93,7 +93,7 @@ test("remodex up shows a startup indicator while waiting for the pairing QR", as
   });
 
   assert.deepEqual(messages, [
-    "[remodex] Starting bridge and pairing QR...",
+    "[domaeng] Starting bridge and pairing QR...",
   ]);
   assert.deepEqual(calls, [
     ["start-service", { waitForPairing: true }],
@@ -101,7 +101,7 @@ test("remodex up shows a startup indicator while waiting for the pairing QR", as
   ]);
 });
 
-test("remodex status --json exposes daemon metadata for companion apps", async () => {
+test("domaeng status --json exposes daemon metadata for companion apps", async () => {
   const writes = [];
   const originalWrite = process.stdout.write;
 
@@ -115,7 +115,7 @@ test("remodex status --json exposes daemon metadata for companion apps", async (
 
   try {
     await main({
-      argv: ["node", "remodex", "status", "--json"],
+      argv: ["node", "domaeng", "status", "--json"],
       platform: "darwin",
       consoleImpl: {
         log() {},
@@ -160,7 +160,7 @@ test("remodex status --json exposes daemon metadata for companion apps", async (
   assert.equal(payload.pairingSession?.pairingPayload?.sessionId, "session-json");
 });
 
-test("remodex trusted-device disable emits machine-readable result", async () => {
+test("domaeng trusted-device disable emits machine-readable result", async () => {
   const writes = [];
   const originalWrite = process.stdout.write;
 
@@ -174,7 +174,7 @@ test("remodex trusted-device disable emits machine-readable result", async () =>
 
   try {
     await main({
-      argv: ["node", "remodex", "trusted-device", "disable", "dev_abc123", "--json"],
+      argv: ["node", "domaeng", "trusted-device", "disable", "dev_abc123", "--json"],
       platform: "darwin",
       consoleImpl: {
         log() {},
@@ -208,7 +208,7 @@ test("remodex trusted-device disable emits machine-readable result", async () =>
   assert.equal(payload.trustedDevice.status, "disabled");
 });
 
-test("remodex renew-pairing emits the fresh daemon pairing session", async () => {
+test("domaeng renew-pairing emits the fresh daemon pairing session", async () => {
   const writes = [];
   const originalWrite = process.stdout.write;
 
@@ -222,7 +222,7 @@ test("remodex renew-pairing emits the fresh daemon pairing session", async () =>
 
   try {
     await main({
-      argv: ["node", "remodex", "renew-pairing", "--json"],
+      argv: ["node", "domaeng", "renew-pairing", "--json"],
       platform: "darwin",
       consoleImpl: {
         log() {},

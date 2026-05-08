@@ -13,7 +13,7 @@ function createVoiceHandler({
   fetchImpl = globalThis.fetch,
   FormDataImpl = globalThis.FormData,
   BlobImpl = globalThis.Blob,
-  logPrefix = "[remodex]",
+  logPrefix = "[domaeng]",
 } = {}) {
   function handleVoiceRequest(rawMessage, sendResponse) {
     let parsed;
@@ -292,7 +292,7 @@ async function resolveVoiceAuth(sendCodexRequest) {
       refreshToken: true,
     });
   } catch (err) {
-    console.error(`[remodex] voice/resolveAuth: getAuthStatus RPC failed: ${err.message}`);
+    console.error(`[domaeng] voice/resolveAuth: getAuthStatus RPC failed: ${err.message}`);
     throw voiceError("auth_unavailable", "Could not read ChatGPT session from the Mac runtime. Is the bridge running?");
   }
 
@@ -308,7 +308,7 @@ async function resolveVoiceAuth(sendCodexRequest) {
   }
 
   if (!token) {
-    console.error(`[remodex] voice/resolveAuth: no token. authMethod=${authMethod || "none"} requiresOpenaiAuth=${authStatus?.requiresOpenaiAuth}`);
+    console.error(`[domaeng] voice/resolveAuth: no token. authMethod=${authMethod || "none"} requiresOpenaiAuth=${authStatus?.requiresOpenaiAuth}`);
     throw voiceError("token_missing", "No ChatGPT session token available. Sign in to ChatGPT on the Mac.");
   }
 

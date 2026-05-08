@@ -1,6 +1,6 @@
 self.addEventListener("push", (event) => {
   const payload = readPushPayload(event);
-  const title = readString(payload.title) || "Remodex";
+  const title = readString(payload.title) || "Domaeng";
   const body = readString(payload.body) || "Thread status changed.";
   const tag = readString(payload.tag) || `${readString(payload.kind) || "thread"}:${readString(payload.threadId) || "unknown"}`;
   const iconURL = new URL("favicon.svg", self.registration.scope).toString();

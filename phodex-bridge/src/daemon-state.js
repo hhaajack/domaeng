@@ -18,9 +18,10 @@ const LOGS_DIR = "logs";
 const BRIDGE_STDOUT_LOG_FILE = "bridge.stdout.log";
 const BRIDGE_STDERR_LOG_FILE = "bridge.stderr.log";
 
-// Reuses the existing Remodex state root so daemon mode keeps the same local-first storage model.
+// Reuses the existing remodex state root so daemon mode keeps the same local-first storage model.
 function resolveRemodexStateDir({ env = process.env, osImpl = os } = {}) {
-  return normalizeNonEmptyString(env.REMODEX_DEVICE_STATE_DIR)
+  return normalizeNonEmptyString(env.DOMAENG_DEVICE_STATE_DIR)
+    || normalizeNonEmptyString(env.REMODEX_DEVICE_STATE_DIR)
     || path.join(osImpl.homedir(), DEFAULT_STATE_DIR_NAME);
 }
 
@@ -96,7 +97,7 @@ function clearPairingRenewRequest({ fsImpl = fs, ...options } = {}) {
   removeFile(resolvePairingRenewRequestPath(options), fsImpl);
 }
 
-// Captures the last known service heartbeat so `remodex status` does not depend on launchctl output alone.
+// Captures the last known service heartbeat so `domaeng status` does not depend on launchctl output alone.
 function writeBridgeStatus(status, { now = () => Date.now(), ...options } = {}) {
   writeJsonFile(resolveBridgeStatusPath(options), {
     ...status,

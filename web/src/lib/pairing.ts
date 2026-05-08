@@ -33,7 +33,7 @@ export function parsePairingPayload(rawValue: string): PairingQRPayload {
     typeof payload.macIdentityPublicKey !== "string" ||
     typeof payload.expiresAt !== "number"
   ) {
-    throw new Error("Invalid Remodex pairing payload");
+    throw new Error("Invalid Domaeng pairing payload");
   }
 
   return {

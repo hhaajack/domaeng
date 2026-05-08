@@ -1,7 +1,7 @@
 // FILE: macos-launch-agent.js
-// Purpose: Owns macOS-only launchd install/start/stop/status helpers for the background Remodex bridge.
+// Purpose: Owns macOS-only launchd install/start/stop/status helpers for the background Domaeng bridge.
 // Layer: CLI helper
-// Exports: start/stop/status helpers plus the launchd service runner used by `remodex up`.
+// Exports: start/stop/status helpers plus the launchd service runner used by `domaeng up`.
 // Depends on: child_process, fs, os, path, ./bridge, ./daemon-state, ./codex-desktop-refresher, ./qr, ./secure-device-state
 
 const { execFileSync } = require("child_process");
@@ -47,7 +47,7 @@ function runMacOSBridgeService({ env = process.env } = {}) {
       pid: process.pid,
       lastError: message,
     }, { env });
-    console.error(`[remodex] ${message}`);
+    console.error(`[domaeng] ${message}`);
     return;
   }
 
@@ -172,7 +172,7 @@ async function requestMacOSBridgePairingRenewal({
     execFileSyncImpl,
   });
   if (!launchd.loaded) {
-    throw new Error("The macOS bridge service is not running. Start Remodex before renewing the pairing code.");
+    throw new Error("The macOS bridge service is not running. Start Domaeng before renewing the pairing code.");
   }
 
   const request = writePairingRenewRequest({ env, fsImpl });
@@ -225,15 +225,15 @@ function printMacOSBridgeServiceStatus(options = {}) {
   const bridgeState = status.bridgeStatus?.state || "unknown";
   const connectionStatus = status.bridgeStatus?.connectionStatus || "unknown";
   const pairingCreatedAt = status.pairingSession?.createdAt || "none";
-  console.log(`[remodex] Service label: ${status.label}`);
-  console.log(`[remodex] Installed: ${status.installed ? "yes" : "no"}`);
-  console.log(`[remodex] Launchd loaded: ${status.launchdLoaded ? "yes" : "no"}`);
-  console.log(`[remodex] PID: ${status.launchdPid || status.bridgeStatus?.pid || "unknown"}`);
-  console.log(`[remodex] Bridge state: ${bridgeState}`);
-  console.log(`[remodex] Connection: ${connectionStatus}`);
-  console.log(`[remodex] Pairing payload: ${pairingCreatedAt}`);
-  console.log(`[remodex] Stdout log: ${status.stdoutLogPath}`);
-  console.log(`[remodex] Stderr log: ${status.stderrLogPath}`);
+  console.log(`[domaeng] Service label: ${status.label}`);
+  console.log(`[domaeng] Installed: ${status.installed ? "yes" : "no"}`);
+  console.log(`[domaeng] Launchd loaded: ${status.launchdLoaded ? "yes" : "no"}`);
+  console.log(`[domaeng] PID: ${status.launchdPid || status.bridgeStatus?.pid || "unknown"}`);
+  console.log(`[domaeng] Bridge state: ${bridgeState}`);
+  console.log(`[domaeng] Connection: ${connectionStatus}`);
+  console.log(`[domaeng] Pairing payload: ${pairingCreatedAt}`);
+  console.log(`[domaeng] Stdout log: ${status.stdoutLogPath}`);
+  console.log(`[domaeng] Stderr log: ${status.stderrLogPath}`);
 }
 
 function printMacOSBridgePairingQr({ pairingSession = null, env = process.env, fsImpl = fs } = {}) {
@@ -310,6 +310,8 @@ function buildLaunchAgentPlist({
     <string>${escapeXml(homeDir)}</string>
     <key>PATH</key>
     <string>${escapeXml(pathEnv)}</string>
+    <key>DOMAENG_DEVICE_STATE_DIR</key>
+    <string>${escapeXml(stateDir)}</string>
     <key>REMODEX_DEVICE_STATE_DIR</key>
     <string>${escapeXml(stateDir)}</string>
   </dict>
@@ -439,7 +441,7 @@ function assertRelayConfigured(config) {
   if (typeof config?.relayUrl === "string" && config.relayUrl.trim()) {
     return;
   }
-  throw new Error("No relay URL configured. Run ./run-local-remodex.sh or set REMODEX_RELAY before enabling the macOS bridge service.");
+  throw new Error("No relay URL configured. Run ./run-local-domaeng.sh or set DOMAENG_RELAY before enabling the macOS bridge service.");
 }
 
 function launchAgentDomain(env) {

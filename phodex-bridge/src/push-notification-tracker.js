@@ -14,7 +14,7 @@ function createPushNotificationTracker({
   sessionId,
   pushServiceClient,
   previewMaxChars = DEFAULT_PREVIEW_MAX_CHARS,
-  logPrefix = "[remodex]",
+  logPrefix = "[domaeng]",
   now = () => Date.now(),
 } = {}) {
   const threadTitleById = new Map();

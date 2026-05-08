@@ -29,7 +29,7 @@ const {
   writePairingSession,
 } = require("../src/daemon-state");
 
-test("buildLaunchAgentPlist points launchd at run-service with remodex state paths", () => {
+test("buildLaunchAgentPlist points launchd at run-service with compatible state paths", () => {
   const plist = buildLaunchAgentPlist({
     homeDir: "/Users/tester",
     pathEnv: "/usr/local/bin:/usr/bin",
@@ -43,6 +43,7 @@ test("buildLaunchAgentPlist points launchd at run-service with remodex state pat
   assert.match(plist, /<string>com\.remodex\.bridge<\/string>/);
   assert.match(plist, /<string>run-service<\/string>/);
   assert.match(plist, /<key>KeepAlive<\/key>\s*<dict>\s*<key>SuccessfulExit<\/key>\s*<false\/>\s*<\/dict>/);
+  assert.match(plist, /<key>DOMAENG_DEVICE_STATE_DIR<\/key>/);
   assert.match(plist, /<key>REMODEX_DEVICE_STATE_DIR<\/key>/);
 });
 

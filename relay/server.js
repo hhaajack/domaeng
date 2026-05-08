@@ -1,5 +1,5 @@
 // FILE: server.js
-// Purpose: Hosts the public Remodex relay plus optional push-notification HTTP endpoints.
+// Purpose: Hosts the public Domaeng relay plus optional push-notification HTTP endpoints.
 // Layer: Standalone server entrypoint
 // Exports: createRelayServer, createFixedWindowRateLimiter
 // Depends on: http, ws, ./relay, ./push-service
@@ -592,12 +592,12 @@ function createFixedWindowRateLimiter({ windowMs, maxRequests, now = () => Date.
 
 if (require.main === module) {
   const port = Number(process.env.PORT || 9000);
-  const trustProxy = readOptionalBooleanEnv(["REMODEX_TRUST_PROXY", "PHODEX_TRUST_PROXY"]) ?? false;
+  const trustProxy = readOptionalBooleanEnv(["DOMAENG_TRUST_PROXY", "REMODEX_TRUST_PROXY", "PHODEX_TRUST_PROXY"]) ?? false;
   const enablePushService = readOptionalBooleanEnv(
-    ["REMODEX_ENABLE_PUSH_SERVICE", "PHODEX_ENABLE_PUSH_SERVICE"]
+    ["DOMAENG_ENABLE_PUSH_SERVICE", "REMODEX_ENABLE_PUSH_SERVICE", "PHODEX_ENABLE_PUSH_SERVICE"]
   ) ?? false;
   const bindHost = process.env.RELAY_BIND_HOST || "0.0.0.0";
-  const webAppDir = readHeaderString(process.env.REMODEX_WEB_APP_DIR)
+  const webAppDir = readHeaderString(process.env.DOMAENG_WEB_APP_DIR || process.env.REMODEX_WEB_APP_DIR)
     || path.resolve(__dirname, "..", "web", "dist");
   const { server } = createRelayServer({ enablePushService, trustProxy, webAppDir });
   server.listen(port, bindHost, () => {

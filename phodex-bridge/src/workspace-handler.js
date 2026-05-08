@@ -780,8 +780,8 @@ async function createPatchSandbox(repoRoot, affectedFiles) {
 
 async function initializePatchSandboxGitRepo(sandboxRoot) {
   await git(sandboxRoot, "init", "-q");
-  await git(sandboxRoot, "config", "user.email", "remodex@example.local");
-  await git(sandboxRoot, "config", "user.name", "Remodex");
+  await git(sandboxRoot, "config", "user.email", "domaeng@example.local");
+  await git(sandboxRoot, "config", "user.name", "Domaeng");
   await syncPatchSandboxIndex(sandboxRoot);
   await git(sandboxRoot, "commit", "-qm", "snapshot", "--allow-empty");
 }

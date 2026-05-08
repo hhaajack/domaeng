@@ -22,7 +22,7 @@ class CodexDesktopSharedRuntime {
     platform = DEFAULT_PLATFORM,
     appPath = DEFAULT_APP_PATH,
     envKey = DEFAULT_ENV_KEY,
-    logPrefix = "[remodex]",
+    logPrefix = "[domaeng]",
     executor = execFileAsync,
     spawnImpl = spawn,
     sleepFn = sleep,

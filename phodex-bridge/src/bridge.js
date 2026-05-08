@@ -118,8 +118,8 @@ function startBridge({
   });
   const relayBaseUrl = config.relayUrl.replace(/\/+$/, "");
   if (!relayBaseUrl) {
-    console.error("[remodex] No relay URL configured.");
-    console.error("[remodex] In a source checkout, run ./run-local-remodex.sh or set REMODEX_RELAY.");
+    console.error("[domaeng] No relay URL configured.");
+    console.error("[domaeng] In a source checkout, run ./run-local-domaeng.sh or set DOMAENG_RELAY.");
     process.exit(1);
   }
 
@@ -127,7 +127,7 @@ function startBridge({
   try {
     deviceState = loadOrCreateBridgeDeviceState();
   } catch (error) {
-    console.error(`[remodex] ${(error && error.message) || "Failed to load the saved bridge pairing state."}`);
+    console.error(`[domaeng] ${(error && error.message) || "Failed to load the saved bridge pairing state."}`);
     process.exit(1);
   }
   const relaySession = resolveBridgeRelaySession(deviceState);
@@ -248,11 +248,11 @@ function startBridge({
     managedWebSocketPort: config.sharedRuntimePort,
     env: process.env,
     appPath: config.codexAppPath,
-    logPrefix: "[remodex]",
+    logPrefix: "[domaeng]",
   });
   const voiceHandler = createVoiceHandler({
     sendCodexRequest,
-    logPrefix: "[remodex]",
+    logPrefix: "[domaeng]",
   });
   startBridgeStatusHeartbeat();
   publishBridgeStatus({
@@ -271,11 +271,11 @@ function startBridge({
       lastError: error.message,
     });
     if (config.codexEndpoint) {
-      console.error(`[remodex] Failed to connect to Codex endpoint: ${config.codexEndpoint}`);
+      console.error(`[domaeng] Failed to connect to Codex endpoint: ${config.codexEndpoint}`);
     } else {
-      console.error("[remodex] Failed to start `codex app-server`.");
-      console.error(`[remodex] Launch command: ${codex.describe()}`);
-      console.error("[remodex] Make sure the Codex CLI is installed and that the launcher works on this OS.");
+      console.error("[domaeng] Failed to start `codex app-server`.");
+      console.error(`[domaeng] Launch command: ${codex.describe()}`);
+      console.error("[domaeng] Make sure the Codex CLI is installed and that the launcher works on this OS.");
     }
     console.error(error.message);
     process.exit(1);
@@ -286,7 +286,7 @@ function startBridge({
     const sharedEndpoint = info.endpoint || config.codexEndpoint;
     if (sharedEndpoint && config.desktopSharedRuntimeEnabled) {
       desktopSharedRuntime.activate(sharedEndpoint).catch((error) => {
-        console.error(`[remodex] Failed to attach Codex.app to shared runtime: ${error.message}`);
+        console.error(`[domaeng] Failed to attach Codex.app to shared runtime: ${error.message}`);
       });
     }
     if (!lastPublishedBridgeStatus) {
@@ -439,7 +439,7 @@ function startBridge({
       }
 
       if (hasRelayConnectionGoneStale(lastRelayActivityAt)) {
-        console.warn("[remodex] relay heartbeat stalled; forcing reconnect");
+        console.warn("[domaeng] relay heartbeat stalled; forcing reconnect");
         logConnectionStatus("disconnected");
         trackedSocket.terminate();
         return;
@@ -467,7 +467,7 @@ function startBridge({
       pid: process.pid,
       lastError: "",
     });
-    console.log(`[remodex] ${status}`);
+    console.log(`[domaeng] ${status}`);
   }
 
   // Retries the relay socket while preserving the active Codex process and session id.
@@ -564,7 +564,7 @@ function startBridge({
       if (code === RELAY_CLOSE_INVALID_SESSION_OR_ROLE
         || code === RELAY_CLOSE_REPLACED_BY_NEW_MAC
         || closeReason) {
-        console.warn(`[remodex] relay closed code=${code}${closeReason ? ` reason=${closeReason}` : ""}`);
+        console.warn(`[domaeng] relay closed code=${code}${closeReason ? ` reason=${closeReason}` : ""}`);
       }
       logConnectionStatus("disconnected");
       if (socket === nextSocket) {
@@ -764,7 +764,7 @@ function startBridge({
     try {
       appendThreadNameUpdatedRolloutEvent({ threadId, name });
     } catch (error) {
-      console.warn(`[remodex] Failed to mirror thread rename to rollout history: ${error.message}`);
+      console.warn(`[domaeng] Failed to mirror thread rename to rollout history: ${error.message}`);
     }
   }
 
@@ -846,7 +846,7 @@ function startBridge({
         result,
       };
     } catch (error) {
-      console.warn(`[remodex] thread/turns/list jsonl fallback failed: ${error.message}`);
+      console.warn(`[domaeng] thread/turns/list jsonl fallback failed: ${error.message}`);
       return null;
     }
   }
@@ -1492,7 +1492,7 @@ function createMacOSBridgeWakeAssertion({
       });
 
       nextChild.on?.("error", (error) => {
-        consoleImpl.warn(`[remodex] Failed to hold the Mac awake while the bridge is active: ${error.message}`);
+        consoleImpl.warn(`[domaeng] Failed to hold the Mac awake while the bridge is active: ${error.message}`);
       });
       nextChild.on?.("exit", () => {
         if (child === nextChild) {
@@ -1503,7 +1503,7 @@ function createMacOSBridgeWakeAssertion({
       child = nextChild;
     } catch (error) {
       consoleImpl.warn(
-        `[remodex] Failed to start the bridge wake assertion: ${(error && error.message) || "unknown error"}`
+        `[domaeng] Failed to start the bridge wake assertion: ${(error && error.message) || "unknown error"}`
       );
       child = null;
     }

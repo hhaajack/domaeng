@@ -1,5 +1,5 @@
 // FILE: push-service.js
-// Purpose: Stores session-scoped push registration state and sends APNs/Web Push alerts for relay-hosted Remodex sessions.
+// Purpose: Stores session-scoped push registration state and sends APNs/Web Push alerts for relay-hosted Domaeng sessions.
 // Layer: Relay push helper
 // Exports: createPushSessionService, createFileBackedPushStateStore, resolvePushStateFilePath
 // Depends on: crypto, fs, os, path, ./apns-client, ./web-push-client
@@ -528,21 +528,21 @@ function createFileBackedPushStateStore({ stateFilePath } = {}) {
 
 function apnsConfigFromEnv(env) {
   return {
-    teamId: readFirstDefinedEnv(["REMODEX_APNS_TEAM_ID", "PHODEX_APNS_TEAM_ID"], env),
-    keyId: readFirstDefinedEnv(["REMODEX_APNS_KEY_ID", "PHODEX_APNS_KEY_ID"], env),
-    bundleId: readFirstDefinedEnv(["REMODEX_APNS_BUNDLE_ID", "PHODEX_APNS_BUNDLE_ID"], env),
+    teamId: readFirstDefinedEnv(["DOMAENG_APNS_TEAM_ID", "REMODEX_APNS_TEAM_ID", "PHODEX_APNS_TEAM_ID"], env),
+    keyId: readFirstDefinedEnv(["DOMAENG_APNS_KEY_ID", "REMODEX_APNS_KEY_ID", "PHODEX_APNS_KEY_ID"], env),
+    bundleId: readFirstDefinedEnv(["DOMAENG_APNS_BUNDLE_ID", "REMODEX_APNS_BUNDLE_ID", "PHODEX_APNS_BUNDLE_ID"], env),
     privateKey: readAPNsPrivateKey(env),
   };
 }
 
 function readAPNsPrivateKey(env) {
-  const rawValue = readFirstDefinedEnv(["REMODEX_APNS_PRIVATE_KEY", "PHODEX_APNS_PRIVATE_KEY"], env);
+  const rawValue = readFirstDefinedEnv(["DOMAENG_APNS_PRIVATE_KEY", "REMODEX_APNS_PRIVATE_KEY", "PHODEX_APNS_PRIVATE_KEY"], env);
   if (rawValue) {
     return rawValue;
   }
 
   const filePath = readFirstDefinedEnv(
-    ["REMODEX_APNS_PRIVATE_KEY_FILE", "PHODEX_APNS_PRIVATE_KEY_FILE"],
+    ["DOMAENG_APNS_PRIVATE_KEY_FILE", "REMODEX_APNS_PRIVATE_KEY_FILE", "PHODEX_APNS_PRIVATE_KEY_FILE"],
     env
   );
   if (!filePath) {
@@ -652,7 +652,7 @@ function fallbackBodyForResult(result) {
 
 function resolvePushStateFilePath(env = process.env) {
   const explicitPath = readFirstDefinedEnv(
-    ["REMODEX_PUSH_STATE_FILE", "PHODEX_PUSH_STATE_FILE"],
+    ["DOMAENG_PUSH_STATE_FILE", "REMODEX_PUSH_STATE_FILE", "PHODEX_PUSH_STATE_FILE"],
     env
   );
   if (explicitPath) {

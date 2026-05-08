@@ -1,6 +1,6 @@
-# Remodex Web
+# Domaeng Web
 
-React + Vite PWA client for controlling a paired Remodex bridge through the self-hosted relay.
+React + Vite PWA client for controlling a paired Domaeng bridge through the self-hosted relay.
 
 ```sh
 npm install

@@ -66,7 +66,7 @@ export function lengthPrefixedUTF8(value: string): Uint8Array {
 export function randomBytes(length: number): Uint8Array {
   const cryptoSource = globalThis.crypto;
   if (!cryptoSource?.getRandomValues) {
-    throw new Error("Secure random source is not available. Reopen Remodex over HTTPS or localhost.");
+    throw new Error("Secure random source is not available. Reopen Domaeng over HTTPS or localhost.");
   }
 
   const bytes = new Uint8Array(length);

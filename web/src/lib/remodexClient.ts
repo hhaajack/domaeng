@@ -367,14 +367,14 @@ export class RemodexClient {
 
   async request(method: string, params?: JSONValue, timeoutMs?: number): Promise<RPCMessage> {
     if (!this.rpc) {
-      throw new Error("Remodex is not connected");
+      throw new Error("Domaeng is not connected");
     }
     return this.rpc.request(method, params, timeoutMs);
   }
 
   async respond(id: string | number, result: JSONValue): Promise<void> {
     if (!this.rpc) {
-      throw new Error("Remodex is not connected");
+      throw new Error("Domaeng is not connected");
     }
     await this.rpc.respond(id, result);
   }
@@ -495,12 +495,12 @@ export class RemodexClient {
     }
     const rpc = this.rpc;
     if (!rpc) {
-      throw new Error("Remodex disconnected before initialization.");
+      throw new Error("Domaeng disconnected before initialization.");
     }
     const modernParams = {
       clientInfo: {
         name: "remodex_web",
-        title: "Remodex Web",
+        title: "Domaeng Web",
         version: "0.1.0"
       },
       capabilities: {

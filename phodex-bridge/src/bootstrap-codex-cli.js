@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // FILE: bootstrap-codex-cli.js
-// Purpose: Runs during global Remodex installs to transparently bootstrap the global Codex CLI.
+// Purpose: Runs during global Domaeng installs to transparently bootstrap the global Codex CLI.
 // Layer: CLI helper
 // Exports: none
 // Depends on: ./codex-cli-bootstrap

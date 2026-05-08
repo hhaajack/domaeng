@@ -52,10 +52,10 @@ test("ensureCodexCLI installs Codex when it is missing", () => {
     true
   );
   assert.deepEqual(messages, [
-    "[remodex] Checking Codex CLI...",
-    "[remodex] Codex CLI not found.",
-    "[remodex] Installing Codex CLI via npm (@openai/codex@latest)...",
-    "[remodex] Codex CLI installed (0.120.0).",
+    "[domaeng] Checking Codex CLI...",
+    "[domaeng] Codex CLI not found.",
+    "[domaeng] Installing Codex CLI via npm (@openai/codex@latest)...",
+    "[domaeng] Codex CLI installed (0.120.0).",
   ]);
 });
 
@@ -90,10 +90,10 @@ test("ensureCodexCLI updates Codex when it is already installed", () => {
     versionAfter: "0.120.0",
   });
   assert.deepEqual(messages, [
-    "[remodex] Checking Codex CLI...",
-    "[remodex] Codex CLI found (0.118.0).",
-    "[remodex] Updating Codex CLI via npm (@openai/codex@latest)...",
-    "[remodex] Codex CLI updated (0.120.0).",
+    "[domaeng] Checking Codex CLI...",
+    "[domaeng] Codex CLI found (0.118.0).",
+    "[domaeng] Updating Codex CLI via npm (@openai/codex@latest)...",
+    "[domaeng] Codex CLI updated (0.120.0).",
   ]);
 });
 
@@ -124,7 +124,7 @@ test("ensureCodexCLI stops gracefully when npm is unavailable", () => {
     versionAfter: null,
   });
   assert.deepEqual(warnings, [
-    "[remodex] npm is unavailable, so Remodex could not install or update the Codex CLI automatically.",
+    "[domaeng] npm is unavailable, so Domaeng could not install or update the Codex CLI automatically.",
   ]);
 });
 

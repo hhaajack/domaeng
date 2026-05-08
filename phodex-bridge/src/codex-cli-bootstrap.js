@@ -1,5 +1,5 @@
 // FILE: codex-cli-bootstrap.js
-// Purpose: Detects, installs, and updates the global Codex CLI with transparent logs for Remodex installs and startup flows.
+// Purpose: Detects, installs, and updates the global Codex CLI with transparent logs for Domaeng installs and startup flows.
 // Layer: CLI helper
 // Exports: ensureCodexCLI, shouldSkipCodexBootstrap
 // Depends on: child_process
@@ -7,7 +7,7 @@
 const { execFileSync } = require("child_process");
 
 const CODEX_PACKAGE_SPEC = "@openai/codex@latest";
-const SKIP_BOOTSTRAP_ENV_NAME = "REMODEX_SKIP_CODEX_BOOTSTRAP";
+const SKIP_BOOTSTRAP_ENV_NAMES = ["DOMAENG_SKIP_CODEX_BOOTSTRAP", "REMODEX_SKIP_CODEX_BOOTSTRAP"];
 
 // Keeps the Codex bootstrap flow explicit and reusable across postinstall and runtime startup paths.
 function ensureCodexCLI({
@@ -19,7 +19,7 @@ function ensureCodexCLI({
   npmInstallArgs = ["install", "-g", CODEX_PACKAGE_SPEC],
 } = {}) {
   if (shouldSkipCodexBootstrap(env)) {
-    logInfo(logger, `[remodex] Skipping Codex CLI bootstrap because ${SKIP_BOOTSTRAP_ENV_NAME}=1.`);
+    logInfo(logger, "[domaeng] Skipping Codex CLI bootstrap because DOMAENG_SKIP_CODEX_BOOTSTRAP=1.");
     return {
       status: "skipped",
       versionBefore: null,
@@ -27,7 +27,7 @@ function ensureCodexCLI({
     };
   }
 
-  logInfo(logger, "[remodex] Checking Codex CLI...");
+  logInfo(logger, "[domaeng] Checking Codex CLI...");
   const versionBefore = readExecutableVersion({
     executable: "codex",
     args: ["--version"],
@@ -37,9 +37,9 @@ function ensureCodexCLI({
   });
 
   if (versionBefore) {
-    logInfo(logger, `[remodex] Codex CLI found (${versionBefore}).`);
+    logInfo(logger, `[domaeng] Codex CLI found (${versionBefore}).`);
   } else {
-    logInfo(logger, "[remodex] Codex CLI not found.");
+    logInfo(logger, "[domaeng] Codex CLI not found.");
   }
 
   if (versionBefore && !shouldUpdate) {
@@ -61,7 +61,7 @@ function ensureCodexCLI({
   if (!npmVersion) {
     logWarn(
       logger,
-      "[remodex] npm is unavailable, so Remodex could not install or update the Codex CLI automatically."
+      "[domaeng] npm is unavailable, so Domaeng could not install or update the Codex CLI automatically."
     );
     return {
       status: "failed",
@@ -71,7 +71,7 @@ function ensureCodexCLI({
   }
 
   const actionVerb = versionBefore ? "Updating" : "Installing";
-  logInfo(logger, `[remodex] ${actionVerb} Codex CLI via npm (${CODEX_PACKAGE_SPEC})...`);
+  logInfo(logger, `[domaeng] ${actionVerb} Codex CLI via npm (${CODEX_PACKAGE_SPEC})...`);
 
   try {
     execFileSyncImpl(resolveExecutableName("npm", platform), npmInstallArgs, {
@@ -82,7 +82,7 @@ function ensureCodexCLI({
     const message = extractCommandFailureMessage(error);
     logWarn(
       logger,
-      `[remodex] Codex CLI ${versionBefore ? "update" : "install"} failed. ${message}`
+      `[domaeng] Codex CLI ${versionBefore ? "update" : "install"} failed. ${message}`
     );
     return {
       status: "failed",
@@ -102,7 +102,7 @@ function ensureCodexCLI({
   if (!versionAfter) {
     logWarn(
       logger,
-      "[remodex] Codex CLI bootstrap finished, but `codex --version` is still unavailable in this shell."
+      "[domaeng] Codex CLI bootstrap finished, but `codex --version` is still unavailable in this shell."
     );
     return {
       status: "failed",
@@ -113,7 +113,7 @@ function ensureCodexCLI({
 
   logInfo(
     logger,
-    `[remodex] Codex CLI ${versionBefore ? "updated" : "installed"} (${versionAfter}).`
+    `[domaeng] Codex CLI ${versionBefore ? "updated" : "installed"} (${versionAfter}).`
   );
   return {
     status: versionBefore ? "updated" : "installed",
@@ -123,8 +123,10 @@ function ensureCodexCLI({
 }
 
 function shouldSkipCodexBootstrap(env = process.env) {
-  const raw = String(env[SKIP_BOOTSTRAP_ENV_NAME] || "").trim().toLowerCase();
-  return raw === "1" || raw === "true" || raw === "yes";
+  return SKIP_BOOTSTRAP_ENV_NAMES.some((name) => {
+    const raw = String(env[name] || "").trim().toLowerCase();
+    return raw === "1" || raw === "true" || raw === "yes";
+  });
 }
 
 function readExecutableVersion({

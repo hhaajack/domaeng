@@ -105,9 +105,9 @@ function buildLegacyIOSAppCompatibilityMessage({
   const normalizedBridgeVersion = normalizeVersionString(bridgeVersion) || "this bridge";
   const normalizedIOSAppVersion = normalizeVersionString(iosAppVersion) || "an older version";
 
-  return `Remodex bridge ${normalizedBridgeVersion} requires Remodex iPhone `
+  return `Domaeng bridge ${normalizedBridgeVersion} requires the legacy Domaeng iPhone app `
     + `${MINIMUM_SUPPORTED_IOS_APP_VERSION} or later. `
-    + `Update the iPhone app from the App Store first, or install Remodex bridge `
+    + `Update the iPhone app first, or install Domaeng bridge `
     + `${LEGACY_BRIDGE_VERSION_FOR_IOS_1_0} to keep using iPhone ${normalizedIOSAppVersion}.`;
 }
 
@@ -127,8 +127,8 @@ function buildCachedIOSAppCompatibilityWarning({
   return formatNoticeBox({
     title: "!!! WARNING !!!",
     lines: [
-      `Remodex bridge ${snapshot.bridgeVersion || "latest"} requires Remodex iPhone ${snapshot.minimumSupportedIOSAppVersion} or later.`,
-      "Update the iPhone app from the App Store first.",
+      `Domaeng bridge ${snapshot.bridgeVersion || "latest"} requires the legacy Domaeng iPhone app ${snapshot.minimumSupportedIOSAppVersion} or later.`,
+      "Update the iPhone app first.",
       "",
       `Need to keep using iPhone ${snapshot.iosAppVersion}? Install bridge ${snapshot.legacyBridgeVersion}:`,
       snapshot.downgradeCommand,

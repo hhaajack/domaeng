@@ -29,7 +29,7 @@ function loadOrCreateBridgeDeviceState() {
   if (fileRecord.error) {
     if (keychainRecord.state) {
       warnOnce(
-        "[remodex] Recovering the canonical device-state.json from the legacy Keychain pairing mirror."
+        "[domaeng] Recovering the canonical device-state.json from the legacy Keychain pairing mirror."
       );
       writeBridgeDeviceState(keychainRecord.state);
       return keychainRecord.state;
@@ -39,7 +39,7 @@ function loadOrCreateBridgeDeviceState() {
 
   if (keychainRecord.error) {
     warnOnce(
-      "[remodex] Ignoring unreadable legacy Keychain pairing mirror; generating a fresh canonical device-state.json."
+      "[domaeng] Ignoring unreadable legacy Keychain pairing mirror; generating a fresh canonical device-state.json."
     );
     const nextState = createBridgeDeviceState();
     writeBridgeDeviceState(nextState);
@@ -66,7 +66,7 @@ function readBridgeDeviceState() {
   return keychainRecord.state || null;
 }
 
-// Removes the saved bridge identity/trust state so the next `remodex up` requires a fresh QR pairing.
+// Removes the saved bridge identity/trust state so the next `domaeng up` requires a fresh QR pairing.
 function resetBridgeDeviceState() {
   const removedCanonicalFile = deleteCanonicalFileState();
   const removedKeychainMirror = deleteKeychainStateString();
@@ -339,11 +339,14 @@ function writeCanonicalFileStateString(serialized) {
 }
 
 function resolveStoreDir() {
-  return normalizeNonEmptyString(process.env.REMODEX_DEVICE_STATE_DIR) || DEFAULT_STORE_DIR;
+  return normalizeNonEmptyString(process.env.DOMAENG_DEVICE_STATE_DIR)
+    || normalizeNonEmptyString(process.env.REMODEX_DEVICE_STATE_DIR)
+    || DEFAULT_STORE_DIR;
 }
 
 function resolveStoreFile() {
-  return normalizeNonEmptyString(process.env.REMODEX_DEVICE_STATE_FILE)
+  return normalizeNonEmptyString(process.env.DOMAENG_DEVICE_STATE_FILE)
+    || normalizeNonEmptyString(process.env.REMODEX_DEVICE_STATE_FILE)
     || path.join(resolveStoreDir(), "device-state.json");
 }
 
@@ -352,7 +355,8 @@ function resolveBridgeDeviceStateFile() {
 }
 
 function resolveKeychainMirrorFile() {
-  return normalizeNonEmptyString(process.env.REMODEX_DEVICE_STATE_KEYCHAIN_MOCK_FILE);
+  return normalizeNonEmptyString(process.env.DOMAENG_DEVICE_STATE_KEYCHAIN_MOCK_FILE)
+    || normalizeNonEmptyString(process.env.REMODEX_DEVICE_STATE_KEYCHAIN_MOCK_FILE);
 }
 
 function readKeychainStateString() {
@@ -472,7 +476,7 @@ function deleteCanonicalFileState() {
 // Prefers the canonical file, but repairs or warns about stale legacy Keychain mirrors.
 function reconcileLegacyKeychainMirror(canonicalState, keychainRecord) {
   if (keychainRecord.error) {
-    warnOnce("[remodex] Ignoring unreadable legacy Keychain pairing mirror; using canonical device-state.json.");
+    warnOnce("[domaeng] Ignoring unreadable legacy Keychain pairing mirror; using canonical device-state.json.");
     return;
   }
 
@@ -485,7 +489,7 @@ function reconcileLegacyKeychainMirror(canonicalState, keychainRecord) {
     return;
   }
 
-  warnOnce("[remodex] Canonical bridge pairing state differs from the legacy Keychain mirror; using device-state.json.");
+  warnOnce("[domaeng] Canonical bridge pairing state differs from the legacy Keychain mirror; using device-state.json.");
   writeKeychainStateString(JSON.stringify(canonicalState, null, 2));
 }
 
@@ -679,8 +683,8 @@ function trustedDeviceNotFoundError(deviceRecordId) {
 function corruptedStateError(source, error) {
   const detail = normalizeNonEmptyString(error?.message);
   return new Error(
-    `The saved Remodex pairing state in ${source} is unreadable. `
-      + "Run `remodex reset-pairing` to start fresh."
+    `The saved Domaeng pairing state in ${source} is unreadable. `
+      + "Run `domaeng reset-pairing` to start fresh."
       + (detail ? ` (${detail})` : "")
   );
 }

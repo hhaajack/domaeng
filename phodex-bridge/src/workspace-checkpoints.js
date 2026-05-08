@@ -237,9 +237,9 @@ async function captureGitCheckpoint(repoRoot, checkpointRef) {
   const env = {
     ...process.env,
     GIT_INDEX_FILE: tempIndexPath,
-    GIT_AUTHOR_NAME: "Remodex",
+    GIT_AUTHOR_NAME: "Domaeng",
     GIT_AUTHOR_EMAIL: "remodex@users.noreply.github.com",
-    GIT_COMMITTER_NAME: "Remodex",
+    GIT_COMMITTER_NAME: "Domaeng",
     GIT_COMMITTER_EMAIL: "remodex@users.noreply.github.com",
   };
 
@@ -312,7 +312,7 @@ function validateCheckpointRef(checkpointRef) {
   if (!normalized.startsWith(`${CHECKPOINT_REFS_PREFIX}/`)) {
     throw workspaceCheckpointError(
       "invalid_checkpoint_ref",
-      "Workspace checkpoint refs must stay inside the Remodex checkpoint namespace."
+      "Workspace checkpoint refs must stay inside the Domaeng checkpoint namespace."
     );
   }
   if (normalized.includes("..") || normalized.includes(" ")) {

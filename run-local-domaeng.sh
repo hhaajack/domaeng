@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# FILE: run-local-remodex.sh
+# FILE: run-local-domaeng.sh
 # Purpose: Starts a local relay plus the public bridge for OSS and self-host workflows.
 # Layer: developer utility
 # Exports: none
@@ -23,20 +23,20 @@ RELAY_PID=""
 BRIDGE_PID=""
 
 log() {
-  echo "[run-local-remodex] $*"
+  echo "[run-local-domaeng] $*"
 }
 
 die() {
-  echo "[run-local-remodex] $*" >&2
+  echo "[run-local-domaeng] $*" >&2
   exit 1
 }
 
 usage() {
   cat <<'EOF'
-Usage: ./run-local-remodex.sh [options]
+Usage: ./run-local-domaeng.sh [options]
 
 Options:
-  --hostname HOSTNAME   Hostname or IP the iPhone should use to reach the relay
+  --hostname HOSTNAME   Hostname or IP another device should use to reach the relay
   --relay-url URL       Full relay URL to advertise, for tunnels or reverse proxies
   --bind-host HOST      Interface/address the local relay should listen on
   --port PORT           Relay port to listen on
@@ -287,7 +287,7 @@ dns.lookup(hostname, { all: true }, (error, records) => {
   process.exit(isLocal ? 0 : 1);
 });
 ' "${RELAY_HOSTNAME}" || die "The advertised hostname '${RELAY_HOSTNAME}' does not resolve back to this Mac.
-Pass --hostname with a LAN hostname or IP address that points to this machine so the iPhone can connect."
+Pass --hostname with a LAN hostname or IP address that points to this machine so another device can connect."
 }
 
 package_dependencies_installed() {
@@ -386,7 +386,7 @@ NODE
 
 print_summary() {
   cat <<EOF
-[run-local-remodex] Configuration
+[run-local-domaeng] Configuration
   Relay bind host : ${RELAY_BIND_HOST}
   Relay port      : ${RELAY_PORT}
   Relay hostname  : ${RELAY_HOSTNAME}
@@ -402,13 +402,13 @@ start_bridge() {
   # This local helper should print the QR in the current terminal immediately.
   # Use the foreground bridge path instead of the macOS launchd wrapper so QR
   # rendering does not depend on daemon state being written back first.
-  REMODEX_RELAY="${RELAY_URL}" REMODEX_PUSH_SERVICE_URL="${PUSH_SERVICE_URL}" node ./bin/remodex.js run &
+  DOMAENG_RELAY="${RELAY_URL}" DOMAENG_PUSH_SERVICE_URL="${PUSH_SERVICE_URL}" node ./bin/remodex.js run &
   BRIDGE_PID=$!
 }
 
 hold_open() {
   log "Local relay is ready. Keep this terminal open while testing."
-  log "Press Ctrl+C to stop both the local relay and the Remodex bridge service."
+  log "Press Ctrl+C to stop both the local relay and the Domaeng bridge service."
   while true; do
     if [[ -n "${RELAY_PID}" ]] && ! kill -0 "${RELAY_PID}" 2>/dev/null; then
       wait "${RELAY_PID}"

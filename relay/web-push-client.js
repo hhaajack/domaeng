@@ -4,7 +4,7 @@
 // Exports: createWebPushClient, webPushConfigFromEnv
 // Depends on: web-push
 
-const DEFAULT_VAPID_SUBJECT = "mailto:remodex-local@example.invalid";
+const DEFAULT_VAPID_SUBJECT = "mailto:domaeng-local@example.invalid";
 
 function createWebPushClient({
   webPushImpl = loadWebPushImplementation(),
@@ -81,15 +81,15 @@ function createWebPushClient({
 function webPushConfigFromEnv(env = process.env) {
   return {
     publicKey: readFirstDefinedEnv(
-      ["REMODEX_WEB_PUSH_PUBLIC_KEY", "PHODEX_WEB_PUSH_PUBLIC_KEY", "VAPID_PUBLIC_KEY"],
+      ["DOMAENG_WEB_PUSH_PUBLIC_KEY", "REMODEX_WEB_PUSH_PUBLIC_KEY", "PHODEX_WEB_PUSH_PUBLIC_KEY", "VAPID_PUBLIC_KEY"],
       env
     ),
     privateKey: readFirstDefinedEnv(
-      ["REMODEX_WEB_PUSH_PRIVATE_KEY", "PHODEX_WEB_PUSH_PRIVATE_KEY", "VAPID_PRIVATE_KEY"],
+      ["DOMAENG_WEB_PUSH_PRIVATE_KEY", "REMODEX_WEB_PUSH_PRIVATE_KEY", "PHODEX_WEB_PUSH_PRIVATE_KEY", "VAPID_PRIVATE_KEY"],
       env
     ),
     subject: readFirstDefinedEnv(
-      ["REMODEX_WEB_PUSH_SUBJECT", "PHODEX_WEB_PUSH_SUBJECT", "VAPID_SUBJECT"],
+      ["DOMAENG_WEB_PUSH_SUBJECT", "REMODEX_WEB_PUSH_SUBJECT", "PHODEX_WEB_PUSH_SUBJECT", "VAPID_SUBJECT"],
       env
     ) || DEFAULT_VAPID_SUBJECT,
   };

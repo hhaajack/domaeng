@@ -1242,7 +1242,7 @@ async function generatePullRequestDraftOrFallback(cwd, params, options, baseBran
         `- Prepare changes from \`${branch}\` for review.`,
         "",
         "## Testing",
-        "- Not run from Remodex.",
+        "- Not run from Domaeng.",
         "",
         "## Notes",
         `- Base branch: \`${baseBranch}\`.`,
@@ -1252,7 +1252,7 @@ async function generatePullRequestDraftOrFallback(cwd, params, options, baseBran
 }
 
 function firstCommitMessageLine(message) {
-  return normalizeNonEmptyLine(message) || "Changes from Remodex";
+  return normalizeNonEmptyLine(message) || "Changes from Domaeng";
 }
 
 async function ensureGitHubCliReady(cwd) {

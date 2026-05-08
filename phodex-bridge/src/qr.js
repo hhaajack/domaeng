@@ -69,7 +69,7 @@ function shouldPrintPairingJson({ env = process.env, explicitValue } = {}) {
     return explicitValue;
   }
 
-  const rawValue = env?.REMODEX_PRINT_PAIRING_JSON || env?.PHODEX_PRINT_PAIRING_JSON || "";
+  const rawValue = env?.DOMAENG_PRINT_PAIRING_JSON || env?.REMODEX_PRINT_PAIRING_JSON || env?.PHODEX_PRINT_PAIRING_JSON || "";
   return ["1", "true", "yes", "on"].includes(String(rawValue).trim().toLowerCase());
 }
 

@@ -108,7 +108,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { message?: strin
               <div className="brand-row">
                 <div className="brand-mark" aria-hidden="true" />
                 <div>
-                  <h1>Remodex</h1>
+                  <h1>Domaeng</h1>
                   <p>Runtime error</p>
                 </div>
               </div>
@@ -181,7 +181,7 @@ function PairingScreen() {
         <div className="brand-row">
           <div className="brand-mark" aria-hidden="true" />
           <div>
-            <h1>Remodex</h1>
+            <h1>Domaeng</h1>
             <p>{secureStateLabel(secureState)}</p>
           </div>
         </div>
@@ -569,7 +569,7 @@ function Workspace() {
         <div className="sidebar-header">
           <div className="brand-lockup">
             <div className="brand-mark small" aria-hidden="true" />
-            <strong>Remodex</strong>
+            <strong>Domaeng</strong>
           </div>
           <button
             title="New chat"
@@ -991,7 +991,7 @@ function ThreadTitle() {
   return (
     <div className="thread-title">
       <strong>{thread?.title || thread?.name || "Conversation"}</strong>
-      <span>{thread?.cwd || "Remodex"}</span>
+      <span>{thread?.cwd || "Domaeng"}</span>
     </div>
   );
 }
@@ -1942,7 +1942,7 @@ function canUseCameraScanner(): boolean {
 
 function cameraUnavailableMessage(): string {
   if (!window.isSecureContext) {
-    return "Camera scanning requires HTTPS or localhost in mobile browsers. Close this sheet and use the pairing code instead, or reopen Remodex over HTTPS.";
+    return "Camera scanning requires HTTPS or localhost in mobile browsers. Close this sheet and use the pairing code instead, or reopen Domaeng over HTTPS.";
   }
 
   return "Camera access is not available in this browser. Use the pairing code instead.";

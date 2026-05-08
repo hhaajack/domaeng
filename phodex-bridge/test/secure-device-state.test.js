@@ -225,7 +225,7 @@ test("loadOrCreateBridgeDeviceState throws when the canonical file is corrupted 
 
     assert.throws(
       () => loadOrCreateBridgeDeviceState(),
-      /saved Remodex pairing state in device-state\.json is unreadable/i
+      /saved Domaeng pairing state in device-state\.json is unreadable/i
     );
   });
 });

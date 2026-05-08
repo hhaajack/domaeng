@@ -11,7 +11,7 @@ function createPushNotificationServiceClient({
   sessionId,
   notificationSecret,
   fetchImpl = globalThis.fetch,
-  logPrefix = "[remodex]",
+  logPrefix = "[domaeng]",
   requestTimeoutMs = DEFAULT_PUSH_SERVICE_TIMEOUT_MS,
 } = {}) {
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl);

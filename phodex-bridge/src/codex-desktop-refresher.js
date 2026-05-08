@@ -37,7 +37,7 @@ class CodexDesktopRefresher {
     refreshCommand = "",
     bundleId = DEFAULT_BUNDLE_ID,
     appPath = DEFAULT_APP_PATH,
-    logPrefix = "[remodex]",
+    logPrefix = "[domaeng]",
     fallbackNewThreadMs = DEFAULT_FALLBACK_NEW_THREAD_MS,
     rolloutLookupTimeoutMs = DEFAULT_ROLLOUT_LOOKUP_TIMEOUT_MS,
     rolloutIdleTimeoutMs = DEFAULT_ROLLOUT_IDLE_TIMEOUT_MS,
@@ -423,7 +423,7 @@ class CodexDesktopRefresher {
     this.fallbackTimer = null;
   }
 
-  // Keeps one lightweight rollout watcher alive for the current Remodex-controlled thread.
+  // Keeps one lightweight rollout watcher alive for the current Domaeng-controlled thread.
   ensureWatcher(threadId) {
     if (!this.canRefresh() || !threadId) {
       return;
@@ -558,12 +558,12 @@ function readBridgeConfig({
     ? ""
     : privateDefaults.relayUrl;
   const explicitRelayUrl = readFirstDefinedEnv(
-    ["REMODEX_RELAY", "PHODEX_RELAY"],
+    ["DOMAENG_RELAY", "REMODEX_RELAY", "PHODEX_RELAY"],
     "",
     env
   );
   const relayUrl = readFirstDefinedEnv(
-    ["REMODEX_RELAY", "PHODEX_RELAY"],
+    ["DOMAENG_RELAY", "REMODEX_RELAY", "PHODEX_RELAY"],
     persistedRelayUrl || defaultRelayUrl,
     env
   );
@@ -573,25 +573,25 @@ function readBridgeConfig({
   const defaultPushServiceUrl = (relayUsesPackagedDefault ? privateDefaults.pushServiceUrl : "")
     || derivedPushServiceUrl;
   const codexEndpoint = readFirstDefinedEnv(
-    ["REMODEX_CODEX_ENDPOINT", "PHODEX_CODEX_ENDPOINT"],
+    ["DOMAENG_CODEX_ENDPOINT", "REMODEX_CODEX_ENDPOINT", "PHODEX_CODEX_ENDPOINT"],
     "",
     env
   );
-  const explicitSharedRuntimeEnabled = readOptionalBooleanEnv(["REMODEX_SHARED_CODEX_RUNTIME"], env);
+  const explicitSharedRuntimeEnabled = readOptionalBooleanEnv(["DOMAENG_SHARED_CODEX_RUNTIME", "REMODEX_SHARED_CODEX_RUNTIME"], env);
   const sharedRuntimeEnabled = explicitSharedRuntimeEnabled == null
     ? platform === "darwin" && !codexEndpoint
     : explicitSharedRuntimeEnabled;
-  const explicitDesktopSharedRuntimeEnabled = readOptionalBooleanEnv(["REMODEX_DESKTOP_SHARED_RUNTIME"], env);
+  const explicitDesktopSharedRuntimeEnabled = readOptionalBooleanEnv(["DOMAENG_DESKTOP_SHARED_RUNTIME", "REMODEX_DESKTOP_SHARED_RUNTIME"], env);
   const desktopSharedRuntimeEnabled = explicitDesktopSharedRuntimeEnabled == null
     ? false
     : platform === "darwin" && explicitDesktopSharedRuntimeEnabled;
   const refreshCommand = readFirstDefinedEnv(
-    ["REMODEX_REFRESH_COMMAND", "PHODEX_ON_PHONE_MESSAGE"],
+    ["DOMAENG_REFRESH_COMMAND", "REMODEX_REFRESH_COMMAND", "PHODEX_ON_PHONE_MESSAGE"],
     "",
     env
   );
-  const explicitRefreshEnabled = readOptionalBooleanEnv(["REMODEX_REFRESH_ENABLED"], env);
-  const explicitKeepMacAwakeEnabled = readOptionalBooleanEnv(["REMODEX_KEEP_MAC_AWAKE"], env);
+  const explicitRefreshEnabled = readOptionalBooleanEnv(["DOMAENG_REFRESH_ENABLED", "REMODEX_REFRESH_ENABLED"], env);
+  const explicitKeepMacAwakeEnabled = readOptionalBooleanEnv(["DOMAENG_KEEP_MAC_AWAKE", "REMODEX_KEEP_MAC_AWAKE"], env);
   const persistedRefreshEnabled = typeof daemonConfig.refreshEnabled === "boolean"
     ? daemonConfig.refreshEnabled
     : null;
@@ -604,40 +604,40 @@ function readBridgeConfig({
   return {
     relayUrl,
     pushServiceUrl: readFirstDefinedEnv(
-      ["REMODEX_PUSH_SERVICE_URL"],
+      ["DOMAENG_PUSH_SERVICE_URL", "REMODEX_PUSH_SERVICE_URL"],
       defaultPushServiceUrl,
       env
     ),
     pushPreviewMaxChars: parseIntegerEnv(
-      readFirstDefinedEnv(["REMODEX_PUSH_PREVIEW_MAX_CHARS"], "160", env),
+      readFirstDefinedEnv(["DOMAENG_PUSH_PREVIEW_MAX_CHARS", "REMODEX_PUSH_PREVIEW_MAX_CHARS"], "160", env),
       160
     ),
     refreshEnabled: explicitRefreshEnabled == null
       ? (persistedRefreshEnabled == null ? defaultRefreshEnabled : persistedRefreshEnabled)
       : explicitRefreshEnabled,
     refreshDebounceMs: parseIntegerEnv(
-      readFirstDefinedEnv(["REMODEX_REFRESH_DEBOUNCE_MS"], String(DEFAULT_DEBOUNCE_MS), env),
+      readFirstDefinedEnv(["DOMAENG_REFRESH_DEBOUNCE_MS", "REMODEX_REFRESH_DEBOUNCE_MS"], String(DEFAULT_DEBOUNCE_MS), env),
       DEFAULT_DEBOUNCE_MS
     ),
     keepMacAwakeEnabled: explicitKeepMacAwakeEnabled == null
       ? (persistedKeepMacAwakeEnabled == null ? false : persistedKeepMacAwakeEnabled)
       : explicitKeepMacAwakeEnabled,
     codexEndpoint,
-    desktopIpcSocketPath: readFirstDefinedEnv(["REMODEX_DESKTOP_IPC_SOCKET"], "", env),
+    desktopIpcSocketPath: readFirstDefinedEnv(["DOMAENG_DESKTOP_IPC_SOCKET", "REMODEX_DESKTOP_IPC_SOCKET"], "", env),
     sharedRuntimeEnabled,
-    sharedRuntimeHost: readFirstDefinedEnv(["REMODEX_SHARED_CODEX_RUNTIME_HOST"], "127.0.0.1", env),
+    sharedRuntimeHost: readFirstDefinedEnv(["DOMAENG_SHARED_CODEX_RUNTIME_HOST", "REMODEX_SHARED_CODEX_RUNTIME_HOST"], "127.0.0.1", env),
     sharedRuntimePort: parseIntegerEnv(
-      readFirstDefinedEnv(["REMODEX_SHARED_CODEX_RUNTIME_PORT"], "0", env),
+      readFirstDefinedEnv(["DOMAENG_SHARED_CODEX_RUNTIME_PORT", "REMODEX_SHARED_CODEX_RUNTIME_PORT"], "0", env),
       0
     ),
     desktopSharedRuntimeEnabled,
     refreshCommand,
     completionRefreshMode: normalizeCompletionRefreshMode(readFirstDefinedEnv(
-      ["REMODEX_COMPLETION_REFRESH_MODE"],
+      ["DOMAENG_COMPLETION_REFRESH_MODE", "REMODEX_COMPLETION_REFRESH_MODE"],
       DEFAULT_COMPLETION_REFRESH_MODE,
       env
     )),
-    codexBundleId: readFirstDefinedEnv(["REMODEX_CODEX_BUNDLE_ID"], DEFAULT_BUNDLE_ID, env),
+    codexBundleId: readFirstDefinedEnv(["DOMAENG_CODEX_BUNDLE_ID", "REMODEX_CODEX_BUNDLE_ID"], DEFAULT_BUNDLE_ID, env),
     codexAppPath: DEFAULT_APP_PATH,
   };
 }

@@ -1,11 +1,11 @@
 {
-  "name": "remodex",
+  "name": "domaeng",
   "version": "1.5.1",
-  "description": "Local bridge between Codex and the Remodex mobile app. Run `remodex up` to start.",
+  "description": "Local bridge between Codex and the Domaeng web app. Run `domaeng up` to start.",
   "main": "src/index.js",
   "bin": {
-    "remodex": "./bin/remodex.js",
-    "remodex-jsonl-diagnose": "./bin/remodex-jsonl-diagnose.js"
+    "domaeng": "./bin/remodex.js",
+    "domaeng-jsonl-diagnose": "./bin/remodex-jsonl-diagnose.js"
   },
   "files": [
     "bin/",
@@ -19,12 +19,12 @@
     "postpack": "node ./scripts/cleanup-private-defaults.js"
   },
   "keywords": [
-    "remodex",
+    "domaeng",
     "codex",
     "bridge",
     "cli"
   ],
-  "author": "Emanuele Di Pietro",
+  "author": "Domaeng contributors",
   "license": "Apache-2.0",
   "type": "commonjs",
   "dependencies": {

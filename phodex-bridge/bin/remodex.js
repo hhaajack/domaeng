@@ -73,7 +73,7 @@ async function main({
 
   if (command === "up") {
     if (platform === "darwin") {
-      consoleImpl.log("[remodex] Starting bridge and pairing QR...");
+      consoleImpl.log("[domaeng] Starting bridge and pairing QR...");
       const result = await deps.startMacOSBridgeService({
         waitForPairing: true,
       });
@@ -114,7 +114,7 @@ async function main({
         plistPath: result?.plistPath,
         pairingSession: result?.pairingSession,
       },
-      message: "[remodex] macOS bridge service is running.",
+      message: "[domaeng] macOS bridge service is running.",
       jsonOutput,
       consoleImpl,
     });
@@ -138,7 +138,7 @@ async function main({
         plistPath: result?.plistPath,
         pairingSession: result?.pairingSession,
       },
-      message: "[remodex] macOS bridge service restarted.",
+      message: "[domaeng] macOS bridge service restarted.",
       jsonOutput,
       consoleImpl,
     });
@@ -157,7 +157,7 @@ async function main({
         ok: true,
         currentVersion: version,
       },
-      message: "[remodex] macOS bridge service stopped.",
+      message: "[domaeng] macOS bridge service stopped.",
       jsonOutput,
       consoleImpl,
     });
@@ -191,7 +191,7 @@ async function main({
             currentVersion: version,
             platform: "darwin",
           },
-          message: "[remodex] Stopped the macOS bridge service and cleared the saved pairing state. Run `remodex up` to pair again.",
+          message: "[domaeng] Stopped the macOS bridge service and cleared the saved pairing state. Run `domaeng up` to pair again.",
           jsonOutput,
           consoleImpl,
         });
@@ -203,13 +203,13 @@ async function main({
             currentVersion: version,
             platform,
           },
-          message: "[remodex] Cleared the saved pairing state. Run `remodex up` to pair again.",
+          message: "[domaeng] Cleared the saved pairing state. Run `domaeng up` to pair again.",
           jsonOutput,
           consoleImpl,
         });
       }
     } catch (error) {
-      consoleImpl.error(`[remodex] ${(error && error.message) || "Failed to clear the saved pairing state."}`);
+      consoleImpl.error(`[domaeng] ${(error && error.message) || "Failed to clear the saved pairing state."}`);
       exitImpl(1);
     }
     return;
@@ -232,12 +232,12 @@ async function main({
           pairingSession: result?.pairingSession || null,
           request: result?.request || null,
         },
-        message: "[remodex] Pairing code renewed.",
+        message: "[domaeng] Pairing code renewed.",
         jsonOutput,
         consoleImpl,
       });
     } catch (error) {
-      consoleImpl.error(`[remodex] ${(error && error.message) || "Failed to renew the pairing code."}`);
+      consoleImpl.error(`[domaeng] ${(error && error.message) || "Failed to renew the pairing code."}`);
       exitImpl(1);
     }
     return;
@@ -263,7 +263,7 @@ async function main({
         consoleImpl,
       });
     } catch (error) {
-      consoleImpl.error(`[remodex] ${(error && error.message) || "Failed to update the trusted device."}`);
+      consoleImpl.error(`[domaeng] ${(error && error.message) || "Failed to update the trusted device."}`);
       exitImpl(1);
     }
     return;
@@ -279,12 +279,12 @@ async function main({
           threadId: state.threadId,
           source: state.source || "unknown",
         },
-        message: `[remodex] Opened last active thread: ${state.threadId} (${state.source || "unknown"})`,
+        message: `[domaeng] Opened last active thread: ${state.threadId} (${state.source || "unknown"})`,
         jsonOutput,
         consoleImpl,
       });
     } catch (error) {
-      consoleImpl.error(`[remodex] ${(error && error.message) || "Failed to reopen the last thread."}`);
+      consoleImpl.error(`[domaeng] ${(error && error.message) || "Failed to reopen the last thread."}`);
       exitImpl(1);
     }
     return;
@@ -294,7 +294,7 @@ async function main({
     try {
       deps.watchThreadRollout(watchThreadId);
     } catch (error) {
-      consoleImpl.error(`[remodex] ${(error && error.message) || "Failed to watch the thread rollout."}`);
+      consoleImpl.error(`[domaeng] ${(error && error.message) || "Failed to watch the thread rollout."}`);
       exitImpl(1);
     }
     return;
@@ -302,10 +302,10 @@ async function main({
 
   consoleImpl.error(`Unknown command: ${command}`);
   consoleImpl.error(
-    "Usage: remodex up | remodex run | remodex start | remodex restart | remodex stop | remodex status | "
-    + "remodex reset-pairing | remodex renew-pairing | "
-    + "remodex trusted-device <enable|disable|revoke|rename> <id> [name] | "
-    + "remodex resume | remodex watch [threadId] | remodex --version | "
+    "Usage: domaeng up | domaeng run | domaeng start | domaeng restart | domaeng stop | domaeng status | "
+    + "domaeng reset-pairing | domaeng renew-pairing | "
+    + "domaeng trusted-device <enable|disable|revoke|rename> <id> [name] | "
+    + "domaeng resume | domaeng watch [threadId] | domaeng --version | "
     + "append --json to start/restart/stop/status/reset-pairing/renew-pairing/trusted-device/resume for machine-readable output"
   );
   exitImpl(1);
@@ -336,7 +336,7 @@ function parseCliArgs(rawArgs) {
 
 function runTrustedDeviceCommand({ action, deviceId, displayName, deps }) {
   if (!deviceId || !["enable", "disable", "revoke", "rename"].includes(action)) {
-    throw new Error("Usage: remodex trusted-device <enable|disable|revoke|rename> <id> [name]");
+    throw new Error("Usage: domaeng trusted-device <enable|disable|revoke|rename> <id> [name]");
   }
 
   if (action === "enable") {
@@ -351,7 +351,7 @@ function runTrustedDeviceCommand({ action, deviceId, displayName, deps }) {
 
   const normalizedDisplayName = typeof displayName === "string" ? displayName.trim() : "";
   if (!normalizedDisplayName) {
-    throw new Error("Usage: remodex trusted-device rename <id> <name>");
+    throw new Error("Usage: domaeng trusted-device rename <id> <name>");
   }
   return deps.renameTrustedDevice(deviceId, normalizedDisplayName);
 }
@@ -359,15 +359,15 @@ function runTrustedDeviceCommand({ action, deviceId, displayName, deps }) {
 function trustedDeviceActionMessage(action) {
   switch (action) {
   case "enable":
-    return "[remodex] Trusted device enabled.";
+    return "[domaeng] Trusted device enabled.";
   case "disable":
-    return "[remodex] Trusted device disabled.";
+    return "[domaeng] Trusted device disabled.";
   case "revoke":
-    return "[remodex] Trusted device removed.";
+    return "[domaeng] Trusted device removed.";
   case "rename":
-    return "[remodex] Trusted device renamed.";
+    return "[domaeng] Trusted device renamed.";
   default:
-    return "[remodex] Trusted device updated.";
+    return "[domaeng] Trusted device updated.";
   }
 }
 
@@ -412,7 +412,7 @@ function assertMacOSCommand(name, {
     return;
   }
 
-  consoleImpl.error(`[remodex] \`${name}\` is only available on macOS. Use \`remodex up\` or \`remodex run\` for the foreground bridge on this OS.`);
+  consoleImpl.error(`[domaeng] \`${name}\` is only available on macOS. Use \`domaeng up\` or \`domaeng run\` for the foreground bridge on this OS.`);
   exitImpl(1);
 }
 
