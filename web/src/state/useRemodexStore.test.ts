@@ -463,6 +463,24 @@ describe("useRemodexStore thread activity", () => {
     expect(state.pendingApprovals[0]?.id).toBe("approval-2");
   });
 
+  it("leaves a broken secure workspace instead of showing a sticky composer error", () => {
+    useRemodexStore.setState({
+      connectionStatus: "connected",
+      secureState: "encrypted",
+      lastError: "old warning"
+    });
+
+    emitClientEvent({
+      type: "error",
+      error: new Error("The bridge could not decrypt the iPhone secure payload.")
+    });
+
+    const state = useRemodexStore.getState();
+    expect(state.connectionStatus).toBe("disconnected");
+    expect(state.secureState).toBe("rePairRequired");
+    expect(state.lastError).toBeUndefined();
+  });
+
   it("rechecks the active thread after reconnect even when cached messages exist", async () => {
     client.listThreads = vi.fn().mockResolvedValue([{ id: "thread-active", title: "Active" }]);
     client.readThread = vi.fn().mockResolvedValue({
@@ -732,6 +750,22 @@ describe("useRemodexStore git actions", () => {
 
     expect(client.gitPull).toHaveBeenCalledWith("/repo");
     expect(client.gitStatus).toHaveBeenCalledWith("/repo");
+  });
+
+  it("does not surface git status timeouts as a composer error", async () => {
+    client.gitStatus = vi.fn().mockRejectedValue(new Error("RPC request timed out: git/status"));
+    useRemodexStore.setState({
+      threads: [{ id: "thread-1", title: "Repo", cwd: "/repo" }],
+      activeThreadId: "thread-1",
+      gitStatus: { branch: "main", state: "up_to_date" },
+      lastError: undefined
+    });
+
+    await useRemodexStore.getState().refreshGitStatus();
+
+    expect(client.gitStatus).toHaveBeenCalledWith("/repo");
+    expect(useRemodexStore.getState().gitStatus).toBeUndefined();
+    expect(useRemodexStore.getState().lastError).toBeUndefined();
   });
 });
 

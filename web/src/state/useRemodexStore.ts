@@ -150,6 +150,14 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
         }));
         break;
       case "error":
+        if (isSecureChannelLostError(event.error.message)) {
+          set({
+            connectionStatus: "disconnected",
+            secureState: "rePairRequired",
+            lastError: undefined
+          });
+          break;
+        }
         set({ lastError: event.error.message });
         break;
       default:
@@ -657,8 +665,8 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
       }
       try {
         set({ gitStatus: await client.gitStatus(cwd) });
-      } catch (error) {
-        set({ gitStatus: undefined, lastError: errorMessage(error) });
+      } catch {
+        set({ gitStatus: undefined });
       }
     },
 
@@ -926,6 +934,12 @@ function reconcileThreadRunStateWithRunningTurns(
   }
 
   return next;
+}
+
+function isSecureChannelLostError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return normalized.includes("could not decrypt")
+    && normalized.includes("secure payload");
 }
 
 function applyThreadActivityUpdate<T extends RemodexStore>(
