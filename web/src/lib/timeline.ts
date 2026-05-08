@@ -133,7 +133,7 @@ export function decodeThreadRead(state: TimelineState, result: JSONValue | undef
     threads: sortThreads(upsertThread(state.threads, thread)),
     messagesByThread: {
       ...state.messagesByThread,
-      [thread.id]: messages
+      [thread.id]: mergePendingLocalUserMessages(state.messagesByThread[thread.id] ?? [], messages)
     },
     runningTurnByThread
   };
@@ -151,7 +151,10 @@ export function appendLocalUserMessage(
     threadId,
     text,
     attachments,
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    metadata: {
+      remodexLocalPending: true
+    }
   }));
 }
 
@@ -601,16 +604,49 @@ function decodeImageAttachments(item: JSONObject): ImageAttachment[] {
   const content = asArray(item.content) ?? [];
   return content.flatMap((value) => {
     const object = asObject(value);
-    const url = readString(object.url) || readString(object.image_url) || readString(object.sourceURL);
-    if (!url?.startsWith("data:image")) {
+    const url = imageURLFromHistoryContent(object);
+    if (!url) {
       return [];
     }
     return [{
       id: randomUUID(),
-      thumbnailBase64JPEG: url.split(",", 2)[1] ?? "",
-      payloadDataURL: url
+      thumbnailBase64JPEG: url.startsWith("data:image") ? url.split(",", 2)[1] ?? "" : "",
+      payloadDataURL: url.startsWith("data:image") ? url : undefined,
+      sourceURL: url.startsWith("data:image") ? undefined : url
     }];
   });
+}
+
+function imageURLFromHistoryContent(object: JSONObject): string | undefined {
+  const direct = readString(object.url)
+    || readString(object.image_url)
+    || readString(object.imageUrl)
+    || readString(object.sourceURL)
+    || readString(object.source_url)
+    || readString(object.path);
+  if (direct?.startsWith("data:image") || direct === "remodex://history-image-elided") {
+    return direct;
+  }
+
+  for (const key of ["image_url", "imageUrl", "source", "image"]) {
+    const nested = imageURLFromNestedValue(object[key]);
+    if (nested) {
+      return nested;
+    }
+  }
+  return undefined;
+}
+
+function imageURLFromNestedValue(value: JSONValue | undefined): string | undefined {
+  const direct = readString(value);
+  if (direct?.startsWith("data:image") || direct === "remodex://history-image-elided") {
+    return direct;
+  }
+  const object = objectOrUndefined(value);
+  if (!object) {
+    return undefined;
+  }
+  return imageURLFromHistoryContent(object);
 }
 
 function incomingItemObject(object: JSONObject): JSONObject | undefined {
@@ -782,4 +818,58 @@ function shouldReplaceItemId(entry: TimelineMessage, nextItemId: string | undefi
     return true;
   }
   return entry.itemId === `${entry.kind}-${entry.turnId ?? "open"}`;
+}
+
+function mergePendingLocalUserMessages(
+  existing: TimelineMessage[],
+  decoded: TimelineMessage[]
+): TimelineMessage[] {
+  const pending = existing.filter(isPendingLocalUserMessage);
+  if (pending.length === 0) {
+    return decoded;
+  }
+
+  const preserved = pending.filter((entry) => {
+    return !decoded.some((candidate) => decodedUserMessageRepresentsLocal(candidate, entry));
+  });
+  if (preserved.length === 0) {
+    return decoded;
+  }
+
+  return [...decoded, ...preserved].sort((left, right) => left.createdAt - right.createdAt);
+}
+
+function isPendingLocalUserMessage(message: TimelineMessage): boolean {
+  return message.role === "user"
+    && message.kind === "chat"
+    && !message.turnId
+    && !message.itemId
+    && asObject(message.metadata).remodexLocalPending === true;
+}
+
+function decodedUserMessageRepresentsLocal(
+  decoded: TimelineMessage,
+  local: TimelineMessage
+): boolean {
+  return decoded.role === "user"
+    && decoded.kind === local.kind
+    && normalizeMessageText(decoded.text) === normalizeMessageText(local.text)
+    && attachmentSignature(decoded.attachments) === attachmentSignature(local.attachments)
+    && timestampsLikelyRepresentSameMessage(decoded.createdAt, local.createdAt);
+}
+
+function attachmentSignature(attachments: ImageAttachment[] | undefined): string {
+  return (attachments ?? []).map((attachment) => (
+    attachment.sourceURL
+      || attachment.payloadDataURL
+      || attachment.thumbnailBase64JPEG
+      || attachment.id
+  )).join("\u0000");
+}
+
+function timestampsLikelyRepresentSameMessage(decodedCreatedAt: number, localCreatedAt: number): boolean {
+  if (!decodedCreatedAt || !localCreatedAt) {
+    return false;
+  }
+  return Math.abs(decodedCreatedAt - localCreatedAt) <= 5 * 60_000;
 }

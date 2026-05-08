@@ -135,6 +135,8 @@ export class SecureSession {
   }
 
   async encryptApplicationMessage(plaintext: string): Promise<string> {
+    const counter = this.nextOutboundCounter;
+    this.nextOutboundCounter += 1;
     const payload: SecureApplicationPayload = {
       bridgeOutboundSeq: null,
       payloadText: plaintext
@@ -142,7 +144,7 @@ export class SecureSession {
     const payloadBytes = utf8Bytes(JSON.stringify(payload));
     const encrypted = await aesGcmEncrypt(
       this.phoneToMacKey,
-      nonceForDirection("iphone", this.nextOutboundCounter),
+      nonceForDirection("iphone", counter),
       payloadBytes
     );
     const envelope: SecureEnvelope = {
@@ -151,11 +153,10 @@ export class SecureSession {
       sessionId: this.sessionId,
       keyEpoch: this.keyEpoch,
       sender: "iphone",
-      counter: this.nextOutboundCounter,
+      counter,
       ciphertext: bytesToBase64(encrypted.ciphertext),
       tag: bytesToBase64(encrypted.tag)
     };
-    this.nextOutboundCounter += 1;
     return JSON.stringify(envelope);
   }
 
@@ -175,6 +176,9 @@ export class SecureSession {
       base64ToBytes(envelope.ciphertext),
       base64ToBytes(envelope.tag)
     );
+    if (envelope.counter <= this.lastInboundCounter) {
+      return "";
+    }
     const payload = JSON.parse(utf8String(plaintext)) as SecureApplicationPayload;
     this.lastInboundCounter = envelope.counter;
     if (typeof payload.bridgeOutboundSeq === "number") {

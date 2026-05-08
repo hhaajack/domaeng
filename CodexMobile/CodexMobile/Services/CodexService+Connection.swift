@@ -12,7 +12,7 @@ extension CodexService {
     // Only close codes that prove the saved pairing/session can no longer be reused
     // should force a QR reset. Temporary delivery loss uses the dedicated `4004`
     // close so `4002` can stay available for "session unavailable right now" cases.
-    private static let permanentRelayCloseCodeRawValues: Set<UInt16> = [4000, 4001, 4003]
+    private static let permanentRelayCloseCodeRawValues: Set<UInt16> = [4000, 4001]
     private static let explicitRelayDropCloseCodeRawValues: Set<UInt16> = [4004]
     private static let maxTrustedReconnectFailures = 3
     private static let connectionBootstrapRequestTimeoutNanoseconds: UInt64 = 12_000_000_000
@@ -677,6 +677,7 @@ extension CodexService {
     ) -> ReceiveErrorDisposition {
         let shouldClearSavedRelaySession = shouldClearSavedRelaySession(for: relayCloseCode)
         let retryableSessionUnavailableMessage = retryableSessionUnavailableMessage(for: relayCloseCode)
+        let mobileReplacementNotice = mobileReplacementMessage(for: relayCloseCode)
         // Only relay closes that preserve the saved session should stay on this socket path;
         // stale live sessions recover through trusted resolve instead of immediate QR.
         let permanentRelayMessage = shouldClearSavedRelaySession
@@ -688,6 +689,7 @@ extension CodexService {
         let shouldSuppressMessage = isBenignDisconnect && !isActivelyForegroundedForConnectionUI()
         // Foreground relay drops should reconnect too, otherwise Stop disappears mid-run.
         let shouldAttemptAutoRecovery = !shouldClearSavedRelaySession
+            && mobileReplacementNotice == nil
             && explicitRelayDropMessage == nil
             && (retryableSessionUnavailableMessage != nil
                 || isRecoverableTransientConnectionError(error)
@@ -702,6 +704,8 @@ extension CodexService {
             lastErrorMessage = permanentRelayMessage
         } else if let retryableSessionUnavailableMessage, !shouldSuppressMessage {
             lastErrorMessage = retryableSessionUnavailableMessage
+        } else if let mobileReplacementNotice {
+            lastErrorMessage = mobileReplacementNotice
         } else if let explicitRelayDropMessage {
             lastErrorMessage = explicitRelayDropMessage
         } else if !shouldSuppressMessage && !shouldAttemptAutoRecovery {
@@ -713,6 +717,7 @@ extension CodexService {
         return ReceiveErrorDisposition(
             shouldClearSavedRelaySession: shouldClearSavedRelaySession,
             shouldAutoReconnectOnForeground: !shouldClearSavedRelaySession
+                && mobileReplacementNotice == nil
                 && (shouldSuppressMessage || shouldAttemptAutoRecovery || explicitRelayDropMessage != nil),
             connectionRecoveryState: connectionRecoveryState,
             lastErrorMessage: lastErrorMessage
@@ -1037,8 +1042,6 @@ extension CodexService {
         switch rawValue {
         case 4001:
             return "This relay session was replaced by another computer connection. Scan a new QR code to reconnect."
-        case 4003:
-            return "This device was replaced by a newer connection. Scan a new QR code to reconnect."
         default:
             return "This relay pairing is no longer valid. Scan a new QR code to reconnect."
         }
@@ -1059,6 +1062,16 @@ extension CodexService {
         }
 
         return "Trying to reach your saved computer. Remodex will keep retrying. If you restarted the bridge on that computer, scan the new QR code."
+    }
+
+    // `4003` only means another mobile client took over this live Mac session.
+    // It does not revoke the trusted device identity or require a fresh QR scan.
+    func mobileReplacementMessage(for closeCode: NWProtocolWebSocket.CloseCode?) -> String? {
+        guard relayCloseCodeRawValue(closeCode) == 4003 else {
+            return nil
+        }
+
+        return "This device was replaced by a newer connection. Tap Reconnect to resume here."
     }
 
     // Surfaces relay-enforced drops that keep the pairing valid but lost the current send.

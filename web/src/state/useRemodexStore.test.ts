@@ -7,10 +7,12 @@ const client = initialState.client;
 const originalClientMethods = {
   listThreads: client.listThreads.bind(client),
   readThread: client.readThread.bind(client),
+  connectTrusted: client.connectTrusted.bind(client),
   renameThread: client.renameThread.bind(client),
   resumeThread: client.resumeThread.bind(client),
   startThread: client.startThread.bind(client),
   startTurn: client.startTurn.bind(client),
+  steerTurn: client.steerTurn.bind(client),
   refreshDesktopThread: client.refreshDesktopThread.bind(client),
   listModels: client.listModels.bind(client),
   readContextWindowUsage: client.readContextWindowUsage.bind(client),
@@ -24,10 +26,12 @@ const originalClientMethods = {
 function restoreClientMethods() {
   client.listThreads = originalClientMethods.listThreads;
   client.readThread = originalClientMethods.readThread;
+  client.connectTrusted = originalClientMethods.connectTrusted;
   client.renameThread = originalClientMethods.renameThread;
   client.resumeThread = originalClientMethods.resumeThread;
   client.startThread = originalClientMethods.startThread;
   client.startTurn = originalClientMethods.startTurn;
+  client.steerTurn = originalClientMethods.steerTurn;
   client.refreshDesktopThread = originalClientMethods.refreshDesktopThread;
   client.listModels = originalClientMethods.listModels;
   client.readContextWindowUsage = originalClientMethods.readContextWindowUsage;
@@ -141,6 +145,103 @@ describe("useRemodexStore sendComposer", () => {
       text: "sync this back"
     }));
     expect(client.refreshDesktopThread).toHaveBeenCalledWith("thread-1");
+  });
+
+  it("steers the active turn instead of starting a second turn", async () => {
+    client.resumeThread = vi.fn().mockResolvedValue({
+      result: {
+        thread: {
+          id: "thread-1",
+          title: "Writable",
+          cwd: "/repo",
+          turns: [{
+            id: "turn-live",
+            status: "running",
+            items: []
+          }]
+        }
+      }
+    });
+    client.startTurn = vi.fn();
+    client.steerTurn = vi.fn().mockResolvedValue({ result: { turnId: "turn-live" } });
+    client.refreshDesktopThread = vi.fn().mockResolvedValue({ result: { success: true } });
+
+    useRemodexStore.setState({
+      threads: [{ id: "thread-1", title: "Writable", cwd: "/repo" }],
+      activeThreadId: "thread-1",
+      messagesByThread: { "thread-1": [] },
+      composerText: "follow up while running",
+      attachments: [],
+      runtimeSettings: {
+        accessMode: "onRequest",
+        planMode: false,
+        model: "gpt-5.5"
+      }
+    });
+
+    await useRemodexStore.getState().sendComposer();
+
+    expect(client.steerTurn).toHaveBeenCalledWith(expect.objectContaining({
+      threadId: "thread-1",
+      expectedTurnId: "turn-live",
+      text: "follow up while running"
+    }));
+    expect(client.startTurn).not.toHaveBeenCalled();
+    expect(client.refreshDesktopThread).toHaveBeenCalledWith("thread-1");
+  });
+
+  it("refreshes a fallback running marker before steering", async () => {
+    client.resumeThread = vi.fn().mockResolvedValue({
+      result: {
+        thread: {
+          id: "thread-1",
+          title: "Writable",
+          cwd: "/repo",
+          status: "running",
+          turns: []
+        }
+      }
+    });
+    client.readThread = vi.fn().mockResolvedValue({
+      result: {
+        thread: {
+          id: "thread-1",
+          title: "Writable",
+          cwd: "/repo",
+          turns: [{
+            id: "turn-refreshed",
+            status: "running",
+            items: []
+          }]
+        }
+      }
+    });
+    client.startTurn = vi.fn();
+    client.steerTurn = vi.fn().mockResolvedValue({ result: { turnId: "turn-refreshed" } });
+    client.refreshDesktopThread = vi.fn().mockResolvedValue({ result: { success: true } });
+
+    useRemodexStore.setState({
+      threads: [{ id: "thread-1", title: "Writable", cwd: "/repo" }],
+      activeThreadId: "thread-1",
+      messagesByThread: { "thread-1": [] },
+      composerText: "follow up after placeholder",
+      attachments: [],
+      runtimeSettings: {
+        accessMode: "onRequest",
+        planMode: false,
+        model: "gpt-5.5"
+      }
+    });
+
+    await useRemodexStore.getState().sendComposer();
+
+    expect(client.readThread).toHaveBeenCalledWith("thread-1");
+    expect(client.steerTurn).toHaveBeenCalledWith(expect.objectContaining({
+      threadId: "thread-1",
+      expectedTurnId: "turn-refreshed",
+      text: "follow up after placeholder"
+    }));
+    expect(client.startTurn).not.toHaveBeenCalled();
   });
 
   it("keeps the sent turn and surfaces a warning when desktop refresh fails", async () => {
@@ -372,7 +473,39 @@ describe("useRemodexStore thread activity", () => {
     });
 
     expect(useRemodexStore.getState().threadRunStateByThread["thread-active"]).toBeUndefined();
+    expect(useRemodexStore.getState().runningTurnByThread["thread-active"]).toBeUndefined();
     expect(useRemodexStore.getState().inAppNotifications).toEqual([]);
+  });
+
+  it("uses desktop thread status updates to drive the active composer stop state", () => {
+    useRemodexStore.setState({
+      threads: [{ id: "thread-active", title: "Active" }],
+      activeThreadId: "thread-active"
+    });
+
+    emitClientEvent({
+      type: "notification",
+      method: "thread/status/changed",
+      params: {
+        threadId: "thread-active",
+        status: "active"
+      }
+    });
+
+    expect(useRemodexStore.getState().threadRunStateByThread["thread-active"]).toBe("running");
+    expect(useRemodexStore.getState().runningTurnByThread["thread-active"]).toBe("__running__");
+
+    emitClientEvent({
+      type: "notification",
+      method: "thread/status/changed",
+      params: {
+        threadId: "thread-active",
+        status: "idle"
+      }
+    });
+
+    expect(useRemodexStore.getState().threadRunStateByThread["thread-active"]).toBeUndefined();
+    expect(useRemodexStore.getState().runningTurnByThread["thread-active"]).toBeUndefined();
   });
 
   it("marks inactive completions and approval requests as attention states", () => {
@@ -463,7 +596,14 @@ describe("useRemodexStore thread activity", () => {
     expect(state.pendingApprovals[0]?.id).toBe("approval-2");
   });
 
-  it("leaves a broken secure workspace instead of showing a sticky composer error", () => {
+  it("recovers a broken secure workspace through trusted reconnect", async () => {
+    client.connectTrusted = vi.fn().mockImplementation(async () => {
+      emitClientEvent({ type: "secureState", state: "encrypted" });
+      emitClientEvent({ type: "status", status: "connected" });
+    });
+    client.listThreads = vi.fn().mockResolvedValue([]);
+    client.listModels = vi.fn().mockResolvedValue([]);
+    client.readRateLimits = vi.fn().mockResolvedValue({});
     useRemodexStore.setState({
       connectionStatus: "connected",
       secureState: "encrypted",
@@ -475,10 +615,37 @@ describe("useRemodexStore thread activity", () => {
       error: new Error("The bridge could not decrypt the iPhone secure payload.")
     });
 
+    await vi.waitFor(() => {
+      expect(client.connectTrusted).toHaveBeenCalledTimes(1);
+    });
+    const state = useRemodexStore.getState();
+    expect(state.connectionStatus).toBe("connected");
+    expect(state.secureState).toBe("encrypted");
+    expect(state.lastError).toBeUndefined();
+  });
+
+  it("keeps trusted reconnect failures recoverable when the Mac session is offline", async () => {
+    client.connectTrusted = vi.fn().mockRejectedValue(Object.assign(
+      new Error("The trusted Mac is offline right now."),
+      { code: "session_unavailable" }
+    ));
+    useRemodexStore.setState({
+      connectionStatus: "connected",
+      secureState: "encrypted",
+      lastError: "old warning"
+    });
+
+    emitClientEvent({
+      type: "error",
+      error: new Error("The bridge could not decrypt the iPhone secure payload.")
+    });
+
+    await vi.waitFor(() => {
+      expect(useRemodexStore.getState().secureState).toBe("liveSessionUnresolved");
+    });
     const state = useRemodexStore.getState();
     expect(state.connectionStatus).toBe("disconnected");
-    expect(state.secureState).toBe("rePairRequired");
-    expect(state.lastError).toBeUndefined();
+    expect(state.lastError).toBe("The trusted Mac is offline right now.");
   });
 
   it("rechecks the active thread after reconnect even when cached messages exist", async () => {

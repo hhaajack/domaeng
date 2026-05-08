@@ -25,6 +25,7 @@ import {
   buildResumeState,
   createClientHello,
   finalizeSecureHandshake,
+  type SecureEnvelope,
   SecureSession,
   signTrustedSessionResolve,
   wireMessageKind,
@@ -56,8 +57,11 @@ type ControlWaiter = {
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
 };
+type CodedError = Error & { code?: string };
 
 const CONTROL_WAIT_TIMEOUT_MS = 8_000;
+const APPROVAL_REVIEWER_USER = "user";
+const APPROVAL_REVIEWER_GUARDIAN = "guardian_subagent";
 
 export class RemodexClient {
   private socket: WebSocket | null = null;
@@ -68,6 +72,9 @@ export class RemodexClient {
   private readonly listeners = new Set<Listener>();
   private readonly controlWaiters = new Map<string, ControlWaiter[]>();
   private readonly bufferedControls = new Map<string, string[]>();
+  private inboundQueue: Promise<void> = Promise.resolve();
+  private outboundQueue: Promise<void> = Promise.resolve();
+  private trustedReconnectPromise: Promise<void> | null = null;
   private pendingSecureError: Error | null = null;
   private initialized = false;
 
@@ -77,6 +84,7 @@ export class RemodexClient {
   }
 
   async connectFromPairing(payload: PairingQRPayload): Promise<void> {
+    this.trustedReconnectPromise = null;
     const relayState = relayStateFromPairingPayload(payload);
     await writeRelayState(relayState);
     await this.open(relayState, "qr_bootstrap");
@@ -90,6 +98,17 @@ export class RemodexClient {
   }
 
   async connectTrusted(relayURLOverride?: string): Promise<void> {
+    if (this.trustedReconnectPromise) {
+      return this.trustedReconnectPromise;
+    }
+    this.trustedReconnectPromise = this.connectTrustedOnce(relayURLOverride)
+      .finally(() => {
+        this.trustedReconnectPromise = null;
+      });
+    return this.trustedReconnectPromise;
+  }
+
+  private async connectTrustedOnce(relayURLOverride?: string): Promise<void> {
     const state = await readRelayState();
     const trustedMacs = await readTrustedMacs();
     const trusted = state
@@ -125,7 +144,7 @@ export class RemodexClient {
     });
     const body = await response.json();
     if (!response.ok || !body.ok) {
-      throw new Error(body.error || "Pairing code could not be resolved");
+      throw codedError(readString(body.code), body.error || "Pairing code could not be resolved");
     }
     return {
       v: Number(body.v),
@@ -142,6 +161,8 @@ export class RemodexClient {
     this.rpc = null;
     this.secureSession = null;
     this.initialized = false;
+    this.inboundQueue = Promise.resolve();
+    this.outboundQueue = Promise.resolve();
     this.rejectControlWaiters(new Error("Relay socket closed"));
     this.socket?.close();
     this.socket = null;
@@ -362,6 +383,8 @@ export class RemodexClient {
     this.disconnect();
     this.pendingSecureError = null;
     this.bufferedControls.clear();
+    this.inboundQueue = Promise.resolve();
+    this.outboundQueue = Promise.resolve();
     this.relayState = relayState;
     this.phoneIdentity = await getOrCreatePhoneIdentity();
     this.emit({ type: "secureState", state: mode === "qr_bootstrap" ? "handshaking" : "reconnecting" });
@@ -374,11 +397,36 @@ export class RemodexClient {
       socket.addEventListener("error", () => reject(new Error("Relay connection failed")), { once: true });
     });
 
-    this.socket!.addEventListener("message", (event) => {
-      void this.handleWireText(String(event.data));
+    const activeSocket = this.socket!;
+    activeSocket.addEventListener("message", (event) => {
+      if (this.socket !== activeSocket) {
+        return;
+      }
+      this.inboundQueue = this.inboundQueue
+        .then(async () => {
+          if (this.socket !== activeSocket) {
+            return;
+          }
+          await this.handleWireText(String(event.data));
+        })
+        .catch((error) => {
+          this.emit({
+            type: "error",
+            error: error instanceof Error ? error : new Error(String(error))
+          });
+        });
     });
-    this.socket!.addEventListener("close", () => {
+    activeSocket.addEventListener("close", () => {
+      if (this.socket !== activeSocket) {
+        return;
+      }
       this.rpc?.failAll(new Error("Relay socket closed"));
+      this.rpc = null;
+      this.secureSession = null;
+      this.initialized = false;
+      this.socket = null;
+      this.inboundQueue = Promise.resolve();
+      this.outboundQueue = Promise.resolve();
       this.rejectControlWaiters(new Error("Relay socket closed"));
       this.emit({ type: "status", status: "disconnected" });
     });
@@ -387,7 +435,7 @@ export class RemodexClient {
       await this.performHandshake(mode);
     } catch (error) {
       this.disconnect();
-      this.emit({ type: "secureState", state: mode === "qr_bootstrap" ? "notPaired" : "rePairRequired" });
+      this.emit({ type: "secureState", state: secureStateForHandshakeError(mode, error) });
       throw error;
     }
     this.rpc = new JSONRPCDispatcher((text) => this.sendApplicationText(text));
@@ -481,7 +529,7 @@ export class RemodexClient {
     });
     const resolved = await response.json();
     if (!response.ok || !resolved.ok) {
-      throw new Error(resolved.error || "Trusted Mac is not reachable");
+      throw codedError(readString(resolved.code), resolved.error || "Trusted Mac is not reachable");
     }
     const next: RelaySessionState = {
       relayURL: trusted.relayURL,
@@ -541,9 +589,12 @@ export class RemodexClient {
   }
 
   private applyApprovalReviewer(params: JSONObject, settings?: RuntimeSettings): void {
-    if (settings?.autoReview) {
-      params.approvals_reviewer = "auto_review";
+    if (!settings) {
+      return;
     }
+    const reviewer = settings.autoReview ? APPROVAL_REVIEWER_GUARDIAN : APPROVAL_REVIEWER_USER;
+    params.approvalsReviewer = reviewer;
+    params.approvals_reviewer = reviewer;
   }
 
   private async handleWireText(rawText: string): Promise<void> {
@@ -556,9 +607,27 @@ export class RemodexClient {
       if (!this.secureSession) {
         return;
       }
-      const plaintext = await this.secureSession.decryptEnvelope(JSON.parse(rawText));
+      const envelope = JSON.parse(rawText) as SecureEnvelope;
+      if (staleEnvelopeForSession(envelope, this.secureSession)) {
+        return;
+      }
+      let plaintext: string | null;
+      try {
+        plaintext = await this.secureSession.decryptEnvelope(envelope);
+      } catch {
+        this.emit({ type: "secureState", state: "trustedMac" });
+        this.emit({
+          type: "error",
+          error: codedError("decrypt_failed", "The Web app could not decrypt the bridge secure payload.")
+        });
+        return;
+      }
       if (plaintext == null) {
-        this.emit({ type: "secureState", state: "rePairRequired" });
+        this.emit({ type: "secureState", state: "trustedMac" });
+        this.emit({
+          type: "error",
+          error: codedError("decrypt_failed", "The Web app could not decrypt the bridge secure payload.")
+        });
         return;
       }
       if (plaintext === "") {
@@ -569,7 +638,6 @@ export class RemodexClient {
       this.handleRPCText(plaintext);
       return;
     }
-    this.handleRPCText(rawText);
   }
 
   private handleRPCText(rawText: string): void {
@@ -614,17 +682,27 @@ export class RemodexClient {
   }
 
   private async sendApplicationText(plaintext: string): Promise<void> {
-    if (!this.secureSession) {
-      throw new Error("Secure session is not ready");
-    }
-    this.sendRaw(await this.secureSession.encryptApplicationMessage(plaintext));
+    const task = this.outboundQueue.then(async () => {
+      const session = this.secureSession;
+      const socket = this.socket;
+      if (!session) {
+        throw new Error("Secure session is not ready");
+      }
+      const wireText = await session.encryptApplicationMessage(plaintext);
+      if (this.secureSession !== session || this.socket !== socket) {
+        throw new Error("Secure session changed before send completed");
+      }
+      this.sendRaw(wireText, socket);
+    });
+    this.outboundQueue = task.catch(() => undefined);
+    return task;
   }
 
-  private sendRaw(text: string): void {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+  private sendRaw(text: string, socket = this.socket): void {
+    if (!socket || socket !== this.socket || socket.readyState !== WebSocket.OPEN) {
       throw new Error("Relay socket is not open");
     }
-    this.socket.send(text);
+    socket.send(text);
   }
 
   private waitForControl(kind: string, timeoutMs = CONTROL_WAIT_TIMEOUT_MS): Promise<string> {
@@ -654,7 +732,7 @@ export class RemodexClient {
   private bufferControl(kind: string, rawText: string): void {
     if (kind === "secureError") {
       const parsed = JSON.parse(rawText) as { code?: string; message?: string };
-      const error = new Error(parsed.message || "Secure transport error");
+      const error = codedError(parsed.code, parsed.message || "Secure transport error");
       this.pendingSecureError = error;
       this.emit({ type: "secureState", state: secureStateForSecureError(parsed.code) });
       this.emit({ type: "error", error });
@@ -699,9 +777,48 @@ function secureStateForSecureError(code?: string): string {
     case "phone_identity_changed":
     case "invalid_phone_signature":
       return "rePairRequired";
-    default:
+    case "pairing_expired":
+    case "invalid_client_hello":
+    case "invalid_handshake_mode":
+    case "invalid_client_nonce":
+    case "invalid_client_auth":
+    case "invalid_signature":
       return "notPaired";
+    default:
+      return "trustedMac";
   }
+}
+
+function secureStateForHandshakeError(
+  mode: "qr_bootstrap" | "trusted_reconnect",
+  error: unknown
+): string {
+  if (mode === "qr_bootstrap") {
+    return "notPaired";
+  }
+  const code = errorCode(error);
+  return code ? secureStateForSecureError(code) : "trustedMac";
+}
+
+function codedError(code: string | undefined, message: string): CodedError {
+  const error = new Error(message) as CodedError;
+  if (code) {
+    error.code = code;
+  }
+  return error;
+}
+
+function errorCode(error: unknown): string | undefined {
+  const value = (error || {}) as { code?: unknown };
+  return typeof value.code === "string" && value.code.trim() ? value.code.trim() : undefined;
+}
+
+function staleEnvelopeForSession(envelope: SecureEnvelope, session: SecureSession): boolean {
+  return envelope.sessionId !== session.sessionId
+    || envelope.keyEpoch !== session.keyEpoch
+    || envelope.sender !== "mac"
+    || !Number.isInteger(envelope.counter)
+    || envelope.counter <= session.lastInboundCounter;
 }
 
 function asObject(value: JSONValue | undefined): JSONObject {

@@ -509,6 +509,68 @@ test("desktop IPC follower falls back to bridge runtime when no desktop owner ca
   assert.equal(fallback[0].method, "turn/start");
 });
 
+test("desktop IPC follower falls back to bridge runtime when desktop owner times out", async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "remodex-ipc-turn-timeout-"));
+  const socketPath = path.join(tempDir, "ipc.sock");
+  let serverSocket = null;
+
+  const server = net.createServer((socket) => {
+    serverSocket = socket;
+    attachFrameReader(socket, (frame) => {
+      if (frame.method === "initialize") {
+        writeFrame(socket, {
+          type: "response",
+          requestId: frame.requestId,
+          resultType: "success",
+          method: "initialize",
+          handledByClientId: "desktop",
+          result: { clientId: "remodex-test" },
+        });
+      }
+    });
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  t.after(() => {
+    server.close();
+    serverSocket?.destroy();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  const fallback = [];
+  const outbound = [];
+  const follower = createDesktopIpcActionFollower({
+    socketPath,
+    sendApplicationResponse(message) {
+      outbound.push(JSON.parse(message));
+    },
+    sendRuntimeFallback(message) {
+      fallback.push(JSON.parse(message));
+    },
+    requestTimeoutMs: 50,
+  });
+  t.after(() => follower.stopAll());
+
+  follower.observeInbound(JSON.stringify({
+    method: "thread/resume",
+    params: { threadId: "thread-timeout" },
+  }));
+  await waitFor(() => serverSocket);
+
+  assert.equal(follower.observeInbound(JSON.stringify({
+    id: "turn-start-timeout",
+    method: "turn/start",
+    params: {
+      threadId: "thread-timeout",
+      input: [{ type: "text", text: "hello" }],
+    },
+  })), true);
+
+  await waitFor(() => fallback.length === 1, 1_000);
+  assert.equal(fallback[0].id, "turn-start-timeout");
+  assert.equal(fallback[0].method, "turn/start");
+  assert.deepEqual(outbound, []);
+});
+
 test("applies desktop IPC snapshots and Immer-style request patches", () => {
   const snapshot = applyConversationStateChange(null, {
     type: "snapshot",
@@ -641,6 +703,112 @@ test("desktop IPC follower projects first add patch-only action updates without 
   assert.equal(baselineReads, 0);
   assert.equal(outbound[0].id, "req-patch");
   assert.equal(outbound[0].method, "item/tool/requestUserInput");
+});
+
+test("desktop IPC follower mirrors stream activity as thread status notifications", async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "remodex-ipc-run-status-"));
+  const socketPath = path.join(tempDir, "ipc.sock");
+  let serverSocket = null;
+
+  const server = net.createServer((socket) => {
+    serverSocket = socket;
+    attachFrameReader(socket, (frame) => {
+      if (frame.method === "initialize") {
+        writeFrame(socket, {
+          type: "response",
+          requestId: frame.requestId,
+          resultType: "success",
+          method: "initialize",
+          handledByClientId: "desktop",
+          result: { clientId: "remodex-test" },
+        });
+      }
+    });
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  t.after(() => {
+    server.close();
+    serverSocket?.destroy();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  const outbound = [];
+  const follower = createDesktopIpcActionFollower({
+    socketPath,
+    sendApplicationResponse(message) {
+      outbound.push(JSON.parse(message));
+    },
+    requestTimeoutMs: 500,
+  });
+  t.after(() => follower.stopAll());
+
+  follower.observeInbound(JSON.stringify({
+    method: "thread/read",
+    params: { threadId: "thread-run" },
+  }));
+  await waitFor(() => serverSocket);
+
+  writeFrame(serverSocket, {
+    type: "broadcast",
+    method: "thread-stream-state-changed",
+    sourceClientId: "desktop",
+    version: 5,
+    params: {
+      conversationId: "thread-run",
+      change: {
+        type: "snapshot",
+        conversationState: {
+          turns: [{
+            id: "turn-run",
+            status: "inProgress",
+          }],
+          requests: [],
+        },
+      },
+    },
+  });
+
+  await waitFor(() => outbound.some((message) => message.params?.status === "active"));
+  assert.deepEqual(outbound.find((message) => message.params?.status === "active"), {
+    method: "thread/status/changed",
+    params: {
+      threadId: "thread-run",
+      thread_id: "thread-run",
+      status: "active",
+      turnId: "turn-run",
+      turn_id: "turn-run",
+    },
+  });
+
+  writeFrame(serverSocket, {
+    type: "broadcast",
+    method: "thread-stream-state-changed",
+    sourceClientId: "desktop",
+    version: 6,
+    params: {
+      conversationId: "thread-run",
+      change: {
+        type: "patches",
+        patches: [{
+          op: "replace",
+          path: ["turns", 0, "status"],
+          value: "completed",
+        }],
+      },
+    },
+  });
+
+  await waitFor(() => outbound.some((message) => message.params?.status === "idle"));
+  assert.deepEqual(outbound.find((message) => message.params?.status === "idle"), {
+    method: "thread/status/changed",
+    params: {
+      threadId: "thread-run",
+      thread_id: "thread-run",
+      status: "idle",
+      turnId: "turn-run",
+      turn_id: "turn-run",
+    },
+  });
 });
 
 test("desktop IPC follower uses baseline recovery for patch-only updates that need existing state", async (t) => {

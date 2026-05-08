@@ -339,7 +339,7 @@ struct AssistantRevertStateCacheEntry {
 
 enum RemodexBridgeCompatibility {
     static let supportedBridgeVersionInfoKey = "RemodexSupportedBridgeVersion"
-    static let fallbackAdaptedBridgePackageVersion = "1.5.0"
+    static let fallbackAdaptedBridgePackageVersion = "1.5.1"
 
     static var adaptedBridgePackageVersion: String {
         guard let configuredVersion = Bundle.main.object(

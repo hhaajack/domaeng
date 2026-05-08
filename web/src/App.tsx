@@ -39,6 +39,7 @@ import type {
   CodexRateLimitBucket,
   CodexRateLimitDisplayRow,
   CodexThread,
+  ImageAttachment,
   InAppNotification,
   ModelOption,
   ThreadRunState,
@@ -59,20 +60,31 @@ const EMPTY_DRAFTS: string[] = [];
 export function App() {
   const hydrate = useRemodexStore((state) => state.hydrate);
   const connectionStatus = useRemodexStore((state) => state.connectionStatus);
+  const secureState = useRemodexStore((state) => state.secureState);
+  const previewMode = localPreviewModeEnabled();
+  const hasWorkspaceState = useRemodexStore((state) => state.threads.length > 0 || Boolean(state.activeThreadId));
+  const showWorkspace = previewMode
+    || connectionStatus === "connected"
+    || (secureState === "reconnecting" && hasWorkspaceState);
 
   useEffect(() => {
+    if (previewMode) {
+      seedPreviewWorkspace();
+      return;
+    }
+
     const canonicalURL = canonicalTailscaleWebAppURL(window.location.href);
     if (canonicalURL) {
       window.location.replace(canonicalURL);
       return;
     }
     void hydrate();
-  }, [hydrate]);
+  }, [hydrate, previewMode]);
 
   return (
     <ErrorBoundary>
       <main className="app-shell">
-        {connectionStatus === "connected" ? <Workspace /> : <PairingScreen />}
+        {showWorkspace ? <Workspace /> : <PairingScreen />}
       </main>
     </ErrorBoundary>
   );
@@ -129,6 +141,7 @@ function PairingScreen() {
   const scannerOpen = useRemodexStore((state) => state.scannerOpen);
   const setScannerOpen = useRemodexStore((state) => state.setScannerOpen);
   const relayEntries = relayEntryOptionsFromCurrentLocation();
+  const previewAvailable = localPreviewModeAvailable();
 
   async function run(action: () => Promise<void>) {
     setLocalError("");
@@ -182,7 +195,10 @@ function PairingScreen() {
               onClick={() => chooseRelayEntry(entry.mode)}
             >
               {entry.mode === "tailscale" ? <ShieldCheck size={18} /> : <GitBranch size={18} />}
-              {entry.label}
+              <span className="relay-entry-text">
+                <strong>{entry.label}</strong>
+                <small>{entry.relayURL || "Unavailable"}</small>
+              </span>
             </button>
           ))}
         </div>
@@ -224,6 +240,11 @@ function PairingScreen() {
         <button disabled={busy || !pairingCode.trim()} onClick={() => run(connectCode)}>
           Connect code
         </button>
+        {previewAvailable ? (
+          <button className="preview-link" disabled={busy} onClick={openPreviewWorkspace}>
+            <ListChecks size={18} /> Preview workspace
+          </button>
+        ) : null}
 
         {localError || lastError ? <p className="error-text">{localError || lastError}</p> : null}
       </div>
@@ -234,6 +255,186 @@ function PairingScreen() {
       }} /> : null}
     </section>
   );
+}
+
+const PREVIEW_THREAD_ID = "preview-web-ui-polish";
+const PREVIEW_ROOT = "/Users/clawbot/Downloads/Tools/remodex-android-port";
+
+function localPreviewModeEnabled(): boolean {
+  if (!localPreviewModeAvailable()) {
+    return false;
+  }
+
+  try {
+    return new URL(window.location.href).searchParams.get("preview") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function localPreviewModeAvailable(): boolean {
+  return Boolean(import.meta.env.DEV && typeof window !== "undefined");
+}
+
+function openPreviewWorkspace() {
+  const url = new URL(window.location.href);
+  url.searchParams.set("preview", "1");
+  window.location.assign(url.toString());
+}
+
+function seedPreviewWorkspace() {
+  const now = Date.now();
+  useRemodexStore.setState({
+    connectionStatus: "connected",
+    secureState: "encrypted",
+    lastError: undefined,
+    threads: [
+      {
+        id: PREVIEW_THREAD_ID,
+        title: "Web UI polish pass",
+        cwd: PREVIEW_ROOT,
+        status: "ready",
+        updatedAt: now
+      },
+      {
+        id: "preview-bridge-recovery",
+        title: "Bridge pairing recovery",
+        cwd: PREVIEW_ROOT,
+        status: "running",
+        updatedAt: now - 38 * 60 * 1000
+      },
+      {
+        id: "preview-release-notes",
+        title: "Local relay release notes",
+        cwd: `${PREVIEW_ROOT}/phodex-bridge`,
+        status: "ready",
+        updatedAt: now - 4 * 60 * 60 * 1000
+      }
+    ],
+    activeThreadId: PREVIEW_THREAD_ID,
+    locallyStartedThreadIds: {},
+    messagesByThread: {
+      [PREVIEW_THREAD_ID]: [
+        {
+          id: "preview-user-1",
+          role: "user",
+          kind: "chat",
+          threadId: PREVIEW_THREAD_ID,
+          text: "帮我检查一下本地 bridge 的连接状态，并总结下一步。",
+          createdAt: now - 7 * 60 * 1000
+        },
+        {
+          id: "preview-reasoning-1",
+          role: "reasoning",
+          kind: "reasoning",
+          threadId: PREVIEW_THREAD_ID,
+          text: "Inspecting the local runtime state, recent thread activity, and current workspace context.",
+          createdAt: now - 6 * 60 * 1000
+        },
+        {
+          id: "preview-assistant-1",
+          role: "assistant",
+          kind: "chat",
+          threadId: PREVIEW_THREAD_ID,
+          text: "Bridge is paired over Local LAN. The active thread is scoped to `remodex-android-port`, and no hosted relay is configured.\n\nNext steps:\n\n- Keep the local daemon running.\n- Use the composer to start a new turn.\n- Open Settings when you need to change runtime preferences.",
+          createdAt: now - 5 * 60 * 1000
+        },
+        {
+          id: "preview-tool-1",
+          role: "tool",
+          kind: "command",
+          threadId: PREVIEW_THREAD_ID,
+          text: "npm run build\n\n✓ built in 1.34s",
+          createdAt: now - 4 * 60 * 1000
+        }
+      ]
+    },
+    runningTurnByThread: {
+      "preview-bridge-recovery": "preview-turn"
+    },
+    threadRunStateByThread: {
+      [PREVIEW_THREAD_ID]: "ready",
+      "preview-release-notes": "ready"
+    },
+    pendingApprovals: [],
+    inAppNotifications: [],
+    contextWindowUsageByThread: {
+      [PREVIEW_THREAD_ID]: {
+        tokensUsed: 72400,
+        tokenLimit: 200000
+      }
+    },
+    contextWindowUsageLoadedAtByThread: {
+      [PREVIEW_THREAD_ID]: now
+    },
+    contextWindowUsageErrorByThread: {},
+    isLoadingContextWindowUsageByThread: {},
+    rateLimitBuckets: [
+      {
+        limitId: "preview-primary",
+        limitName: "Primary",
+        primary: {
+          usedPercent: 42,
+          windowDurationMins: 60,
+          resetsAt: now + 26 * 60 * 1000
+        }
+      },
+      {
+        limitId: "preview-weekly",
+        limitName: "Weekly",
+        primary: {
+          usedPercent: 18,
+          windowDurationMins: 7 * 24 * 60,
+          resetsAt: now + 3 * 24 * 60 * 60 * 1000
+        }
+      }
+    ],
+    rateLimitsError: undefined,
+    rateLimitsLoadedAt: now,
+    isLoadingRateLimits: false,
+    availableModels: [
+      {
+        id: "local-default",
+        model: "local-default",
+        displayName: "Local default",
+        supportedReasoningEfforts: [
+          { id: "low", reasoningEffort: "low", title: "Low" },
+          { id: "medium", reasoningEffort: "medium", title: "Medium" },
+          { id: "high", reasoningEffort: "high", title: "High" }
+        ]
+      }
+    ],
+    modelsError: undefined,
+    runtimeSettings: {
+      accessMode: "onRequest",
+      autoReview: true,
+      gitToolbarEnabled: false,
+      model: "local-default",
+      planMode: false,
+      reasoningEffort: "medium"
+    },
+    composerText: "",
+    attachments: [],
+    queuedDraftsByThread: {
+      [PREVIEW_THREAD_ID]: [
+        "Polish mobile spacing",
+        "Check relay reconnect copy"
+      ]
+    },
+    gitStatus: {
+      cwd: PREVIEW_ROOT,
+      repoRoot: PREVIEW_ROOT,
+      branch: "local-preview",
+      dirty: true,
+      files: [
+        { path: "web/src/styles.css", status: "modified" }
+      ]
+    },
+    webPushStatus: "disabled",
+    webPushError: undefined,
+    settingsOpen: false,
+    scannerOpen: false
+  });
 }
 
 function Workspace() {
@@ -1000,7 +1201,7 @@ function TimelineRow({ message }: { message: TimelineMessage }) {
       {message.attachments?.length ? (
         <div className="attachment-strip">
           {message.attachments.map((attachment) => (
-            <img key={attachment.id} src={`data:image/jpeg;base64,${attachment.thumbnailBase64JPEG}`} alt="" />
+            <AttachmentPreview key={attachment.id} attachment={attachment} />
           ))}
         </div>
       ) : null}
@@ -1009,6 +1210,16 @@ function TimelineRow({ message }: { message: TimelineMessage }) {
       </div>
     </article>
   );
+}
+
+function AttachmentPreview({ attachment }: { attachment: ImageAttachment }) {
+  const src = attachment.thumbnailBase64JPEG
+    ? `data:image/jpeg;base64,${attachment.thumbnailBase64JPEG}`
+    : attachment.payloadDataURL || attachment.sourceURL || "";
+  if (!src || src === "remodex://history-image-elided") {
+    return <span className="attachment-elided">Image</span>;
+  }
+  return <img src={src} alt="" />;
 }
 
 function ApprovalStack() {
@@ -1134,6 +1345,7 @@ function objectValue(value: unknown): Record<string, unknown> {
 
 function Composer() {
   const activeThreadId = useRemodexStore((state) => state.activeThreadId);
+  const previewMode = localPreviewModeEnabled();
   const text = useRemodexStore((state) => state.composerText);
   const setText = useRemodexStore((state) => state.setComposerText);
   const attachments = useRemodexStore((state) => state.attachments);
@@ -1214,12 +1426,17 @@ function Composer() {
 
   return (
     <footer className="composer">
-      {lastError ? <p className="composer-error">{lastError}</p> : null}
+      {lastError && !previewMode ? <p className="composer-error">{lastError}</p> : null}
       <div className="composer-glass">
         {queuedDrafts.length ? (
           <div className="queued-drafts">
             {queuedDrafts.map((draft, index) => (
-              <button key={`${draft}-${index}`} onClick={() => activeThreadId && void sendQueuedDraft(activeThreadId, index)}>
+              <button
+                key={`${draft}-${index}`}
+                onClick={() => activeThreadId && (previewMode
+                  ? sendPreviewQueuedDraft(activeThreadId, index)
+                  : void sendQueuedDraft(activeThreadId, index))}
+              >
                 {draft}
               </button>
             ))}
@@ -1243,7 +1460,7 @@ function Composer() {
           onKeyDown={(event) => {
             if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
               event.preventDefault();
-              void sendComposer();
+              previewMode ? sendPreviewComposer() : void sendComposer();
             }
           }}
         />
@@ -1364,12 +1581,76 @@ function Composer() {
           {running ? (
             <button className="danger icon-button" title="Stop" aria-label="Stop" onClick={() => void stopActiveTurn()}><Pause size={18} /></button>
           ) : (
-            <button className="primary icon-button send-button" title="Send" aria-label="Send" onClick={() => void sendComposer()}><Send size={18} /></button>
+            <button className="primary icon-button send-button" title="Send" aria-label="Send" onClick={() => previewMode ? sendPreviewComposer() : void sendComposer()}><Send size={18} /></button>
           )}
         </div>
       </div>
     </footer>
   );
+}
+
+function sendPreviewComposer() {
+  const state = useRemodexStore.getState();
+  const activeThreadId = state.activeThreadId;
+  const text = state.composerText.trim();
+  if (!activeThreadId || (!text && state.attachments.length === 0)) {
+    return;
+  }
+  appendPreviewExchange(activeThreadId, text || "Preview attachment", {
+    composerText: "",
+    attachments: []
+  });
+}
+
+function sendPreviewQueuedDraft(threadId: string, index: number) {
+  const draft = useRemodexStore.getState().queuedDraftsByThread[threadId]?.[index];
+  if (!draft) {
+    return;
+  }
+  appendPreviewExchange(threadId, draft, {
+    queuedDraftsByThread: {
+      ...useRemodexStore.getState().queuedDraftsByThread,
+      [threadId]: (useRemodexStore.getState().queuedDraftsByThread[threadId] ?? []).filter((_, entryIndex) => entryIndex !== index)
+    }
+  });
+}
+
+function appendPreviewExchange(threadId: string, text: string, patch: Partial<ReturnType<typeof useRemodexStore.getState>>) {
+  const now = Date.now();
+  useRemodexStore.setState((state) => ({
+    ...patch,
+    lastError: undefined,
+    messagesByThread: {
+      ...state.messagesByThread,
+      [threadId]: [
+        ...(state.messagesByThread[threadId] ?? []),
+        {
+          id: previewId("user"),
+          role: "user",
+          kind: "chat",
+          threadId,
+          text,
+          createdAt: now
+        },
+        {
+          id: previewId("assistant"),
+          role: "assistant",
+          kind: "chat",
+          threadId,
+          text: "Preview response. This mode is local-only and does not contact the bridge.",
+          createdAt: now + 1
+        }
+      ]
+    },
+    threadRunStateByThread: {
+      ...state.threadRunStateByThread,
+      [threadId]: "ready"
+    }
+  }));
+}
+
+function previewId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function pastedImageFiles(data: DataTransfer): File[] {
@@ -1462,8 +1743,12 @@ function SettingsSheet({ onClose }: { onClose: () => void }) {
           )}
         </label>
         <label className="field">
-          <span>Service tier</span>
-          <input value={runtimeSettings.serviceTier ?? ""} onChange={(event) => void setRuntimeSettings({ serviceTier: event.target.value || undefined })} />
+          <span>Service tier (optional)</span>
+          <input
+            value={runtimeSettings.serviceTier ?? ""}
+            onChange={(event) => void setRuntimeSettings({ serviceTier: event.target.value || undefined })}
+            placeholder="fast"
+          />
         </label>
         <label className="toggle-row">
           <input

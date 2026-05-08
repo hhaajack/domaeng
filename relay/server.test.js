@@ -672,6 +672,27 @@ test("websocket relay forwards between mac and iphone on the base relay path", a
   });
 });
 
+test("websocket relay accepts browser-safe mobile role query parameter", async () => {
+  await withServer(async ({ port }) => {
+    const mac = new WebSocket(`ws://127.0.0.1:${port}/relay/session-browser-role`, {
+      headers: { "x-role": "mac" },
+    });
+    const browserClient = new WebSocket(`ws://127.0.0.1:${port}/relay/session-browser-role?role=iphone`);
+
+    await Promise.all([onceOpen(mac), onceOpen(browserClient)]);
+
+    const receivedByMac = onceMessage(mac);
+    browserClient.send(JSON.stringify({ browserRole: true }));
+    assert.equal(await receivedByMac, "{\"browserRole\":true}");
+
+    const macClosed = onceClosed(mac);
+    const browserClientClosed = onceClosed(browserClient);
+    mac.close();
+    browserClient.close();
+    await Promise.all([macClosed, browserClientClosed]);
+  });
+});
+
 test("websocket relay forwards between mac and android on the base relay path", async () => {
   await withServer(async ({ port }) => {
     const mac = new WebSocket(`ws://127.0.0.1:${port}/relay/session-android-1`, {

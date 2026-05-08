@@ -1,11 +1,39 @@
 import { describe, expect, it } from "vitest";
+import type { JSONObject, JSONValue, RPCMessage, RuntimeSettings } from "../types";
 import { RPCError } from "./jsonRpc";
 import { isThreadNotFoundError, RemodexClient } from "./remodexClient";
 
 type UnsafeRemodexClient = {
   waitForControl(kind: string, timeoutMs?: number): Promise<string>;
   bufferControl(kind: string, rawText: string): void;
+  handleWireText(rawText: string): Promise<void>;
+  on(listener: (event: { type: string }) => void): () => void;
 };
+
+type CapturedRequest = {
+  method: string;
+  params?: JSONValue;
+};
+
+const defaultSettings: RuntimeSettings = {
+  accessMode: "onRequest",
+  autoReview: false,
+  gitToolbarEnabled: false,
+  planMode: false
+};
+
+function createRequestCapturingClient(): {
+  client: RemodexClient;
+  captured: CapturedRequest[];
+} {
+  const client = new RemodexClient();
+  const captured: CapturedRequest[] = [];
+  client.request = async (method: string, params?: JSONValue): Promise<RPCMessage> => {
+    captured.push({ method, params });
+    return { result: {} };
+  };
+  return { client, captured };
+}
 
 describe("isThreadNotFoundError", () => {
   it("detects app-server thread not found failures", () => {
@@ -43,5 +71,59 @@ describe("RemodexClient secure control waits", () => {
     await expect(client.waitForControl("serverHello", 5)).rejects.toThrow(
       "Secure handshake timed out waiting for serverHello."
     );
+  });
+});
+
+describe("RemodexClient secure relay boundary", () => {
+  it("ignores plaintext JSON-RPC messages received from the relay", async () => {
+    const client = new RemodexClient() as unknown as UnsafeRemodexClient;
+    const events: string[] = [];
+    client.on((event) => {
+      events.push(event.type);
+    });
+
+    await client.handleWireText(JSON.stringify({
+      jsonrpc: "2.0",
+      method: "thread/list",
+      id: 1
+    }));
+
+    expect(events).not.toContain("rpc");
+    expect(events).not.toContain("serverRequest");
+    expect(events).not.toContain("notification");
+  });
+});
+
+describe("RemodexClient approval reviewer params", () => {
+  it("sends guardian approvals when auto review is enabled", async () => {
+    const { client, captured } = createRequestCapturingClient();
+
+    await client.startTurn({
+      threadId: "thread-1",
+      text: "hello",
+      attachments: [],
+      settings: { ...defaultSettings, autoReview: true }
+    });
+
+    expect(captured[0]?.method).toBe("turn/start");
+    const params = captured[0]?.params as JSONObject;
+    expect(params.approvalsReviewer).toBe("guardian_subagent");
+    expect(params.approvals_reviewer).toBe("guardian_subagent");
+  });
+
+  it("sends user approvals when auto review is disabled", async () => {
+    const { client, captured } = createRequestCapturingClient();
+
+    await client.startTurn({
+      threadId: "thread-1",
+      text: "hello",
+      attachments: [],
+      settings: { ...defaultSettings, autoReview: false }
+    });
+
+    expect(captured[0]?.method).toBe("turn/start");
+    const params = captured[0]?.params as JSONObject;
+    expect(params.approvalsReviewer).toBe("user");
+    expect(params.approvals_reviewer).toBe("user");
   });
 });

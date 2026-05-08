@@ -25,6 +25,10 @@ const ACTION_METHODS = new Set([
   "item/permissions/requestApproval",
   "item/tool/requestUserInput",
 ]);
+const RUNNING_STATUS_TOKENS = new Set(["active", "running", "processing", "inprogress", "started", "pending", "streaming"]);
+const READY_STATUS_TOKENS = new Set(["idle", "notloaded", "completed", "complete", "done", "finished", "succeeded", "success"]);
+const FAILED_STATUS_TOKENS = new Set(["failed", "failure", "error", "errored"]);
+const RUNNING_BOOLEAN_KEYS = new Set(["active", "running", "isrunning", "isactive", "streaming", "isstreaming", "inprogress"]);
 const REPLY_METHOD_BY_ACTION_METHOD = new Map([
   ["item/commandExecution/requestApproval", "thread-follower-command-approval-decision"],
   ["item/fileChange/requestApproval", "thread-follower-file-approval-decision"],
@@ -77,6 +81,7 @@ function createDesktopIpcActionFollower({
   const recoveringThreadIds = new Set();
   const queuedChangesByThreadId = new Map();
   const desktopOwnerClientIdsByThreadId = new Map();
+  const runStateByThreadId = new Map();
 
   function observeInbound(rawMessage) {
     const message = safeParseJSON(rawMessage);
@@ -114,6 +119,7 @@ function createDesktopIpcActionFollower({
     recoveringThreadIds.clear();
     queuedChangesByThreadId.clear();
     desktopOwnerClientIdsByThreadId.clear();
+    runStateByThreadId.clear();
     ipc.close();
   }
 
@@ -147,6 +153,7 @@ function createDesktopIpcActionFollower({
         const speculativeActions = projectPendingDesktopActions(threadId, speculativeState);
         if (speculativeActions.length > 0) {
           rawStatesByThreadId.set(threadId, speculativeState);
+          syncThreadRunStatus(threadId, null, speculativeState, params.change);
           syncProjectedActions(threadId, speculativeActions);
           return;
         }
@@ -162,6 +169,7 @@ function createDesktopIpcActionFollower({
     }
 
     rawStatesByThreadId.set(threadId, nextState);
+    syncThreadRunStatus(threadId, previousState, nextState, params.change);
     syncProjectedActions(threadId, projectPendingDesktopActions(threadId, nextState));
   }
 
@@ -171,6 +179,50 @@ function createDesktopIpcActionFollower({
     recoveringThreadIds.clear();
     queuedChangesByThreadId.clear();
     desktopOwnerClientIdsByThreadId.clear();
+    runStateByThreadId.clear();
+  }
+
+  function syncThreadRunStatus(threadId, previousState, nextState, change) {
+    const previous = runStateByThreadId.get(threadId) || { active: false, turnId: "" };
+    const inferred = inferThreadRunStatus(previousState, nextState, change);
+    if (!inferred) {
+      return;
+    }
+
+    if (inferred.active) {
+      const turnId = inferred.turnId || previous.turnId || "";
+      runStateByThreadId.set(threadId, { active: true, turnId });
+      if (!previous.active || (turnId && turnId !== previous.turnId)) {
+        sendApplicationResponse(JSON.stringify({
+          method: "thread/status/changed",
+          params: {
+            threadId,
+            thread_id: threadId,
+            status: "active",
+            turnId,
+            turn_id: turnId,
+          },
+        }));
+      }
+      return;
+    }
+
+    if (!previous.active) {
+      runStateByThreadId.set(threadId, { active: false, turnId: "" });
+      return;
+    }
+
+    runStateByThreadId.set(threadId, { active: false, turnId: "" });
+    sendApplicationResponse(JSON.stringify({
+      method: "thread/status/changed",
+      params: {
+        threadId,
+        thread_id: threadId,
+        status: inferred.failed ? "failed" : "idle",
+        turnId: inferred.turnId || previous.turnId || "",
+        turn_id: inferred.turnId || previous.turnId || "",
+      },
+    }));
   }
 
   function syncProjectedActions(threadId, actions) {
@@ -679,6 +731,7 @@ function shouldFallbackToBridgeRuntime(error) {
   return message.includes("no-client-found")
     || message.includes("client-not-found")
     || message.includes("client-cannot-handle-request")
+    || message.includes("desktop ipc request timed out")
     || message.includes("desktop ipc is not connected")
     || message.includes("enoent")
     || message.includes("econnrefused")
@@ -719,6 +772,167 @@ function projectPendingDesktopAction(threadId, request) {
       threadId: readString(params.threadId) || readString(params.thread_id) || threadId,
     },
   };
+}
+
+function inferThreadRunStatus(previousState, nextState, change) {
+  const changeStatus = inferRunStatusFromChange(change);
+  if (changeStatus) {
+    return changeStatus;
+  }
+
+  const stateStatus = inferRunStatusFromConversationState(nextState);
+  if (stateStatus) {
+    return stateStatus;
+  }
+
+  if (isPatchChange(change) && previousState) {
+    return {
+      active: true,
+      turnId: latestTurnId(nextState) || latestTurnId(previousState) || "",
+    };
+  }
+
+  return null;
+}
+
+function inferRunStatusFromChange(change) {
+  if (!change || typeof change !== "object") {
+    return null;
+  }
+
+  if (change.type === "snapshot" || change.type === "Snapshot") {
+    return inferRunStatusFromConversationState(change.conversationState || change.conversation_state);
+  }
+
+  if (!isPatchChange(change)) {
+    return null;
+  }
+
+  let sawActivityPatch = false;
+  const patches = Array.isArray(change.patches) ? change.patches : [];
+  for (const patch of patches) {
+    const path = Array.isArray(patch?.path) ? patch.path : [];
+    const key = normalizeKey(path.at(-1));
+    const status = runStatusFromValue(key, patch?.value);
+    if (status) {
+      return status;
+    }
+    if (path.some((part) => normalizeKey(part) === "requests")) {
+      continue;
+    }
+    if (patch?.op !== "remove") {
+      sawActivityPatch = true;
+    }
+  }
+
+  return sawActivityPatch ? { active: true, turnId: "" } : null;
+}
+
+function inferRunStatusFromConversationState(state) {
+  if (!state || typeof state !== "object" || Array.isArray(state)) {
+    return null;
+  }
+
+  const direct = directRunStatusFromObject(state);
+  if (direct) {
+    return {
+      ...direct,
+      turnId: direct.turnId || latestTurnId(state) || "",
+    };
+  }
+
+  const turns = Array.isArray(state.turns) ? state.turns : [];
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index];
+    if (!turn || typeof turn !== "object" || Array.isArray(turn)) {
+      continue;
+    }
+    const turnStatus = directRunStatusFromObject(turn);
+    if (turnStatus) {
+      return {
+        ...turnStatus,
+        turnId: turnStatus.turnId || readString(turn.id) || readString(turn.turnId) || readString(turn.turn_id) || "",
+      };
+    }
+  }
+
+  return null;
+}
+
+function directRunStatusFromObject(object) {
+  const turnId = readString(object.turnId)
+    || readString(object.turn_id)
+    || readString(object.activeTurnId)
+    || readString(object.active_turn_id)
+    || readString(object.currentTurnId)
+    || readString(object.current_turn_id)
+    || readString(object.id)
+    || "";
+
+  for (const [key, value] of Object.entries(object)) {
+    const normalizedKey = normalizeKey(key);
+    const status = runStatusFromValue(normalizedKey, value);
+    if (status) {
+      return {
+        ...status,
+        turnId: status.turnId || turnId,
+      };
+    }
+  }
+
+  return null;
+}
+
+function runStatusFromValue(key, value) {
+  if (typeof value === "boolean" && RUNNING_BOOLEAN_KEYS.has(key)) {
+    return { active: value };
+  }
+
+  const token = normalizeStatusToken(value);
+  if (!token) {
+    return null;
+  }
+  if (RUNNING_STATUS_TOKENS.has(token)) {
+    return { active: true };
+  }
+  if (FAILED_STATUS_TOKENS.has(token)) {
+    return { active: false, failed: true };
+  }
+  if (READY_STATUS_TOKENS.has(token)) {
+    return { active: false, failed: false };
+  }
+  return null;
+}
+
+function latestTurnId(state) {
+  const direct = readString(state?.turnId)
+    || readString(state?.turn_id)
+    || readString(state?.activeTurnId)
+    || readString(state?.active_turn_id)
+    || readString(state?.currentTurnId)
+    || readString(state?.current_turn_id);
+  if (direct) {
+    return direct;
+  }
+
+  const turns = Array.isArray(state?.turns) ? state.turns : [];
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index];
+    const turnId = readString(turn?.id) || readString(turn?.turnId) || readString(turn?.turn_id);
+    if (turnId) {
+      return turnId;
+    }
+  }
+  return "";
+}
+
+function normalizeKey(value) {
+  return String(value ?? "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
+function normalizeStatusToken(value) {
+  const stringValue = readString(value);
+  return stringValue ? normalizeKey(stringValue) : "";
 }
 
 function applyConversationStateChange(previousState, change) {

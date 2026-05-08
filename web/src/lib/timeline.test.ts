@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   appendLocalUserMessage,
   applyNotification,
+  decodeThreadRead,
   type TimelineState
 } from "./timeline";
 
@@ -121,5 +122,101 @@ describe("timeline item reconciliation", () => {
     });
 
     expect(next.runningTurnByThread["thread-1"]).toBe("turn-1");
+  });
+
+  it("keeps a local user row when a stale thread read omits it", () => {
+    const initial = appendLocalUserMessage(state(), "thread-1", "web prompt still pending", []);
+    const next = decodeThreadRead(initial, {
+      thread: {
+        id: "thread-1",
+        turns: []
+      }
+    });
+
+    expect(next.messagesByThread["thread-1"]).toHaveLength(1);
+    expect(next.messagesByThread["thread-1"][0]).toMatchObject({
+      role: "user",
+      text: "web prompt still pending"
+    });
+  });
+
+  it("does not duplicate a local user row after the canonical item appears", () => {
+    const initial = appendLocalUserMessage(state(), "thread-1", "web prompt confirmed", []);
+    const createdAt = initial.messagesByThread["thread-1"][0].createdAt;
+    const next = decodeThreadRead(initial, {
+      thread: {
+        id: "thread-1",
+        turns: [{
+          id: "turn-1",
+          createdAt,
+          items: [{
+            id: "user-item-1",
+            type: "user_message",
+            createdAt,
+            content: [{ type: "input_text", text: "web prompt confirmed" }]
+          }]
+        }]
+      }
+    });
+
+    expect(next.messagesByThread["thread-1"]).toHaveLength(1);
+    expect(next.messagesByThread["thread-1"][0]).toMatchObject({
+      role: "user",
+      text: "web prompt confirmed",
+      turnId: "turn-1",
+      itemId: "user-item-1"
+    });
+  });
+
+  it("decodes user image attachments from nested history image_url objects", () => {
+    const next = decodeThreadRead(state(), {
+      thread: {
+        id: "thread-1",
+        turns: [{
+          id: "turn-1",
+          items: [{
+            id: "user-item-1",
+            type: "user_message",
+            content: [{
+              type: "input_image",
+              image_url: {
+                url: "data:image/png;base64,AAAA"
+              }
+            }, {
+              type: "input_text",
+              text: "photo"
+            }]
+          }]
+        }]
+      }
+    });
+
+    expect(next.messagesByThread["thread-1"][0].attachments?.[0]).toMatchObject({
+      thumbnailBase64JPEG: "AAAA",
+      payloadDataURL: "data:image/png;base64,AAAA"
+    });
+  });
+
+  it("keeps an attachment placeholder when relay history elides image data", () => {
+    const next = decodeThreadRead(state(), {
+      thread: {
+        id: "thread-1",
+        turns: [{
+          id: "turn-1",
+          items: [{
+            id: "user-item-1",
+            type: "user_message",
+            content: [{
+              type: "input_image",
+              url: "remodex://history-image-elided"
+            }]
+          }]
+        }]
+      }
+    });
+
+    expect(next.messagesByThread["thread-1"][0].attachments?.[0]).toMatchObject({
+      sourceURL: "remodex://history-image-elided"
+    });
   });
 });

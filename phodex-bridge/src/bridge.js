@@ -17,7 +17,11 @@ const {
 } = require("./codex-desktop-refresher");
 const { CodexDesktopSharedRuntime } = require("./codex-desktop-shared-runtime");
 const { createCodexTransport } = require("./codex-transport");
-const { createThreadRolloutActivityWatcher } = require("./rollout-watch");
+const {
+  createThreadRolloutActivityWatcher,
+  findRecentRolloutFileForContextRead,
+  resolveSessionsRoot,
+} = require("./rollout-watch");
 const { printQR } = require("./qr");
 const { rememberActiveThread } = require("./session-state");
 const { handleDesktopRequest } = require("./desktop-handler");
@@ -32,6 +36,7 @@ const { handleThreadContextRequest } = require("./thread-context-handler");
 const { handleWorkspaceRequest } = require("./workspace-handler");
 const { handleProjectRequest } = require("./project-handler");
 const { handlePetRequest } = require("./pet-handler");
+const { appendThreadNameUpdatedRolloutEvent } = require("./thread-rename-rollout");
 const { createNotificationsHandler } = require("./notifications-handler");
 const { createVoiceHandler, resolveVoiceAuth } = require("./voice-handler");
 const {
@@ -62,6 +67,9 @@ const {
   normalizeVersionString,
 } = require("./ios-app-compatibility");
 const { createShortPairingCode, SHORT_PAIRING_CODE_LENGTH } = require("./qr");
+const {
+  readThreadTurnsListPageFromSessionJsonl,
+} = require("./session-jsonl-history");
 
 const execFileAsync = promisify(execFile);
 const RELAY_WATCHDOG_PING_INTERVAL_MS = 10_000;
@@ -79,6 +87,8 @@ const RELAY_HISTORY_TEXT_TAIL_LIMIT_CHARS = 24_000;
 const RELAY_HISTORY_RECENT_TURN_TARGET = 40;
 const RELAY_TURNS_LIST_TARGET_BUDGET_MS = 5_500;
 const RELAY_TURNS_LIST_BUDGET_RESERVE_MS = 1_000;
+const RELAY_TURNS_LIST_MAX_INITIAL_LIMIT = 5;
+const RELAY_TURNS_LIST_SAFE_RETRY_LIMIT = 5;
 const RELAY_TURNS_LIST_RESULT_KEYS = ["data", "items", "turns"];
 const RELAY_TURNS_LIST_PAGINATION_RESULT_KEYS = [
   "nextCursor",
@@ -183,6 +193,7 @@ function startBridge({
     "account/logout",
   ]);
   const relaySanitizedRequestMethods = new Set([
+    "thread/list",
     "thread/read",
     "thread/resume",
     "thread/turns/list",
@@ -732,7 +743,7 @@ function startBridge({
     );
   }
 
-  // Mirrors accepted local renames back to the phone using the existing push-event shape.
+  // Mirrors accepted local renames back to the phone and desktop-visible rollout history.
   function sendThreadNameUpdatedNotification(result) {
     const threadId = readString(result?.threadId || result?.thread_id);
     const name = readString(result?.name || result?.title);
@@ -749,6 +760,12 @@ function startBridge({
         title: name,
       },
     }));
+
+    try {
+      appendThreadNameUpdatedRolloutEvent({ threadId, name });
+    } catch (error) {
+      console.warn(`[remodex] Failed to mirror thread rename to rollout history: ${error.message}`);
+    }
   }
 
   function refreshDesktopThread({ threadId, targetUrl }) {
@@ -778,11 +795,12 @@ function startBridge({
         const response = await fetchAdaptiveThreadTurnsListForRelay(request, {
           fetchPage: (params) => sendCodexRequest("thread/turns/list", params),
         });
+        const fallbackResponse = maybeBuildJsonlThreadTurnsListFallback(request, response);
         relaySanitizedResponseMethodsById.set(String(request.id), {
           method: "thread/turns/list",
           createdAt: Date.now(),
         });
-        sendApplicationResponse(JSON.stringify(response));
+        sendApplicationResponse(JSON.stringify(fallbackResponse ?? response));
       } catch (error) {
         sendApplicationResponse(createJsonRpcErrorResponse(
           request.id,
@@ -793,6 +811,44 @@ function startBridge({
     })();
 
     return true;
+  }
+
+  function maybeBuildJsonlThreadTurnsListFallback(request, response) {
+    if (!isEmptyTurnsListResponse(response)) {
+      return null;
+    }
+
+    const params = request?.params || {};
+    const threadId = normalizeNonEmptyString(params.threadId)
+      || normalizeNonEmptyString(params.thread_id);
+    if (!threadId || hasRelayCursor(params.cursor)) {
+      return null;
+    }
+
+    try {
+      const rolloutPath = findRecentRolloutFileForContextRead(resolveSessionsRoot(), { threadId });
+      if (!rolloutPath) {
+        return null;
+      }
+      const result = readThreadTurnsListPageFromSessionJsonl(rolloutPath, {
+        threadId,
+        limit: params.limit,
+        maxLimit: 1,
+        cursor: params.cursor,
+      });
+      const turnsKey = findTurnsListResultKey(result);
+      if (!turnsKey || result[turnsKey].length === 0) {
+        return null;
+      }
+
+      return {
+        id: request.id,
+        result,
+      };
+    } catch (error) {
+      console.warn(`[remodex] thread/turns/list jsonl fallback failed: ${error.message}`);
+      return null;
+    }
   }
 
   // ─── Bridge-owned auth snapshot ─────────────────────────────
@@ -953,19 +1009,26 @@ function startBridge({
   // Replaces huge inline desktop-history images with lightweight references before relay encryption.
   function sanitizeRelayBoundCodexMessage(rawMessage) {
     pruneExpiredForwardedRequestMethods();
-    const parsed = safeParseJSON(rawMessage);
+    const normalizedMessage = normalizeRelayBoundJsonRpcMessage(rawMessage, {
+      pendingRequestMethodsById: relaySanitizedResponseMethodsById,
+    });
+    if (!normalizedMessage) {
+      return null;
+    }
+
+    const parsed = safeParseJSON(normalizedMessage);
     const responseId = parsed?.id;
     if (responseId == null) {
-      return sanitizeLiveGeneratedImageMessageForRelay(rawMessage);
+      return sanitizeLiveGeneratedImageMessageForRelay(normalizedMessage);
     }
 
     const trackedRequest = relaySanitizedResponseMethodsById.get(String(responseId));
     if (!trackedRequest) {
-      return rawMessage;
+      return normalizedMessage;
     }
     relaySanitizedResponseMethodsById.delete(String(responseId));
 
-    return sanitizeThreadHistoryImagesForRelay(rawMessage, trackedRequest.method);
+    return sanitizeThreadHistoryImagesForRelay(normalizedMessage, trackedRequest.method);
   }
 
   function updatePendingAuthLoginFromCodexMessage(rawMessage) {
@@ -1308,8 +1371,19 @@ function startBridge({
       return true;
     }
 
-    waiter.resolve(parsed.result ?? null);
+    waiter.resolve(readBridgeManagedSuccessPayload(parsed));
     return true;
+  }
+
+  // Normalizes private app-server responses before the bridge re-wraps them for clients.
+  function readBridgeManagedSuccessPayload(parsed) {
+    if (Object.prototype.hasOwnProperty.call(parsed, "result")) {
+      return parsed.result ?? null;
+    }
+    if (Object.prototype.hasOwnProperty.call(parsed, "payload")) {
+      return parsed.payload ?? null;
+    }
+    return null;
   }
 
   function failBridgeManagedCodexRequests(error) {
@@ -1655,7 +1729,7 @@ async function fetchAdaptiveThreadTurnsListForRelay(request, {
 
   const params = request?.params;
   const requestedLimit = Number.isInteger(params?.limit) && params.limit > 0
-    ? params.limit
+    ? Math.min(params.limit, RELAY_TURNS_LIST_MAX_INITIAL_LIMIT)
     : 1;
   const startedAt = now();
   let nextCursor = params?.cursor;
@@ -1677,17 +1751,24 @@ async function fetchAdaptiveThreadTurnsListForRelay(request, {
       if (response) {
         return response;
       }
-      throw error;
+      return await fetchSafeThreadTurnsListFallback(request, {
+        fetchPage,
+        now,
+        sanitizeForRelay,
+        payloadSoftLimitBytes,
+      });
     }
 
-    const pageResult = page.result;
+    const pageResult = unwrapAppServerPayloadResult(page.result);
     const pageTurnsKey = findTurnsListResultKey(pageResult);
     if (!pageTurnsKey) {
       if (!response) {
-        return {
-          id: request.id,
-          result: pageResult ?? null,
-        };
+        return await fetchSafeThreadTurnsListFallback(request, {
+          fetchPage,
+          now,
+          sanitizeForRelay,
+          payloadSoftLimitBytes,
+        });
       }
       return response;
     }
@@ -1702,10 +1783,21 @@ async function fetchAdaptiveThreadTurnsListForRelay(request, {
 
     const pageTurns = pageResult[pageTurnsKey];
     combinedTurns = combinedTurns.concat(pageTurns);
-    response = {
-      id: request.id,
-      result: buildAdaptiveTurnsListResult(firstResult, lastResult, turnsKey, combinedTurns),
-    };
+    response = buildSafeTurnsListResponse(request.id, firstResult, lastResult, turnsKey, combinedTurns);
+
+    if (measureSanitizedTurnsListResponseBytes(response, sanitizeForRelay) >= payloadSoftLimitBytes) {
+      response = buildLargestSafeTurnsListResponse({
+        requestId: request.id,
+        firstResult,
+        lastResult,
+        turnsKey,
+        turns: combinedTurns,
+        maxTurns: RELAY_TURNS_LIST_SAFE_RETRY_LIMIT,
+        sanitizeForRelay,
+        payloadSoftLimitBytes,
+      }) ?? buildEmptyTurnsListResponse(request);
+      break;
+    }
 
     nextCursor = readTurnsListNextCursor(pageResult);
     if (combinedTurns.length >= requestedLimit || !hasRelayCursor(nextCursor) || pageTurns.length === 0) {
@@ -1730,8 +1822,67 @@ async function fetchAdaptiveThreadTurnsListForRelay(request, {
     id: request.id,
     result: {
       data: [],
+      nextCursor: null,
     },
   };
+}
+
+function buildEmptyTurnsListResponse(request) {
+  return {
+    id: request.id,
+    result: {
+      data: [],
+      nextCursor: null,
+    },
+  };
+}
+
+function isEmptyTurnsListResponse(response) {
+  const turnsKey = findTurnsListResultKey(response?.result);
+  return Boolean(turnsKey) && response.result[turnsKey].length === 0;
+}
+
+async function fetchSafeThreadTurnsListFallback(request, {
+  fetchPage,
+  now,
+  sanitizeForRelay,
+  payloadSoftLimitBytes,
+}) {
+  const params = request?.params;
+  const requestedLimit = Number.isInteger(params?.limit) && params.limit > 0
+    ? params.limit
+    : RELAY_TURNS_LIST_SAFE_RETRY_LIMIT;
+  const safeLimit = Math.min(requestedLimit, RELAY_TURNS_LIST_SAFE_RETRY_LIMIT);
+  const safeParams = buildAdaptiveTurnsListPageParams(params, safeLimit, params?.cursor);
+
+  try {
+    const page = await fetchMeasuredAdaptiveTurnsListPage(fetchPage, safeParams, now);
+    const pageResult = unwrapAppServerPayloadResult(page.result);
+    const turnsKey = findTurnsListResultKey(pageResult);
+    if (!turnsKey) {
+      return buildEmptyTurnsListResponse(request);
+    }
+
+    // If the normal pagination path returns a bad first page, retry once with a small page.
+    // The retry response is intentionally minimal so clients do not decode stale server metadata.
+    const response = buildLargestSafeTurnsListResponse({
+      requestId: request.id,
+      firstResult: pageResult,
+      lastResult: pageResult,
+      turnsKey,
+      turns: pageResult[turnsKey],
+      maxTurns: safeLimit,
+      sanitizeForRelay,
+      payloadSoftLimitBytes,
+    });
+    if (response) {
+      return response;
+    }
+  } catch {
+    // Fall through to a valid empty page: the client can keep the thread open instead of crashing.
+  }
+
+  return buildEmptyTurnsListResponse(request);
 }
 
 async function fetchMeasuredAdaptiveTurnsListPage(fetchPage, params, now) {
@@ -1774,13 +1925,115 @@ function findTurnsListResultKey(result) {
   return RELAY_TURNS_LIST_RESULT_KEYS.find((key) => Array.isArray(result[key])) || null;
 }
 
-function buildAdaptiveTurnsListResult(firstResult, lastResult, turnsKey, turns) {
-  const result = {
-    ...firstResult,
+function buildSafeTurnsListResponse(requestId, firstResult, lastResult, turnsKey, turns) {
+  return {
+    id: requestId,
+    result: buildAdaptiveTurnsListResult(firstResult, lastResult, turnsKey, turns),
   };
-  for (const key of RELAY_TURNS_LIST_RESULT_KEYS) {
-    delete result[key];
+}
+
+// Trims oversized history pages progressively: normal page -> 5 turns -> ... -> 1 turn.
+function buildLargestSafeTurnsListResponse({
+  requestId,
+  firstResult,
+  lastResult,
+  turnsKey,
+  turns,
+  maxTurns,
+  sanitizeForRelay,
+  payloadSoftLimitBytes,
+}) {
+  const sliceLimit = Math.min(turns.length, maxTurns);
+  for (let count = sliceLimit; count > 0; count -= 1) {
+    const response = buildSafeTurnsListResponse(
+      requestId,
+      firstResult,
+      lastResult,
+      turnsKey,
+      turns.slice(0, count)
+    );
+    if (measureSanitizedTurnsListResponseBytes(response, sanitizeForRelay) < payloadSoftLimitBytes) {
+      return response;
+    }
   }
+  return buildEmergencySingleTurnResponse({
+    requestId,
+    lastResult,
+    turnsKey,
+    turn: turns[0],
+    sanitizeForRelay,
+    payloadSoftLimitBytes,
+  });
+}
+
+function buildEmergencySingleTurnResponse({
+  requestId,
+  lastResult,
+  turnsKey,
+  turn,
+  sanitizeForRelay,
+  payloadSoftLimitBytes,
+}) {
+  if (!turn || typeof turn !== "object" || Array.isArray(turn)) {
+    return null;
+  }
+
+  for (const maxItems of [16, 4, 1]) {
+    for (const maxChars of [
+      RELAY_HISTORY_TEXT_TAIL_LIMIT_CHARS,
+      Math.floor(RELAY_HISTORY_TEXT_TAIL_LIMIT_CHARS / 4),
+      1_000,
+      0,
+    ]) {
+      const response = {
+        id: requestId,
+        result: {
+          ...buildAdaptiveTurnsListResult({}, lastResult, turnsKey, [
+            compactEmergencySingleTurnForRelay(turn, maxChars, maxItems),
+          ]),
+          remodexEmergencySingleTurnForRelay: true,
+        },
+      };
+      if (measureSanitizedTurnsListResponseBytes(response, sanitizeForRelay) < payloadSoftLimitBytes) {
+        return response;
+      }
+    }
+  }
+
+  return null;
+}
+
+function compactEmergencySingleTurnForRelay(turn, maxChars, maxItems) {
+  const safeTurn = {};
+  for (const key of [
+    "id",
+    "turnId",
+    "turn_id",
+    "threadId",
+    "thread_id",
+    "createdAt",
+    "created_at",
+    "completedAt",
+    "completed_at",
+    "status",
+    "role",
+    "kind",
+  ]) {
+    const value = turn[key];
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      safeTurn[key] = value;
+    }
+  }
+
+  const items = Array.isArray(turn.items) ? turn.items : [];
+  safeTurn.items = items.slice(-maxItems).map((item) => compactHistoryItemForRelay(item, maxChars));
+  safeTurn.remodexEmergencySingleTurnForRelay = true;
+  safeTurn.remodexPageCompactedForRelay = true;
+  return safeTurn;
+}
+
+function buildAdaptiveTurnsListResult(firstResult, lastResult, turnsKey, turns) {
+  const result = {};
   result[turnsKey] = turns;
 
   for (const key of RELAY_TURNS_LIST_PAGINATION_RESULT_KEYS) {
@@ -1827,6 +2080,108 @@ function measureSanitizedTurnsListResponseBytes(response, sanitizeForRelay) {
   } catch {
     return Number.POSITIVE_INFINITY;
   }
+}
+
+// Keeps app-server responses in the JSON-RPC shape that clients decode.
+function normalizeRelayBoundJsonRpcMessage(rawMessage, {
+  pendingRequestMethodsById = null,
+} = {}) {
+  const parsed = parseBridgeJSON(rawMessage);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+
+  const hasMethod = typeof parsed.method === "string" && parsed.method.length > 0;
+  const hasResponseId = parsed.id !== undefined && parsed.id !== null;
+  const hasResult = Object.prototype.hasOwnProperty.call(parsed, "result");
+  const hasError = Object.prototype.hasOwnProperty.call(parsed, "error");
+  const hasPayload = Object.prototype.hasOwnProperty.call(parsed, "payload");
+  if (hasResponseId && !hasMethod && !hasResult && !hasError && hasPayload) {
+    const { payload, ...rest } = parsed;
+    return JSON.stringify({
+      ...rest,
+      result: payload ?? null,
+    });
+  }
+
+  if (hasResponseId && !hasMethod && hasResult && !hasError) {
+    const unwrappedResult = unwrapAppServerPayloadResult(parsed.result);
+    if (unwrappedResult !== parsed.result) {
+      return JSON.stringify({
+        ...parsed,
+        result: unwrappedResult,
+      });
+    }
+  }
+
+  if (hasMethod && hasResponseId && !isRelayBoundServerRequestMethod(parsed.method)) {
+    const trackedRequest = pendingRequestMethodsById?.get(String(parsed.id));
+    const isTrackedResponse = trackedRequest?.method === parsed.method
+      && (hasResult || hasError || hasPayload);
+    if (isTrackedResponse) {
+      const { method, payload, ...rest } = parsed;
+      if (!hasResult && !hasError && hasPayload) {
+        return JSON.stringify({
+          ...rest,
+          result: payload ?? null,
+        });
+      }
+      if (hasResult && !hasError) {
+        return JSON.stringify({
+          ...rest,
+          result: unwrapAppServerPayloadResult(rest.result),
+        });
+      }
+      return JSON.stringify(rest);
+    }
+
+    return null;
+  }
+
+  if (!hasMethod && !hasResponseId) {
+    return null;
+  }
+
+  return rawMessage;
+}
+
+function unwrapAppServerPayloadResult(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+  if (!Object.prototype.hasOwnProperty.call(value, "payload")) {
+    return value;
+  }
+
+  const payload = value.payload;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return value;
+  }
+
+  const directPayloadKeys = [
+    "data",
+    "items",
+    "threads",
+    "turns",
+    "thread",
+  ];
+  const hasDirectResultPayload = directPayloadKeys.some((key) => (
+    Object.prototype.hasOwnProperty.call(payload, key)
+  ));
+  if (!hasDirectResultPayload) {
+    return value;
+  }
+
+  return {
+    ...value,
+    ...payload,
+  };
+}
+
+function isRelayBoundServerRequestMethod(method) {
+  return method === "item/tool/requestUserInput"
+    || method === "tool/requestUserInput"
+    || method.endsWith("requestApproval");
 }
 
 // Shrinks thread history snapshots/pages for mobile relay delivery.
@@ -1903,8 +2258,11 @@ function sanitizeThreadTurnsListForRelay(rawMessage) {
 
 function sanitizeRelayHistoryTurns(turns, threadId = "") {
   let didSanitize = false;
-  const sanitizedTurns = turns.map((turn) => {
-    const sanitizedTurn = sanitizeRelayHistoryTurn(turn, threadId);
+  const newestTurnIndex = turns.length - 1;
+  const sanitizedTurns = turns.map((turn, index) => {
+    const sanitizedTurn = sanitizeRelayHistoryTurn(turn, threadId, {
+      preserveInlineImages: index === newestTurnIndex,
+    });
     if (sanitizedTurn !== turn) {
       didSanitize = true;
     }
@@ -1914,7 +2272,7 @@ function sanitizeRelayHistoryTurns(turns, threadId = "") {
   return { turns: sanitizedTurns, didSanitize };
 }
 
-function sanitizeRelayHistoryTurn(turn, threadId = "") {
+function sanitizeRelayHistoryTurn(turn, threadId = "", { preserveInlineImages = false } = {}) {
   if (!turn || typeof turn !== "object" || !Array.isArray(turn.items)) {
     return turn;
   }
@@ -1934,7 +2292,7 @@ function sanitizeRelayHistoryTurn(turn, threadId = "") {
       itemDidChange = true;
     }
 
-    if (Array.isArray(sanitizedItem.content)) {
+    if (!preserveInlineImages && Array.isArray(sanitizedItem.content)) {
       const sanitizedContent = sanitizedItem.content.map((contentItem) => {
         const sanitizedEntry = sanitizeInlineHistoryImageContentItem(contentItem);
         if (sanitizedEntry !== contentItem) {
@@ -2655,6 +3013,7 @@ module.exports = {
   createMacOSBridgeWakeAssertion,
   fetchAdaptiveThreadTurnsListForRelay,
   hasRelayConnectionGoneStale,
+  normalizeRelayBoundJsonRpcMessage,
   persistBridgePreferences,
   sanitizeLiveGeneratedImageMessageForRelay,
   sanitizeThreadHistoryImagesForRelay,

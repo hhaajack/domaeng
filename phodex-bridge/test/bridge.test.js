@@ -142,7 +142,7 @@ function makeTurns(start, count) {
   }));
 }
 
-test("fetchAdaptiveThreadTurnsListForRelay expands small turns-list pages to the requested limit", async () => {
+test("fetchAdaptiveThreadTurnsListForRelay expands small turns-list pages up to the safe initial limit", async () => {
   const request = {
     id: "req-turns-list",
     method: "thread/turns/list",
@@ -167,23 +167,22 @@ test("fetchAdaptiveThreadTurnsListForRelay expands small turns-list pages to the
   });
 
   assert.equal(response.id, "req-turns-list");
-  assert.equal(response.result.data.length, 20);
+  assert.equal(response.result.data.length, 5);
   assert.deepEqual(
     response.result.data.map((turn) => turn.id),
-    makeTurns(1, 20).map((turn) => turn.id)
+    makeTurns(1, 5).map((turn) => turn.id)
   );
   assert.equal(
     response.result.data.some((turn) => turn.id.startsWith("remodex-history-compacted-")),
     false
   );
-  assert.equal(response.result.stableMeta, "first-page");
-  assert.equal(response.result.nextCursor, "cursor-after-20");
+  assert.equal(response.result.stableMeta, undefined);
+  assert.equal(response.result.nextCursor, "cursor-after-5");
   assert.deepEqual(
     fetches.map((params) => ({ limit: params.limit, cursor: params.cursor })),
     [
       { limit: 1, cursor: undefined },
       { limit: 4, cursor: "cursor-after-1" },
-      { limit: 15, cursor: "cursor-after-5" },
     ]
   );
 });
@@ -300,14 +299,13 @@ test("fetchAdaptiveThreadTurnsListForRelay forwards input and returned cursors",
     },
   });
 
-  assert.equal(response.result.items.length, 6);
-  assert.equal(response.result.nextCursor, "cursor-after-third");
+  assert.equal(response.result.items.length, 5);
+  assert.equal(response.result.nextCursor, "cursor-after-second");
   assert.deepEqual(
     fetches.map((params) => ({ limit: params.limit, cursor: params.cursor })),
     [
       { limit: 1, cursor: "cursor-before-page" },
       { limit: 4, cursor: "cursor-after-first" },
-      { limit: 1, cursor: "cursor-after-second" },
     ]
   );
 });
@@ -364,7 +362,7 @@ test("fetchAdaptiveThreadTurnsListForRelay returns fetched turns when a later ba
   assert.equal(response.result.nextCursor, "cursor-after-first");
 });
 
-test("sanitizeThreadHistoryImagesForRelay replaces inline history images with lightweight references", () => {
+test("sanitizeThreadHistoryImagesForRelay replaces older inline history images with lightweight references", () => {
   const rawMessage = JSON.stringify({
     id: "req-thread-read",
     result: {
@@ -390,6 +388,21 @@ test("sanitizeThreadHistoryImagesForRelay replaces inline history images with li
               },
             ],
           },
+          {
+            id: "turn-2",
+            items: [
+              {
+                id: "item-latest",
+                type: "user_message",
+                content: [
+                  {
+                    type: "image",
+                    image_url: "data:image/png;base64,LATEST",
+                  },
+                ],
+              },
+            ],
+          },
         ],
       },
     },
@@ -408,9 +421,13 @@ test("sanitizeThreadHistoryImagesForRelay replaces inline history images with li
     type: "image",
     url: "remodex://history-image-elided",
   });
+  assert.deepEqual(sanitized.result.thread.turns[1].items[0].content[0], {
+    type: "image",
+    image_url: "data:image/png;base64,LATEST",
+  });
 });
 
-test("sanitizeThreadHistoryImagesForRelay replaces input_image history data URLs", () => {
+test("sanitizeThreadHistoryImagesForRelay replaces older input_image history data URLs", () => {
   const rawMessage = JSON.stringify({
     id: "req-thread-input-image",
     result: {
@@ -434,6 +451,23 @@ test("sanitizeThreadHistoryImagesForRelay replaces input_image history data URLs
               },
             ],
           },
+          {
+            id: "turn-2",
+            items: [
+              {
+                id: "item-latest",
+                type: "user_message",
+                content: [
+                  {
+                    type: "input_image",
+                    image_url: {
+                      url: "data:image/png;base64,LATEST",
+                    },
+                  },
+                ],
+              },
+            ],
+          },
         ],
       },
     },
@@ -447,6 +481,12 @@ test("sanitizeThreadHistoryImagesForRelay replaces input_image history data URLs
   assert.deepEqual(content[0], {
     type: "input_image",
     url: "remodex://history-image-elided",
+  });
+  assert.deepEqual(sanitized.result.thread.turns[1].items[0].content[0], {
+    type: "input_image",
+    image_url: {
+      url: "data:image/png;base64,LATEST",
+    },
   });
 });
 

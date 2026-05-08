@@ -34,6 +34,20 @@ function normalizeRelayRole(headerValue) {
   return typeof raw === "string" ? raw.trim().toLowerCase() : "";
 }
 
+function relayRoleFromRequest(req) {
+  const headerRole = normalizeRelayRole(req?.headers?.["x-role"]);
+  if (headerRole) {
+    return headerRole;
+  }
+
+  try {
+    const url = new URL(req?.url || "", "http://relay.local");
+    return normalizeRelayRole(url.searchParams.get("role"));
+  } catch {
+    return "";
+  }
+}
+
 function isRelayMobileRole(role) {
   return role === "iphone" || role === "android";
 }
@@ -73,7 +87,7 @@ function setupRelay(
     const urlPath = req.url || "";
     const match = urlPath.match(/^\/relay\/([^/?]+)/);
     const sessionId = match?.[1];
-    const role = normalizeRelayRole(req.headers["x-role"]);
+    const role = relayRoleFromRequest(req);
     relayMetrics.acceptedConnections += 1;
     ws._relaySessionId = sessionId;
     ws._relayRole = role;
@@ -728,6 +742,7 @@ module.exports = {
   getRelayStats,
   hasActiveMacSession,
   hasAuthenticatedMacSession,
+  relayRoleFromRequest,
   resolvePairingCode,
   resolveTrustedMacSession,
 };

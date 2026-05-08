@@ -36,20 +36,20 @@ describe("pairing helpers", () => {
   });
 
   it("derives Tailscale HTTPS relay URLs from mistaken :9000 app URLs", () => {
-    expect(relayURLFromWebAppLocation("http://yangbots-mac-mini.tail468d0f.ts.net:9000/app/")).toBe(
-      "wss://yangbots-mac-mini.tail468d0f.ts.net/relay"
+    expect(relayURLFromWebAppLocation("http://mac.tailnet-example.ts.net:9000/app/")).toBe(
+      "wss://mac.tailnet-example.ts.net/relay"
     );
-    expect(canonicalTailscaleWebAppURL("http://yangbots-mac-mini.tail468d0f.ts.net:9000/app/")).toBe(
-      "https://yangbots-mac-mini.tail468d0f.ts.net/app/"
+    expect(canonicalTailscaleWebAppURL("http://mac.tailnet-example.ts.net:9000/app/")).toBe(
+      "https://mac.tailnet-example.ts.net/app/"
     );
   });
 
   it("normalizes relay URL input pasted from the app URL", () => {
-    expect(normalizeRelayURLInput("https://yangbots-mac-mini.tail468d0f.ts.net/app/")).toBe(
-      "wss://yangbots-mac-mini.tail468d0f.ts.net/relay"
+    expect(normalizeRelayURLInput("https://mac.tailnet-example.ts.net/app/")).toBe(
+      "wss://mac.tailnet-example.ts.net/relay"
     );
-    expect(normalizeRelayURLInput("wss://yangbots-mac-mini.tail468d0f.ts.net:9000/relay,")).toBe(
-      "wss://yangbots-mac-mini.tail468d0f.ts.net/relay"
+    expect(normalizeRelayURLInput("wss://mac.tailnet-example.ts.net:9000/relay,")).toBe(
+      "wss://mac.tailnet-example.ts.net/relay"
     );
   });
 

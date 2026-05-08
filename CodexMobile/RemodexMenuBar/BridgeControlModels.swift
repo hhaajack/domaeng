@@ -65,7 +65,7 @@ struct BridgeTrustedDevice: Codable, Equatable, Identifiable {
 
 enum BridgeClientCompatibility {
     static let supportedBridgeVersionInfoKey = "RemodexSupportedBridgeVersion"
-    static let fallbackSupportedBridgeVersion = "1.5.0"
+    static let fallbackSupportedBridgeVersion = "1.5.1"
 
     static var supportedBridgeVersion: String {
         if let configuredVersion = (Bundle.main.object(

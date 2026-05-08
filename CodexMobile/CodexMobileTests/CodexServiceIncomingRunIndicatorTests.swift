@@ -652,6 +652,33 @@ final class CodexServiceIncomingRunIndicatorTests: XCTestCase {
         }
     }
 
+    func testMobileReplacementKeepsSavedPairingForManualReconnect() {
+        let service = makeService()
+        let sessionID = "session-\(UUID().uuidString)"
+        let relayURL = "wss://relay.test/relay"
+
+        withSavedRelayPairing(sessionId: sessionID, relayURL: relayURL) {
+            service.relaySessionId = SecureStore.readString(for: CodexSecureKeys.relaySessionId)
+            service.relayUrl = SecureStore.readString(for: CodexSecureKeys.relayUrl)
+            service.isConnected = true
+            service.isInitialized = true
+
+            service.handleReceiveError(
+                CodexServiceError.disconnected,
+                relayCloseCode: .privateCode(4003)
+            )
+
+            XCTAssertFalse(service.isConnected)
+            XCTAssertFalse(service.shouldAutoReconnectOnForeground)
+            XCTAssertEqual(service.relaySessionId, sessionID)
+            XCTAssertEqual(service.relayUrl, relayURL)
+            XCTAssertEqual(
+                service.lastErrorMessage,
+                "This device was replaced by a newer connection. Tap Reconnect to resume here."
+            )
+        }
+    }
+
     func testMacUnavailableCloseKeepsSavedPairingAndRetriesReconnect() {
         let service = makeService()
 

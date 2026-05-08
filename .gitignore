@@ -27,6 +27,7 @@ phodex-bridge/src/private-defaults.json
 security_best_practices_report.md
 
 # Build artifacts
+.build/
 *.swp
 *.swo
 *~
@@ -36,6 +37,9 @@ web/tsconfig.tsbuildinfo
 
 # Minified JS bundles (not part of this project)
 /main.js
+/main-*.js
+/deeplinks-*.js
+/preload.js
 /links-*.js
 /scheme-*.js
 /initial-route-atom-*.js

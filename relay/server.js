@@ -13,6 +13,7 @@ const {
   setupRelay,
   getRelayStats,
   hasAuthenticatedMacSession,
+  relayRoleFromRequest,
   resolvePairingCode,
   resolveTrustedMacSession,
 } = require("./relay");
@@ -64,7 +65,7 @@ function createRelayServer({
     const loggedPathname = redactRelayPathname(pathname);
     console.log(
       `[relay] upgrade request path=${loggedPathname} remote=${clientAddressKey(req, { trustProxy })} `
-      + `role=${readHeaderString(req.headers["x-role"]) || "missing"}`
+      + `role=${relayRoleFromRequest(req) || "missing"}`
     );
     if (!pathname.startsWith("/relay/")) {
       console.log(`[relay] rejecting upgrade for non-relay path: ${loggedPathname}`);

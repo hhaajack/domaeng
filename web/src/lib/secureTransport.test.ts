@@ -87,6 +87,25 @@ describe("secure transport helpers", () => {
     expect(typeof envelope.tag).toBe("string");
   });
 
+  it("allocates unique counters for concurrent outbound encryption", async () => {
+    const sender = new SecureSession({
+      sessionId: "session",
+      keyEpoch: 1,
+      macDeviceId: "mac",
+      macIdentityPublicKey: "mac-key",
+      phoneToMacKey: randomBytes(32),
+      macToPhoneKey: randomBytes(32),
+      lastInboundBridgeOutboundSeq: 0
+    });
+
+    const envelopes = await Promise.all(
+      Array.from({ length: 5 }, () => sender.encryptApplicationMessage("{\"ok\":true}"))
+    );
+    const counters = envelopes.map((value) => JSON.parse(value).counter);
+
+    expect(counters.sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4]);
+  });
+
   it("falls back to JS AES-GCM when WebCrypto subtle is unavailable", async () => {
     const originalCryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto");
     const keyA = randomBytes(32);

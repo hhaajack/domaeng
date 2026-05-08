@@ -29,7 +29,7 @@ import {
   decodeThreadRead,
   type TimelineState
 } from "../lib/timeline";
-import { normalizeRuntimeSettings, readRuntimeSettings, writeRuntimeSettings } from "../lib/storage";
+import { normalizeRuntimeSettings, readRuntimeSettings, readTrustedMacs, writeRuntimeSettings } from "../lib/storage";
 import {
   disableWebPush,
   enableWebPush,
@@ -105,6 +105,34 @@ interface RemodexStore {
 const client = new RemodexClient();
 
 export const useRemodexStore = create<RemodexStore>((set, get) => {
+  let secureChannelRecoveryPromise: Promise<void> | null = null;
+
+  async function recoverTrustedConnection(): Promise<void> {
+    if (secureChannelRecoveryPromise) {
+      return secureChannelRecoveryPromise;
+    }
+    set({
+      connectionStatus: "connecting",
+      secureState: "reconnecting",
+      lastError: undefined
+    });
+    secureChannelRecoveryPromise = (async () => {
+      try {
+        await client.connectTrusted();
+        await get().refreshAfterConnect();
+      } catch (error) {
+        set({
+          connectionStatus: "disconnected",
+          secureState: secureStateForTrustedReconnectFailure(error),
+          lastError: errorMessage(error)
+        });
+      } finally {
+        secureChannelRecoveryPromise = null;
+      }
+    })();
+    return secureChannelRecoveryPromise;
+  }
+
   client.on((event) => {
     switch (event.type) {
       case "status":
@@ -151,11 +179,7 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
         break;
       case "error":
         if (isSecureChannelLostError(event.error.message)) {
-          set({
-            connectionStatus: "disconnected",
-            secureState: "rePairRequired",
-            lastError: undefined
-          });
+          void recoverTrustedConnection();
           break;
         }
         set({ lastError: event.error.message });
@@ -240,12 +264,7 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
     let targetThreadId = await ensureWritableThread(threadId, runtimeSettings);
     onTargetReady?.(targetThreadId);
     try {
-      await client.startTurn({
-        threadId: targetThreadId,
-        text,
-        attachments,
-        settings: runtimeSettings
-      });
+      await sendTurnInput(targetThreadId, text, attachments, runtimeSettings);
       forgetLocallyStartedThread(targetThreadId);
       void refreshDesktopThreadBestEffort(targetThreadId);
     } catch (error) {
@@ -255,16 +274,54 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
       removeLatestLocalUserMessage(targetThreadId, text, attachments);
       targetThreadId = await createContinuationThread(threadId, runtimeSettings);
       onTargetReady?.(targetThreadId);
-      await client.startTurn({
-        threadId: targetThreadId,
-        text,
-        attachments,
-        settings: runtimeSettings
-      });
+      await sendTurnInput(targetThreadId, text, attachments, runtimeSettings);
       forgetLocallyStartedThread(targetThreadId);
       void refreshDesktopThreadBestEffort(targetThreadId);
     }
     return targetThreadId;
+  }
+
+  async function sendTurnInput(
+    threadId: string,
+    text: string,
+    attachments: ImageAttachment[],
+    runtimeSettings: RuntimeSettings
+  ): Promise<void> {
+    const activeTurnId = await resolveSteerTurnId(threadId);
+    if (activeTurnId) {
+      await client.steerTurn({
+        threadId,
+        expectedTurnId: activeTurnId,
+        text,
+        attachments,
+        settings: runtimeSettings
+      });
+      return;
+    }
+
+    await client.startTurn({
+      threadId,
+      text,
+      attachments,
+      settings: runtimeSettings
+    });
+  }
+
+  async function resolveSteerTurnId(threadId: string): Promise<string | undefined> {
+    const currentTurnId = get().runningTurnByThread[threadId];
+    const concreteCurrentTurnId = concreteTurnId(currentTurnId);
+    if (concreteCurrentTurnId || !currentTurnId) {
+      return concreteCurrentTurnId;
+    }
+
+    await refreshThreadRunSnapshot(threadId);
+    const refreshedTurnId = get().runningTurnByThread[threadId];
+    const concreteRefreshedTurnId = concreteTurnId(refreshedTurnId);
+    if (concreteRefreshedTurnId || !refreshedTurnId) {
+      return concreteRefreshedTurnId;
+    }
+
+    throw new Error("Current turn is still starting. Try again once Codex reports the turn id.");
   }
 
   function forgetLocallyStartedThread(threadId: string): void {
@@ -351,6 +408,10 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
         void Notification.requestPermission();
       }
       void get().refreshWebPushStatus();
+      const trustedMacs = await readTrustedMacs();
+      if (Object.keys(trustedMacs).length > 0) {
+        void recoverTrustedConnection();
+      }
     },
 
     async connectFromPairingText(rawText) {
@@ -375,12 +436,16 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
     },
 
     async connectTrusted(relayURL) {
-      set({ lastError: undefined });
+      set({ lastError: undefined, secureState: "reconnecting" });
       try {
         await client.connectTrusted(relayURL);
         await get().refreshAfterConnect();
       } catch (error) {
-        set({ lastError: errorMessage(error) });
+        set({
+          connectionStatus: "disconnected",
+          secureState: secureStateForTrustedReconnectFailure(error),
+          lastError: errorMessage(error)
+        });
       }
     },
 
@@ -517,7 +582,7 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
       if (!activeThreadId) {
         return;
       }
-      await client.interruptTurn(activeThreadId, runningTurnByThread[activeThreadId]);
+      await client.interruptTurn(activeThreadId, concreteTurnId(runningTurnByThread[activeThreadId]));
     },
 
     queueDraft() {
@@ -942,6 +1007,34 @@ function isSecureChannelLostError(message: string): boolean {
     && normalized.includes("secure payload");
 }
 
+function secureStateForTrustedReconnectFailure(error: unknown): SecureConnectionState {
+  const code = errorCode(error);
+  if (
+    code === "phone_not_trusted"
+    || code === "phone_identity_changed"
+    || code === "invalid_phone_signature"
+    || errorMessage(error).toLowerCase().includes("has not paired")
+  ) {
+    return "rePairRequired";
+  }
+  if (code === "update_required") {
+    return "updateRequired";
+  }
+  if (code === "session_unavailable") {
+    return "liveSessionUnresolved";
+  }
+  return "trustedMac";
+}
+
+function errorCode(error: unknown): string | undefined {
+  const value = (error || {}) as { code?: unknown };
+  return typeof value.code === "string" && value.code.trim() ? value.code.trim() : undefined;
+}
+
+function concreteTurnId(turnId: string | undefined): string | undefined {
+  return turnId && turnId !== "__running__" ? turnId : undefined;
+}
+
 function applyThreadActivityUpdate<T extends RemodexStore>(
   state: T,
   method: string,
@@ -954,8 +1047,13 @@ function applyThreadActivityUpdate<T extends RemodexStore>(
   }
 
   if (method === "turn/started" || isActiveThreadStatus(method, paramsObject)) {
+    const turnId = resolveTurnId(paramsObject) || state.runningTurnByThread[threadId] || "__running__";
     return {
       ...state,
+      runningTurnByThread: {
+        ...state.runningTurnByThread,
+        [threadId]: turnId
+      },
       threadRunStateByThread: {
         ...state.threadRunStateByThread,
         [threadId]: "running"
@@ -993,9 +1091,21 @@ function applyThreadActivityUpdate<T extends RemodexStore>(
 
   return {
     ...state,
+    runningTurnByThread: removeThreadKey(state.runningTurnByThread, threadId),
     threadRunStateByThread: nextRunState,
     inAppNotifications: notificationUpdate?.notifications ?? state.inAppNotifications
   };
+}
+
+function removeThreadKey<TValue>(
+  stateByThread: Record<string, TValue | undefined>,
+  threadId: string
+): Record<string, TValue | undefined> {
+  if (stateByThread[threadId] == null) {
+    return stateByThread;
+  }
+  const { [threadId]: _removed, ...rest } = stateByThread;
+  return rest;
 }
 
 function applyApprovalActivityUpdate<T extends RemodexStore>(state: T, request: ApprovalRequest): T {
@@ -1186,16 +1296,31 @@ function showBrowserNotification(notification: InAppNotification): void {
   if (typeof window === "undefined" || !("Notification" in window) || Notification.permission !== "granted") {
     return;
   }
-  const browserNotification = new Notification(notification.title, {
+  const options: NotificationOptions = {
     body: notification.body,
     tag: notification.id,
     data: { threadId: notification.threadId }
-  });
-  browserNotification.onclick = () => {
-    window.focus();
-    browserNotification.close();
-    void useRemodexStore.getState().openThread(notification.threadId);
   };
+  if ("serviceWorker" in navigator) {
+    void navigator.serviceWorker.ready
+      .then((registration) => registration.showNotification(notification.title, options))
+      .catch(() => showWindowNotification(notification, options));
+    return;
+  }
+  showWindowNotification(notification, options);
+}
+
+function showWindowNotification(notification: InAppNotification, options: NotificationOptions): void {
+  try {
+    const browserNotification = new Notification(notification.title, options);
+    browserNotification.onclick = () => {
+      window.focus();
+      browserNotification.close();
+      void useRemodexStore.getState().openThread(notification.threadId);
+    };
+  } catch {
+    // Android Chrome requires ServiceWorkerRegistration.showNotification().
+  }
 }
 
 function terminalOutcomeForNotification(
