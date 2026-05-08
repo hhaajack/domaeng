@@ -51,6 +51,13 @@ type ClientEvent =
   | { type: "error"; error: Error };
 
 type Listener = (event: ClientEvent) => void;
+type ControlWaiter = {
+  resolve: (rawText: string) => void;
+  reject: (error: Error) => void;
+  timeout: ReturnType<typeof setTimeout>;
+};
+
+const CONTROL_WAIT_TIMEOUT_MS = 8_000;
 
 export class RemodexClient {
   private socket: WebSocket | null = null;
@@ -59,8 +66,9 @@ export class RemodexClient {
   private relayState: RelaySessionState | null = null;
   private phoneIdentity: PhoneIdentityState | null = null;
   private readonly listeners = new Set<Listener>();
-  private readonly controlWaiters = new Map<string, Array<(rawText: string) => void>>();
+  private readonly controlWaiters = new Map<string, ControlWaiter[]>();
   private readonly bufferedControls = new Map<string, string[]>();
+  private pendingSecureError: Error | null = null;
   private initialized = false;
 
   on(listener: Listener): () => void {
@@ -88,7 +96,7 @@ export class RemodexClient {
       ? trustedMacs[state.macDeviceId]
       : Object.values(trustedMacs).sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0))[0];
     if (!trusted) {
-      throw new Error("No trusted Mac is available");
+      throw new Error("This Web App has not paired with a Mac yet. Scan or enter a pairing code once from this app.");
     }
 
     const relayURL = relayURLOverride?.trim() || trusted.relayURL || state?.relayURL;
@@ -134,6 +142,7 @@ export class RemodexClient {
     this.rpc = null;
     this.secureSession = null;
     this.initialized = false;
+    this.rejectControlWaiters(new Error("Relay socket closed"));
     this.socket?.close();
     this.socket = null;
     this.emit({ type: "status", status: "disconnected" });
@@ -174,11 +183,28 @@ export class RemodexClient {
     return response.result ?? {};
   }
 
+  async readContextWindowUsage(threadId: string, turnId?: string): Promise<JSONValue> {
+    const params: JSONObject = { threadId };
+    if (turnId?.trim()) {
+      params.turnId = turnId.trim();
+    }
+    const response = await this.request("thread/contextWindow/read", params, 30_000);
+    return response.result ?? {};
+  }
+
   async readThread(threadId: string): Promise<RPCMessage> {
     return this.request("thread/read", {
       threadId,
       includeTurns: true
     });
+  }
+
+  async renameThread(threadId: string, name: string): Promise<JSONValue> {
+    const response = await this.request("thread/name/set", {
+      threadId,
+      name
+    });
+    return response.result ?? {};
   }
 
   async resumeThread(threadId: string, cwd?: string, settings?: RuntimeSettings): Promise<RPCMessage> {
@@ -334,6 +360,8 @@ export class RemodexClient {
 
   private async open(relayState: RelaySessionState, mode: "qr_bootstrap" | "trusted_reconnect"): Promise<void> {
     this.disconnect();
+    this.pendingSecureError = null;
+    this.bufferedControls.clear();
     this.relayState = relayState;
     this.phoneIdentity = await getOrCreatePhoneIdentity();
     this.emit({ type: "secureState", state: mode === "qr_bootstrap" ? "handshaking" : "reconnecting" });
@@ -351,10 +379,17 @@ export class RemodexClient {
     });
     this.socket!.addEventListener("close", () => {
       this.rpc?.failAll(new Error("Relay socket closed"));
+      this.rejectControlWaiters(new Error("Relay socket closed"));
       this.emit({ type: "status", status: "disconnected" });
     });
 
-    await this.performHandshake(mode);
+    try {
+      await this.performHandshake(mode);
+    } catch (error) {
+      this.disconnect();
+      this.emit({ type: "secureState", state: mode === "qr_bootstrap" ? "notPaired" : "rePairRequired" });
+      throw error;
+    }
     this.rpc = new JSONRPCDispatcher((text) => this.sendApplicationText(text));
     this.emit({ type: "status", status: "connected" });
     try {
@@ -592,14 +627,26 @@ export class RemodexClient {
     this.socket.send(text);
   }
 
-  private waitForControl(kind: string): Promise<string> {
+  private waitForControl(kind: string, timeoutMs = CONTROL_WAIT_TIMEOUT_MS): Promise<string> {
+    if (this.pendingSecureError) {
+      return Promise.reject(this.pendingSecureError);
+    }
     const buffered = this.bufferedControls.get(kind);
     if (buffered?.length) {
       return Promise.resolve(buffered.shift()!);
     }
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const waiters = this.controlWaiters.get(kind) ?? [];
-      waiters.push(resolve);
+      const waiter: ControlWaiter = {
+        resolve,
+        reject,
+        timeout: setTimeout(() => {
+          const current = this.controlWaiters.get(kind) ?? [];
+          this.controlWaiters.set(kind, current.filter((entry) => entry !== waiter));
+          reject(new Error(`Secure handshake timed out waiting for ${kind}.`));
+        }, timeoutMs)
+      };
+      waiters.push(waiter);
       this.controlWaiters.set(kind, waiters);
     });
   }
@@ -607,14 +654,19 @@ export class RemodexClient {
   private bufferControl(kind: string, rawText: string): void {
     if (kind === "secureError") {
       const parsed = JSON.parse(rawText) as { code?: string; message?: string };
-      this.emit({ type: "error", error: new Error(parsed.message || "Secure transport error") });
+      const error = new Error(parsed.message || "Secure transport error");
+      this.pendingSecureError = error;
+      this.emit({ type: "secureState", state: secureStateForSecureError(parsed.code) });
+      this.emit({ type: "error", error });
+      this.rejectControlWaiters(error);
       return;
     }
     const waiters = this.controlWaiters.get(kind);
     if (waiters?.length) {
       const waiter = waiters.shift()!;
       this.controlWaiters.set(kind, waiters);
-      waiter(rawText);
+      clearTimeout(waiter.timeout);
+      waiter.resolve(rawText);
       return;
     }
     const buffered = this.bufferedControls.get(kind) ?? [];
@@ -622,10 +674,33 @@ export class RemodexClient {
     this.bufferedControls.set(kind, buffered);
   }
 
+  private rejectControlWaiters(error: Error): void {
+    for (const waiters of this.controlWaiters.values()) {
+      for (const waiter of waiters) {
+        clearTimeout(waiter.timeout);
+        waiter.reject(error);
+      }
+    }
+    this.controlWaiters.clear();
+  }
+
   private emit(event: ClientEvent): void {
     for (const listener of this.listeners) {
       listener(event);
     }
+  }
+}
+
+function secureStateForSecureError(code?: string): string {
+  switch (code) {
+    case "update_required":
+      return "updateRequired";
+    case "phone_not_trusted":
+    case "phone_identity_changed":
+    case "invalid_phone_signature":
+      return "rePairRequired";
+    default:
+      return "notPaired";
   }
 }
 

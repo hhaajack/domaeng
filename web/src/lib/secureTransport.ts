@@ -429,11 +429,20 @@ export async function signTrustedSessionResolve({
   };
 }
 
-function browserDeviceDisplayName(): string {
-  const nav = globalThis.navigator as (Navigator & { userAgentData?: { platform?: string } }) | undefined;
+export function browserDeviceDisplayName(): string {
+  const nav = globalThis.navigator as
+    | (Navigator & { standalone?: boolean; userAgentData?: { platform?: string } })
+    | undefined;
   const browser = browserName(nav?.userAgent || "");
   const platform = nav?.userAgentData?.platform || nav?.platform || "";
-  return [browser, platform].filter(Boolean).join(" on ") || "Web Browser";
+  const base = [browser, platform].filter(Boolean).join(" on ") || "Web Browser";
+  if (!isStandaloneWebApp(nav)) {
+    return base;
+  }
+  if (browser === "Safari") {
+    return ["Home Screen", platform].filter(Boolean).join(" on ") || "Home Screen Web App";
+  }
+  return `${base} (Home Screen)`;
 }
 
 function browserName(userAgent: string): string {
@@ -450,6 +459,13 @@ function browserName(userAgent: string): string {
     return "Safari";
   }
   return "Web Browser";
+}
+
+function isStandaloneWebApp(nav?: Navigator & { standalone?: boolean }): boolean {
+  const displayModeStandalone =
+    typeof globalThis.matchMedia === "function" &&
+    globalThis.matchMedia("(display-mode: standalone)").matches;
+  return displayModeStandalone || nav?.standalone === true;
 }
 
 export function nonceForDirection(sender: "mac" | "iphone", counter: number): Uint8Array {

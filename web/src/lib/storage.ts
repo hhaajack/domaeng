@@ -121,6 +121,7 @@ export async function readRuntimeSettings(): Promise<RuntimeSettings> {
   return normalizeRuntimeSettings({
     accessMode: "onRequest",
     autoReview: false,
+    gitToolbarEnabled: false,
     planMode: false,
     ...stored
   });
@@ -135,6 +136,7 @@ export function normalizeRuntimeSettings(settings: Partial<RuntimeSettings>): Ru
     ...settings,
     accessMode: "onRequest",
     autoReview: settings.autoReview === true,
+    gitToolbarEnabled: settings.gitToolbarEnabled === true,
     planMode: settings.planMode === true
   };
 }

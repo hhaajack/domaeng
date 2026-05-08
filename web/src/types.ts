@@ -135,6 +135,11 @@ export interface CodexRateLimitBucket {
   secondary?: CodexRateLimitWindow;
 }
 
+export interface ContextWindowUsage {
+  tokensUsed: number;
+  tokenLimit: number;
+}
+
 export interface CodexRateLimitDisplayRow {
   id: string;
   label: string;
@@ -210,6 +215,7 @@ export interface RuntimeSettings {
   reasoningEffort?: string;
   serviceTier?: string;
   autoReview?: boolean;
+  gitToolbarEnabled?: boolean;
   accessMode: "onRequest";
   planMode: boolean;
 }

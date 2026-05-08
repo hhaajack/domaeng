@@ -585,6 +585,10 @@ function startBridge({
     }
     if (handleGitRequest(rawMessage, sendApplicationResponse, {
       codexAppPath: config.codexAppPath,
+      setThreadName: ({ threadId, name }) => sendCodexRequest("thread/name/set", {
+        threadId,
+        name,
+      }),
       onThreadNameSet: sendThreadNameUpdatedNotification,
     })) {
       return;

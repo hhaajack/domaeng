@@ -94,7 +94,7 @@ async function handleGitMethod(method, params, options = {}) {
     return threadGenerateTitle(params, options);
   }
   if (method === "thread/name/set") {
-    return threadNameSet(params);
+    return threadNameSet(params, options);
   }
 
   const cwd = await resolveGitCwd(params);
@@ -151,8 +151,9 @@ async function handleGitMethod(method, params, options = {}) {
   }
 }
 
-// Owns mobile thread renames locally so they do not fall through to unsupported Codex RPC.
-function threadNameSet(params) {
+// Normalizes web/mobile thread renames and delegates persistence to Codex when
+// the bridge has a local app-server request hook.
+async function threadNameSet(params, options = {}) {
   const threadId = normalizeNonEmptyLine(params.threadId || params.thread_id || params.conversationId || params.conversation_id);
   const name = normalizeNonEmptyLine(params.name || params.threadName || params.thread_name || params.title);
   if (!threadId) {
@@ -162,7 +163,30 @@ function threadNameSet(params) {
     throw gitError("missing_thread_name", "A thread name is required.");
   }
 
-  return { threadId, thread_id: threadId, name, title: name };
+  const normalized = { threadId, thread_id: threadId, name, title: name };
+  if (typeof options.setThreadName !== "function") {
+    return normalized;
+  }
+
+  const result = await options.setThreadName({ threadId, name });
+  return normalizeThreadNameSetResult(result, normalized);
+}
+
+function normalizeThreadNameSetResult(result, fallback) {
+  const object = result && typeof result === "object" && !Array.isArray(result) ? result : {};
+  const threadId = normalizeNonEmptyLine(
+    object.threadId || object.thread_id || object.conversationId || object.conversation_id
+  ) || fallback.threadId;
+  const name = normalizeNonEmptyLine(
+    object.name || object.threadName || object.thread_name || object.title
+  ) || fallback.name;
+  return {
+    ...object,
+    threadId,
+    thread_id: threadId,
+    name,
+    title: name,
+  };
 }
 
 // ─── Git Status ───────────────────────────────────────────────
@@ -206,6 +230,7 @@ async function gitStatus(cwd) {
 
   return {
     isRepo: true,
+    cwd,
     repoRoot,
     branch,
     tracking,
@@ -2567,6 +2592,7 @@ function gitError(errorCode, userMessage) {
 function nonRepositoryStatus(cwd) {
   return {
     isRepo: false,
+    cwd,
     repoRoot: null,
     branch: null,
     tracking: null,

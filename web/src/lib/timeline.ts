@@ -120,6 +120,13 @@ export function decodeThreadRead(state: TimelineState, result: JSONValue | undef
       }
     }
   }
+  const runningTurnId = runningTurnIdFromThreadObject(threadObject, turns);
+  const runningTurnByThread = { ...state.runningTurnByThread };
+  if (runningTurnId) {
+    runningTurnByThread[thread.id] = runningTurnId;
+  } else {
+    delete runningTurnByThread[thread.id];
+  }
 
   return {
     ...state,
@@ -127,7 +134,8 @@ export function decodeThreadRead(state: TimelineState, result: JSONValue | undef
     messagesByThread: {
       ...state.messagesByThread,
       [thread.id]: messages
-    }
+    },
+    runningTurnByThread
   };
 }
 
@@ -451,6 +459,68 @@ function decodeThread(object: JSONObject): CodexThread | null {
     archived: object.archived === true,
     sourceKind: readString(object.sourceKind) || readString(object.source_kind)
   };
+}
+
+function runningTurnIdFromThreadObject(threadObject: JSONObject, turns: JSONValue[]): string | undefined {
+  const explicitTurnId = runningTurnIdFromTurns(turns);
+  if (explicitTurnId) {
+    return explicitTurnId;
+  }
+  return isRunningStatusObject(threadObject) ? latestTurnIdFromTurns(turns) ?? "__running__" : undefined;
+}
+
+function runningTurnIdFromTurns(turns: JSONValue[]): string | undefined {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = asObject(turns[index]);
+    const turnId = readString(turn.id) || readString(turn.turnId) || readString(turn.turn_id);
+    if (turnId && isRunningTurn(turn)) {
+      return turnId;
+    }
+  }
+  return undefined;
+}
+
+function latestTurnIdFromTurns(turns: JSONValue[]): string | undefined {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = asObject(turns[index]);
+    const turnId = readString(turn.id) || readString(turn.turnId) || readString(turn.turn_id);
+    if (turnId) {
+      return turnId;
+    }
+  }
+  return undefined;
+}
+
+function isRunningTurn(turn: JSONObject): boolean {
+  return isRunningStatusObject(turn);
+}
+
+function isRunningStatusObject(object: JSONObject): boolean {
+  const directStatus = readStatusToken(object.status)
+    || readStatusToken(object.turnStatus)
+    || readStatusToken(object.turn_status)
+    || readStatusToken(object.state)
+    || readStatusToken(object.phase);
+  if (directStatus) {
+    return isRunningStatusToken(directStatus);
+  }
+
+  const statusObject = asObject(object.status);
+  const objectStatus = readStatusToken(statusObject.type)
+    || readStatusToken(statusObject.statusType)
+    || readStatusToken(statusObject.status_type)
+    || readStatusToken(statusObject.state)
+    || readStatusToken(statusObject.phase);
+  return objectStatus ? isRunningStatusToken(objectStatus) : false;
+}
+
+function readStatusToken(value: JSONValue | undefined): string | undefined {
+  const stringValue = readString(value);
+  return stringValue ? stringValue.replace(/[^a-z0-9]/gi, "").toLowerCase() : undefined;
+}
+
+function isRunningStatusToken(value: string): boolean {
+  return ["active", "running", "processing", "inprogress", "started", "pending"].includes(value);
 }
 
 function upsertThread(threads: CodexThread[], next: CodexThread): CodexThread[] {

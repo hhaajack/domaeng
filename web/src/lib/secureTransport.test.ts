@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { bytesToBase64, randomBytes } from "./base64";
 import {
   buildSecureTranscriptBytes,
   buildTrustedSessionResolveTranscriptBytes,
+  browserDeviceDisplayName,
   nonceForDirection,
   SecureSession
 } from "./secureTransport";
@@ -44,6 +45,22 @@ describe("secure transport helpers", () => {
     });
     expect(transcript.length).toBeGreaterThan(70);
     expect(readFirstLengthPrefixedString(transcript)).toBe("remodex-trusted-session-resolve-v1");
+  });
+
+  it("distinguishes iOS home screen web app identity from Safari", () => {
+    vi.stubGlobal("navigator", {
+      userAgent:
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+      platform: "iPhone",
+      standalone: true
+    });
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+
+    try {
+      expect(browserDeviceDisplayName()).toBe("Home Screen on iPhone");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("encrypts outbound application envelopes", async () => {

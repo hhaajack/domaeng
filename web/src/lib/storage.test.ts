@@ -36,3 +36,25 @@ describe("storage fallback", () => {
     await expect(readKV("runtimeSettings")).resolves.toEqual(value);
   });
 });
+
+describe("runtime settings", () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.unmock("idb");
+    localStorage.clear();
+  });
+
+  it("keeps the Git toolbar hidden unless explicitly enabled", async () => {
+    vi.doMock("idb", () => ({
+      openDB: vi.fn().mockResolvedValue({
+        get: vi.fn().mockResolvedValue(undefined),
+        put: vi.fn().mockResolvedValue(undefined)
+      })
+    }));
+
+    const { normalizeRuntimeSettings } = await import("./storage");
+
+    expect(normalizeRuntimeSettings({ accessMode: "onRequest", planMode: false }).gitToolbarEnabled).toBe(false);
+    expect(normalizeRuntimeSettings({ accessMode: "onRequest", planMode: false, gitToolbarEnabled: true }).gitToolbarEnabled).toBe(true);
+  });
+});

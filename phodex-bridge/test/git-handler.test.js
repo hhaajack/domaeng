@@ -80,6 +80,7 @@ test("gitStatus reports non-repository directories without failing", async () =>
     const result = await gitStatus(projectDir);
 
     assert.equal(result.isRepo, false);
+    assert.equal(result.cwd, projectDir);
     assert.equal(result.state, "not_initialized");
     assert.equal(result.branch, null);
     assert.deepEqual(result.files, []);
@@ -356,6 +357,7 @@ test("gitStatus reports local-only commits when remotes exist but upstream is mi
 
     const result = await gitStatus(repoDir);
 
+    assert.equal(result.cwd, repoDir);
     assert.equal(result.tracking, null);
     assert.equal(result.state, "no_upstream");
     assert.equal(result.hasPushRemote, true);
@@ -1025,8 +1027,8 @@ test("threadGenerateTitle falls back to a sanitized first-message title", async 
   assert.equal(result.title, "Rename this conversation after");
 });
 
-test("threadNameSet normalizes mobile rename params", () => {
-  const result = __test.threadNameSet({
+test("threadNameSet normalizes mobile rename params", async () => {
+  const result = await __test.threadNameSet({
     thread_id: " thread-1 ",
     name: "  Fix Thread Naming  ",
   });
@@ -1039,9 +1041,41 @@ test("threadNameSet normalizes mobile rename params", () => {
   });
 });
 
-test("handleGitRequest owns thread rename and emits the rename hook", async () => {
+test("threadNameSet persists through the Codex app-server hook when available", async () => {
+  const calls = [];
+  const result = await __test.threadNameSet(
+    {
+      thread_id: " thread-1 ",
+      name: "  Fix Thread Naming  ",
+    },
+    {
+      setThreadName: async (params) => {
+        calls.push(params);
+        return {
+          thread_id: params.threadId,
+          threadName: params.name,
+        };
+      },
+    }
+  );
+
+  assert.deepEqual(calls, [{
+    threadId: "thread-1",
+    name: "Fix Thread Naming",
+  }]);
+  assert.deepEqual(result, {
+    thread_id: "thread-1",
+    threadName: "Fix Thread Naming",
+    threadId: "thread-1",
+    name: "Fix Thread Naming",
+    title: "Fix Thread Naming",
+  });
+});
+
+test("handleGitRequest persists thread rename and emits the rename hook", async () => {
   const responses = [];
   const notifications = [];
+  const calls = [];
   const handled = handleGitRequest(
     JSON.stringify({
       id: "rename-1",
@@ -1053,6 +1087,13 @@ test("handleGitRequest owns thread rename and emits the rename hook", async () =
     }),
     (response) => responses.push(JSON.parse(response)),
     {
+      setThreadName: async (params) => {
+        calls.push(params);
+        return {
+          threadId: params.threadId,
+          name: params.name,
+        };
+      },
       onThreadNameSet: (result) => notifications.push(result),
     }
   );
@@ -1060,6 +1101,10 @@ test("handleGitRequest owns thread rename and emits the rename hook", async () =
   assert.equal(handled, true);
   await new Promise((resolve) => setImmediate(resolve));
 
+  assert.deepEqual(calls, [{
+    threadId: "thread-1",
+    name: "Polish loading states",
+  }]);
   assert.equal(responses.length, 1);
   assert.deepEqual(responses[0], {
     id: "rename-1",

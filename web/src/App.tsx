@@ -8,17 +8,22 @@ import {
   ChevronDown,
   ChevronLeft,
   CircleCheck,
+  Copy,
   Folder,
   FolderOpen,
   GitBranch,
   GitCommitHorizontal,
   Image as ImageIcon,
+  Link,
   ListChecks,
   ListPlus,
   Menu,
+  MoreHorizontal,
   Pause,
+  Pencil,
   Plus,
   RefreshCw,
+  Search,
   Send,
   Shield,
   Settings,
@@ -26,10 +31,11 @@ import {
   Upload,
   X
 } from "lucide-react";
-import { Component, useEffect, useRef, useState, type ClipboardEvent, type ReactNode } from "react";
+import { Component, useEffect, useRef, useState, type ClipboardEvent, type FormEvent, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import type {
   ApprovalRequest,
+  ContextWindowUsage,
   CodexRateLimitBucket,
   CodexRateLimitDisplayRow,
   CodexThread,
@@ -233,6 +239,11 @@ function PairingScreen() {
 function Workspace() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [projectOpenByKey, setProjectOpenByKey] = useState<Record<string, boolean>>({});
+  const [sidebarSearch, setSidebarSearch] = useState("");
+  const [openThreadMenuId, setOpenThreadMenuId] = useState<string | undefined>();
+  const [renamingThread, setRenamingThread] = useState<CodexThread | undefined>();
+  const [sidebarNotice, setSidebarNotice] = useState("");
+  const threadMenuRef = useRef<HTMLDivElement | null>(null);
   const threads = useRemodexStore((state) => state.threads);
   const activeThreadId = useRemodexStore((state) => state.activeThreadId);
   const runningTurnByThread = useRemodexStore((state) => state.runningTurnByThread);
@@ -245,8 +256,10 @@ function Workspace() {
   const refreshThreads = useRemodexStore((state) => state.refreshThreads);
   const settingsOpen = useRemodexStore((state) => state.settingsOpen);
   const setSettingsOpen = useRemodexStore((state) => state.setSettingsOpen);
+  const gitToolbarEnabled = useRemodexStore((state) => state.runtimeSettings.gitToolbarEnabled === true);
   const activeThread = threads.find((thread) => thread.id === activeThreadId);
   const projectGroups = buildProjectGroups(threads);
+  const visibleProjectGroups = filterProjectGroups(projectGroups, sidebarSearch);
   const activeProjectKey = activeThread ? projectKeyForThread(activeThread) : projectGroups[0]?.key;
   const activeProject = projectGroups.find((project) => project.key === activeProjectKey);
   const newThreadCwd = activeThread?.cwd || activeProject?.cwd;
@@ -257,6 +270,47 @@ function Workspace() {
     }
     setProjectOpenByKey((state) => state[activeProjectKey] === false ? { ...state, [activeProjectKey]: true } : state);
   }, [activeProjectKey]);
+
+  useEffect(() => {
+    if (!openThreadMenuId) {
+      return;
+    }
+
+    function closeFromOutside(event: PointerEvent) {
+      if (threadMenuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      setOpenThreadMenuId(undefined);
+    }
+
+    function closeFromEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpenThreadMenuId(undefined);
+      }
+    }
+
+    document.addEventListener("pointerdown", closeFromOutside);
+    document.addEventListener("keydown", closeFromEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeFromOutside);
+      document.removeEventListener("keydown", closeFromEscape);
+    };
+  }, [openThreadMenuId]);
+
+  useEffect(() => {
+    if (!openThreadMenuId || threads.some((thread) => thread.id === openThreadMenuId)) {
+      return;
+    }
+    setOpenThreadMenuId(undefined);
+  }, [openThreadMenuId, threads]);
+
+  useEffect(() => {
+    if (!sidebarNotice) {
+      return;
+    }
+    const timeout = window.setTimeout(() => setSidebarNotice(""), 1600);
+    return () => window.clearTimeout(timeout);
+  }, [sidebarNotice]);
 
   useEffect(() => {
     const openExternalThread = (threadId: string) => {
@@ -296,6 +350,18 @@ function Workspace() {
     }));
   }
 
+  async function copyThreadValue(value: string, notice: string) {
+    if (!value) {
+      return;
+    }
+    try {
+      await copyText(value);
+      setSidebarNotice(notice);
+    } catch (error) {
+      setSidebarNotice(error instanceof Error ? error.message : "Copy failed");
+    }
+  }
+
   return (
     <section className="workspace">
       <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
@@ -328,8 +394,18 @@ function Workspace() {
             <Settings size={18} />
           </button>
         </div>
+        <label className="sidebar-search">
+          <Search size={15} aria-hidden="true" />
+          <input
+            value={sidebarSearch}
+            onChange={(event) => setSidebarSearch(event.target.value)}
+            placeholder="Search chats"
+            aria-label="Search chats"
+          />
+        </label>
+        {sidebarNotice ? <div className="sidebar-notice" role="status">{sidebarNotice}</div> : null}
         <div className="thread-list">
-          {projectGroups.map((project) => {
+          {visibleProjectGroups.map((project) => {
             const open = projectIsOpen(project.key);
             const projectActive = project.key === activeProjectKey;
             const projectState = projectThreadState(project.threads, runningTurnByThread, threadRunStateByThread, pendingApprovals);
@@ -368,21 +444,62 @@ function Workspace() {
                   <div className="project-threads">
                     {project.threads.map((thread) => {
                       const threadState = threadActivityState(thread.id, runningTurnByThread, threadRunStateByThread, pendingApprovals);
+                      const menuOpen = openThreadMenuId === thread.id;
                       return (
-                        <button
+                        <div
                           key={thread.id}
-                          className={`thread-row ${thread.id === activeThreadId ? "selected" : ""}`}
-                          onClick={() => {
-                            setSidebarOpen(false);
-                            void openThread(thread.id);
-                          }}
+                          className="thread-row-shell"
+                          ref={menuOpen ? threadMenuRef : undefined}
                         >
-                          <span className="thread-title-line">
-                            <ThreadStateDot state={threadState} />
-                            <span className="thread-row-title">{thread.title || thread.name || "Conversation"}</span>
-                          </span>
-                          <small>{threadSubtitle(thread, project)}</small>
-                        </button>
+                          <button
+                            className={`thread-row ${thread.id === activeThreadId ? "selected" : ""}`}
+                            onClick={() => {
+                              setOpenThreadMenuId(undefined);
+                              setSidebarOpen(false);
+                              void openThread(thread.id);
+                            }}
+                          >
+                            <span className="thread-title-line">
+                              <ThreadStateDot state={threadState} />
+                              <span className="thread-row-title">{thread.title || thread.name || "Conversation"}</span>
+                            </span>
+                            <small>{threadSubtitle(thread, project)}</small>
+                          </button>
+                          <button
+                            className="thread-actions-button"
+                            title="Thread actions"
+                            aria-label="Thread actions"
+                            aria-haspopup="menu"
+                            aria-expanded={menuOpen}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setOpenThreadMenuId((current) => current === thread.id ? undefined : thread.id);
+                            }}
+                          >
+                            <MoreHorizontal size={16} />
+                          </button>
+                          {menuOpen ? (
+                            <ThreadActionsMenu
+                              thread={thread}
+                              onRename={() => {
+                                setOpenThreadMenuId(undefined);
+                                setRenamingThread(thread);
+                              }}
+                              onCopyLink={() => {
+                                setOpenThreadMenuId(undefined);
+                                void copyThreadValue(threadURL(thread.id), "Thread link copied");
+                              }}
+                              onCopyId={() => {
+                                setOpenThreadMenuId(undefined);
+                                void copyThreadValue(thread.id, "Thread ID copied");
+                              }}
+                              onCopyCwd={thread.cwd ? () => {
+                                setOpenThreadMenuId(undefined);
+                                void copyThreadValue(thread.cwd!, "Working directory copied");
+                              } : undefined}
+                            />
+                          ) : null}
+                        </div>
                       );
                     })}
                   </div>
@@ -390,10 +507,10 @@ function Workspace() {
               </section>
             );
           })}
-          {!projectGroups.length ? (
+          {!visibleProjectGroups.length ? (
             <div className="empty-sidebar">
-              <strong>No conversations</strong>
-              <span>Start a new thread or refresh after the bridge has loaded Codex history.</span>
+              <strong>{sidebarSearch.trim() ? "No matches" : "No conversations"}</strong>
+              <span>{sidebarSearch.trim() ? "Try a different search." : "Start a new thread or refresh after the bridge has loaded Codex history."}</span>
             </div>
           ) : null}
         </div>
@@ -406,7 +523,8 @@ function Workspace() {
             <Menu size={20} />
           </button>
           <ThreadTitle />
-          <GitToolbar />
+          {gitToolbarEnabled ? <GitToolbar /> : null}
+          <ContextUsageStatus />
         </header>
         <Timeline />
         <ApprovalStack />
@@ -421,7 +539,105 @@ function Workspace() {
           void openThread(threadId);
         }}
       />
+      {renamingThread ? (
+        <RenameThreadSheet
+          thread={renamingThread}
+          onClose={() => setRenamingThread(undefined)}
+        />
+      ) : null}
     </section>
+  );
+}
+
+function ThreadActionsMenu({
+  thread,
+  onRename,
+  onCopyLink,
+  onCopyId,
+  onCopyCwd
+}: {
+  thread: CodexThread;
+  onRename: () => void;
+  onCopyLink: () => void;
+  onCopyId: () => void;
+  onCopyCwd?: () => void;
+}) {
+  return (
+    <div className="thread-actions-menu" role="menu" aria-label={`Actions for ${thread.title || thread.name || "Conversation"}`}>
+      <button role="menuitem" onClick={onRename}>
+        <Pencil size={15} />
+        <span>Rename</span>
+      </button>
+      <button role="menuitem" onClick={onCopyLink}>
+        <Link size={15} />
+        <span>Copy link</span>
+      </button>
+      <button role="menuitem" onClick={onCopyId}>
+        <Copy size={15} />
+        <span>Copy ID</span>
+      </button>
+      {onCopyCwd ? (
+        <button role="menuitem" onClick={onCopyCwd}>
+          <Folder size={15} />
+          <span>Copy cwd</span>
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function RenameThreadSheet({ thread, onClose }: { thread: CodexThread; onClose: () => void }) {
+  const renameThread = useRemodexStore((state) => state.renameThread);
+  const [value, setValue] = useState(thread.title || thread.name || "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    inputRef.current?.select();
+  }, []);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const nextName = value.trim();
+    if (!nextName) {
+      setError("Thread name is required.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await renameThread(thread.id, nextName);
+      onClose();
+    } catch (renameError) {
+      setError(renameError instanceof Error ? renameError.message : String(renameError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="sheet-backdrop">
+      <form className="settings-sheet rename-thread-sheet" onSubmit={submit}>
+        <header>
+          <h2>Rename thread</h2>
+          <button type="button" onClick={onClose} aria-label="Close rename"><X size={18} /></button>
+        </header>
+        <label className="field">
+          <span>Name</span>
+          <input
+            ref={inputRef}
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            disabled={busy}
+          />
+        </label>
+        {error ? <p className="error-text">{error}</p> : null}
+        <button className="primary wide" disabled={busy || !value.trim()}>
+          Save
+        </button>
+      </form>
+    </div>
   );
 }
 
@@ -575,6 +791,125 @@ function ThreadTitle() {
     <div className="thread-title">
       <strong>{thread?.title || thread?.name || "Conversation"}</strong>
       <span>{thread?.cwd || "Remodex"}</span>
+    </div>
+  );
+}
+
+function ContextUsageStatus() {
+  const activeThreadId = useRemodexStore((state) => state.activeThreadId);
+  const usage = useRemodexStore((state) => activeThreadId ? state.contextWindowUsageByThread[activeThreadId] : undefined);
+  const loadedAt = useRemodexStore((state) => activeThreadId ? state.contextWindowUsageLoadedAtByThread[activeThreadId] : undefined);
+  const error = useRemodexStore((state) => activeThreadId ? state.contextWindowUsageErrorByThread[activeThreadId] : undefined);
+  const isLoading = useRemodexStore((state) => activeThreadId ? Boolean(state.isLoadingContextWindowUsageByThread[activeThreadId]) : false);
+  const refreshContextWindowUsage = useRemodexStore((state) => state.refreshContextWindowUsage);
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setOpen(false);
+  }, [activeThreadId]);
+
+  useEffect(() => {
+    if (!activeThreadId || usage || isLoading) {
+      return;
+    }
+    void refreshContextWindowUsage(activeThreadId);
+  }, [activeThreadId, usage, isLoading, refreshContextWindowUsage]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    function closeFromOutside(event: PointerEvent) {
+      if (wrapRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      setOpen(false);
+    }
+
+    function closeFromEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", closeFromOutside);
+    document.addEventListener("keydown", closeFromEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeFromOutside);
+      document.removeEventListener("keydown", closeFromEscape);
+    };
+  }, [open]);
+
+  if (!activeThreadId) {
+    return null;
+  }
+
+  const usedPercent = contextUsedPercent(usage);
+  const remainingPercentValue = contextRemainingPercent(usage);
+  const level = contextUsageLevelClass(usage);
+  const hasUsage = Boolean(usage && usage.tokenLimit > 0);
+  const title = hasUsage
+    ? `Context ${usedPercent}% used, ${remainingPercentValue}% left`
+    : error || "Context usage unavailable";
+
+  return (
+    <div className="context-usage-wrap" ref={wrapRef}>
+      <button
+        type="button"
+        className={`context-usage-button ${level} ${isLoading ? "loading" : ""}`}
+        title={title}
+        aria-label={title}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <svg className="context-usage-ring" viewBox="0 0 36 36" aria-hidden="true">
+          <circle className="context-usage-track" cx="18" cy="18" r="15.5" />
+          <circle
+            className="context-usage-value"
+            cx="18"
+            cy="18"
+            r="15.5"
+            pathLength={100}
+            style={{ strokeDasharray: `${hasUsage ? usedPercent : 0} 100` }}
+          />
+        </svg>
+        <span>{hasUsage ? usedPercent : "--"}</span>
+      </button>
+      {open ? (
+        <div className="context-usage-popover" role="dialog" aria-label="Context usage">
+          <div className="context-usage-popover-header">
+            <strong>Context</strong>
+            <button
+              className="usage-refresh-button"
+              title="Refresh context"
+              aria-label="Refresh context"
+              disabled={isLoading}
+              onClick={() => void refreshContextWindowUsage(activeThreadId)}
+            >
+              <RefreshCw size={14} />
+            </button>
+          </div>
+          <div className="context-usage-summary">
+            <span>{hasUsage ? `${usedPercent}% used` : "Unavailable"}</span>
+            {hasUsage ? <strong>{remainingPercentValue}% left</strong> : null}
+          </div>
+          <div className="context-usage-meter" aria-hidden="true">
+            <span
+              className={`context-usage-meter-fill ${level}`}
+              style={{ width: `${hasUsage ? usedPercent : 0}%` }}
+            />
+          </div>
+          <small>
+            {hasUsage
+              ? `${compactTokenCount(usage!.tokensUsed)} used / ${compactTokenCount(usage!.tokenLimit)} limit`
+              : error || (isLoading ? "Loading..." : "Waiting for usage data")}
+          </small>
+          {loadedAt ? <span className="usage-updated">Updated {timeOfDayLabel(loadedAt)}</span> : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1062,6 +1397,10 @@ function GitToolbar() {
   const pull = useRemodexStore((state) => state.pull);
   const [message, setMessage] = useState("");
 
+  useEffect(() => {
+    void refreshGitStatus();
+  }, [refreshGitStatus]);
+
   return (
     <div className="git-toolbar">
       <button className="icon-button git-status-button" title="Git status" aria-label="Git status" onClick={() => void refreshGitStatus()}>
@@ -1087,6 +1426,7 @@ function GitToolbar() {
 function SettingsSheet({ onClose }: { onClose: () => void }) {
   const runtimeSettings = useRemodexStore((state) => state.runtimeSettings);
   const setRuntimeSettings = useRemodexStore((state) => state.setRuntimeSettings);
+  const refreshGitStatus = useRemodexStore((state) => state.refreshGitStatus);
   const availableModels = useRemodexStore((state) => state.availableModels);
   const webPushStatus = useRemodexStore((state) => state.webPushStatus);
   const webPushError = useRemodexStore((state) => state.webPushError);
@@ -1096,6 +1436,12 @@ function SettingsSheet({ onClose }: { onClose: () => void }) {
   const webPushBusy = webPushStatus === "checking" || webPushStatus === "subscribing";
   const webPushEnabled = webPushStatus === "enabled";
   const webPushUnavailable = webPushStatus === "unsupported" || webPushStatus === "insecure";
+  async function setGitToolbarEnabled(enabled: boolean) {
+    await setRuntimeSettings({ gitToolbarEnabled: enabled });
+    if (enabled) {
+      await refreshGitStatus();
+    }
+  }
   return (
     <div className="sheet-backdrop">
       <section className="settings-sheet">
@@ -1126,6 +1472,14 @@ function SettingsSheet({ onClose }: { onClose: () => void }) {
             onChange={(event) => void setRuntimeSettings({ autoReview: event.target.checked, accessMode: "onRequest" })}
           />
           <span>Auto review</span>
+        </label>
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            checked={runtimeSettings.gitToolbarEnabled === true}
+            onChange={(event) => void setGitToolbarEnabled(event.target.checked)}
+          />
+          <span>Git toolbar</span>
         </label>
         <div className="push-settings-row">
           <div>
@@ -1409,6 +1763,17 @@ function remainingPercent(usedPercent: number): number {
   return Math.max(0, 100 - clampedPercent(usedPercent));
 }
 
+function contextUsedPercent(usage: ContextWindowUsage | undefined): number {
+  if (!usage || usage.tokenLimit <= 0) {
+    return 0;
+  }
+  return clampedPercent((usage.tokensUsed / usage.tokenLimit) * 100);
+}
+
+function contextRemainingPercent(usage: ContextWindowUsage | undefined): number {
+  return Math.max(0, 100 - contextUsedPercent(usage));
+}
+
 function clampedPercent(value: number): number {
   return Math.min(Math.max(Math.round(value), 0), 100);
 }
@@ -1419,6 +1784,20 @@ function usageLevelClass(usedPercent: number): string {
     return "high";
   }
   if (clamped >= 70) {
+    return "medium";
+  }
+  return "normal";
+}
+
+function contextUsageLevelClass(usage: ContextWindowUsage | undefined): string {
+  if (!usage || usage.tokenLimit <= 0) {
+    return "unknown";
+  }
+  const usedPercent = contextUsedPercent(usage);
+  if (usedPercent >= 85) {
+    return "high";
+  }
+  if (usedPercent >= 65) {
     return "medium";
   }
   return "normal";
@@ -1450,6 +1829,21 @@ function timeOfDayLabel(value: number): string {
   });
 }
 
+function compactTokenCount(value: number): string {
+  const rounded = Math.max(0, Math.round(value));
+  if (rounded >= 1_000_000) {
+    return `${formatCompactNumber(rounded / 1_000_000)}M`;
+  }
+  if (rounded >= 1_000) {
+    return `${formatCompactNumber(rounded / 1_000)}K`;
+  }
+  return String(rounded);
+}
+
+function formatCompactNumber(value: number): string {
+  return value >= 10 ? String(Math.round(value)) : value.toFixed(1).replace(/\.0$/, "");
+}
+
 function buildProjectGroups(threads: CodexThread[]): ProjectGroup[] {
   const groups = new Map<string, ProjectGroup>();
   for (const thread of threads) {
@@ -1472,6 +1866,42 @@ function buildProjectGroups(threads: CodexThread[]): ProjectGroup[] {
     });
   }
   return [...groups.values()].sort((left, right) => right.updatedAt - left.updatedAt);
+}
+
+function filterProjectGroups(projectGroups: ProjectGroup[], query: string): ProjectGroup[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return projectGroups;
+  }
+
+  return projectGroups.flatMap((project) => {
+    if (projectSearchText(project).includes(normalizedQuery)) {
+      return [project];
+    }
+    const threads = project.threads.filter((thread) => threadSearchText(thread).includes(normalizedQuery));
+    return threads.length ? [{
+      ...project,
+      threads
+    }] : [];
+  });
+}
+
+function projectSearchText(project: ProjectGroup): string {
+  return [
+    project.label,
+    project.path
+  ].join(" ").toLowerCase();
+}
+
+function threadSearchText(thread: CodexThread): string {
+  return [
+    thread.title,
+    thread.name,
+    thread.cwd,
+    thread.status,
+    thread.sourceKind,
+    thread.id
+  ].filter(Boolean).join(" ").toLowerCase();
 }
 
 function projectKeyForThread(thread: CodexThread): string {
@@ -1518,6 +1948,37 @@ function timestampValue(value: string | number | undefined): number {
   }
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+async function copyText(value: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+
+  const textArea = document.createElement("textarea");
+  textArea.value = value;
+  textArea.setAttribute("readonly", "");
+  textArea.style.position = "fixed";
+  textArea.style.opacity = "0";
+  document.body.appendChild(textArea);
+  textArea.select();
+  try {
+    if (!document.execCommand("copy")) {
+      throw new Error("Clipboard is unavailable.");
+    }
+  } finally {
+    document.body.removeChild(textArea);
+  }
+}
+
+function threadURL(threadId: string): string {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("threadId");
+  const hashParams = new URLSearchParams(url.hash.replace(/^#/, ""));
+  hashParams.set("thread", threadId);
+  url.hash = hashParams.toString();
+  return url.toString();
 }
 
 function secureStateLabel(value: string): string {

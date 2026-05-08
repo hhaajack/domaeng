@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type {
   ApprovalRequest,
+  ContextWindowUsage,
   CodexRateLimitBucket,
   CodexThread,
   GitStatus,
@@ -53,6 +54,10 @@ interface RemodexStore {
   isLoadingRateLimits: boolean;
   rateLimitsError?: string;
   rateLimitsLoadedAt?: number;
+  contextWindowUsageByThread: Record<string, ContextWindowUsage | undefined>;
+  contextWindowUsageLoadedAtByThread: Record<string, number | undefined>;
+  contextWindowUsageErrorByThread: Record<string, string | undefined>;
+  isLoadingContextWindowUsageByThread: Record<string, boolean | undefined>;
   availableModels: ModelOption[];
   modelsError?: string;
   runtimeSettings: RuntimeSettings;
@@ -72,6 +77,7 @@ interface RemodexStore {
   refreshThreads: () => Promise<void>;
   openThread: (threadId: string) => Promise<void>;
   newThread: (cwd?: string) => Promise<void>;
+  renameThread: (threadId: string, name: string) => Promise<void>;
   setComposerText: (value: string) => void;
   addFiles: (files: FileList | File[]) => Promise<void>;
   removeAttachment: (id: string) => void;
@@ -82,6 +88,7 @@ interface RemodexStore {
   approve: (request: ApprovalRequest, decision: "accept" | "decline" | "acceptForSession") => Promise<void>;
   dismissInAppNotification: (id: string) => void;
   setRuntimeSettings: (settings: Partial<RuntimeSettings>) => Promise<void>;
+  refreshContextWindowUsage: (threadId: string) => Promise<void>;
   refreshRateLimits: () => Promise<void>;
   refreshModels: () => Promise<void>;
   refreshGitStatus: () => Promise<void>;
@@ -107,6 +114,10 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
         set({ secureState: event.state as SecureConnectionState });
         break;
       case "notification":
+        if (event.method === "thread/tokenUsage/updated") {
+          set((state) => applyContextUsageUpdate(state, event.params));
+          break;
+        }
         if (event.method === "account/rateLimits/updated") {
           set((state) => ({
             rateLimitBuckets: applyRateLimitsPayload(event.params, state.rateLimitBuckets, true),
@@ -128,6 +139,7 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
           event.method,
           event.params
         ));
+        maybeRefreshContextWindowUsageAfterNotification(event.method, event.params);
         break;
       case "approval":
         set((state) => applyApprovalActivityUpdate(state, event.request));
@@ -181,7 +193,7 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
     const thread = get().threads.find((entry) => entry.id === threadId);
     try {
       const response = await client.resumeThread(threadId, thread?.cwd, runtimeSettings);
-      set((state) => applyTimelinePatch(state, decodeThreadRead(state, response.result)));
+      set((state) => applyThreadReadResult(state, response.result));
       return threadId;
     } catch (error) {
       if (isThreadNotFoundError(error)) {
@@ -267,6 +279,33 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
     }
   }
 
+  async function refreshThreadRunSnapshot(threadId: string): Promise<void> {
+    const response = await client.readThread(threadId);
+    set((state) => applyThreadReadResult(state, response.result));
+  }
+
+  async function reconcileRunningThreadsAfterConnect(): Promise<void> {
+    const threadIds = new Set<string>();
+    const { activeThreadId, runningTurnByThread, threads } = get();
+    const listedThreadIds = new Set(threads.map((thread) => thread.id));
+    if (activeThreadId) {
+      threadIds.add(activeThreadId);
+    }
+    for (const [threadId, turnId] of Object.entries(runningTurnByThread)) {
+      if (turnId && listedThreadIds.has(threadId)) {
+        threadIds.add(threadId);
+      }
+    }
+
+    for (const threadId of threadIds) {
+      try {
+        await refreshThreadRunSnapshot(threadId);
+      } catch (error) {
+        set({ lastError: `Connected, but thread state refresh failed: ${errorMessage(error)}` });
+      }
+    }
+  }
+
   return {
     client,
     connectionStatus: "disconnected",
@@ -280,10 +319,15 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
     pendingApprovals: [],
     rateLimitBuckets: [],
     isLoadingRateLimits: false,
+    contextWindowUsageByThread: {},
+    contextWindowUsageLoadedAtByThread: {},
+    contextWindowUsageErrorByThread: {},
+    isLoadingContextWindowUsageByThread: {},
     availableModels: [],
     runtimeSettings: {
       accessMode: "onRequest",
       autoReview: false,
+      gitToolbarEnabled: false,
       planMode: false
     },
     webPushStatus: "checking",
@@ -362,6 +406,7 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
       } catch (error) {
         set({ lastError: `Connected, but initial thread refresh failed: ${errorMessage(error)}` });
       }
+      await reconcileRunningThreadsAfterConnect();
       void get().refreshModels();
       void get().refreshRateLimits();
       void get().refreshWebPushStatus();
@@ -374,8 +419,11 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
         inAppNotifications: state.inAppNotifications.filter((notification) => notification.threadId !== threadId)
       }));
       const response = await client.readThread(threadId);
-      set((state) => applyTimelinePatch(state, decodeThreadRead(state, response.result)));
-      await get().refreshGitStatus();
+      set((state) => applyThreadReadResult(state, response.result));
+      void get().refreshContextWindowUsage(threadId);
+      if (get().runtimeSettings.gitToolbarEnabled === true) {
+        await get().refreshGitStatus();
+      }
     },
 
     async newThread(cwd) {
@@ -390,6 +438,36 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
             [thread.id]: true
           }
         }));
+        if (get().runtimeSettings.gitToolbarEnabled === true) {
+          await get().refreshGitStatus();
+        }
+      }
+    },
+
+    async renameThread(threadId, name) {
+      const normalizedThreadId = threadId.trim();
+      const normalizedName = name.trim();
+      if (!normalizedThreadId || !normalizedName) {
+        throw new Error("Thread name is required.");
+      }
+
+      set({ lastError: undefined });
+      try {
+        const result = await client.renameThread(normalizedThreadId, normalizedName);
+        const resultObject = objectValue(result);
+        const resultThreadId = resolveThreadId(resultObject) ?? normalizedThreadId;
+        const resultName = readString(resultObject.name)
+          || readString(resultObject.title)
+          || readString(resultObject.threadName)
+          || normalizedName;
+        set((state) => ({
+          threads: renameThreadEntries(state.threads, resultThreadId, resultName),
+          lastError: undefined
+        }));
+      } catch (error) {
+        const message = errorMessage(error);
+        set({ lastError: message });
+        throw error;
       }
     },
 
@@ -487,6 +565,46 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
       const next = normalizeRuntimeSettings({ ...get().runtimeSettings, ...settings });
       await writeRuntimeSettings(next);
       set({ runtimeSettings: next });
+    },
+
+    async refreshContextWindowUsage(threadId) {
+      const normalizedThreadId = threadId.trim();
+      if (!normalizedThreadId) {
+        return;
+      }
+      set((state) => ({
+        isLoadingContextWindowUsageByThread: {
+          ...state.isLoadingContextWindowUsageByThread,
+          [normalizedThreadId]: true
+        }
+      }));
+      try {
+        const payload = await client.readContextWindowUsage(
+          normalizedThreadId,
+          get().runningTurnByThread[normalizedThreadId]
+        );
+        set((state) => applyContextUsagePayload(state, normalizedThreadId, objectValue(payload).usage ?? payload));
+      } catch (error) {
+        const fallbackUsage = get().contextWindowUsageByThread[normalizedThreadId] ?? { tokensUsed: 0, tokenLimit: 0 };
+        set((state) => ({
+          contextWindowUsageByThread: {
+            ...state.contextWindowUsageByThread,
+            [normalizedThreadId]: fallbackUsage
+          },
+          contextWindowUsageErrorByThread: {
+            ...state.contextWindowUsageErrorByThread,
+            [normalizedThreadId]: errorMessage(error)
+          },
+          contextWindowUsageLoadedAtByThread: {
+            ...state.contextWindowUsageLoadedAtByThread,
+            [normalizedThreadId]: Date.now()
+          },
+          isLoadingContextWindowUsageByThread: {
+            ...state.isLoadingContextWindowUsageByThread,
+            [normalizedThreadId]: false
+          }
+        }));
+      }
     },
 
     async refreshRateLimits() {
@@ -589,12 +707,14 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
     },
 
     async push() {
-      await client.gitPush(get().gitStatus?.cwd);
+      const cwd = get().gitStatus?.cwd ?? get().threads.find((thread) => thread.id === get().activeThreadId)?.cwd;
+      await client.gitPush(cwd);
       await get().refreshGitStatus();
     },
 
     async pull() {
-      await client.gitPull(get().gitStatus?.cwd);
+      const cwd = get().gitStatus?.cwd ?? get().threads.find((thread) => thread.id === get().activeThreadId)?.cwd;
+      await client.gitPull(cwd);
       await get().refreshGitStatus();
     },
 
@@ -608,13 +728,204 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
   };
 });
 
+function maybeRefreshContextWindowUsageAfterNotification(method: string, params: JSONValue | undefined): void {
+  if (method !== "turn/completed" && method !== "turn/failed") {
+    return;
+  }
+  const threadId = resolveThreadId(objectValue(params));
+  if (threadId) {
+    void useRemodexStore.getState().refreshContextWindowUsage(threadId);
+  }
+}
+
 function applyTimelinePatch<T extends TimelineState>(state: T, next: TimelineState): T {
-  return {
+  const patched = {
     ...state,
     threads: next.threads,
     messagesByThread: next.messagesByThread,
     runningTurnByThread: next.runningTurnByThread
   };
+  if (!hasThreadRunState(patched)) {
+    return patched;
+  }
+  return {
+    ...patched,
+    threadRunStateByThread: reconcileThreadRunStateWithRunningTurns(
+      patched.threadRunStateByThread,
+      next.runningTurnByThread
+    )
+  };
+}
+
+function applyThreadReadResult<T extends RemodexStore>(state: T, result: JSONValue | undefined): T {
+  const patched = applyTimelinePatch(state, decodeThreadRead(state, result));
+  const threadObject = objectValue(objectValue(result).thread ?? result);
+  const threadId = resolveThreadId(threadObject);
+  if (!threadId) {
+    return patched;
+  }
+  const usage = extractContextWindowUsage(threadObject.usage);
+  if (!usage) {
+    return patched;
+  }
+  return {
+    ...patched,
+    ...contextUsageStatePatch(patched, threadId, usage)
+  };
+}
+
+function applyContextUsageUpdate<T extends RemodexStore>(state: T, params: JSONValue | undefined): T {
+  const paramsObject = objectValue(params);
+  const threadId = resolveThreadId(paramsObject);
+  if (!threadId) {
+    return state;
+  }
+  const usage = extractContextWindowUsage(paramsObject.usage);
+  if (!usage) {
+    return state;
+  }
+  return {
+    ...state,
+    ...contextUsageStatePatch(state, threadId, usage)
+  };
+}
+
+function applyContextUsagePayload<T extends RemodexStore>(state: T, threadId: string, payload: unknown): T {
+  const usage = extractContextWindowUsage(payload) ?? { tokensUsed: 0, tokenLimit: 0 };
+  return {
+    ...state,
+    ...contextUsageStatePatch(state, threadId, usage)
+  };
+}
+
+function contextUsageStatePatch(
+  state: RemodexStore,
+  threadId: string,
+  usage: ContextWindowUsage
+): Pick<
+  RemodexStore,
+  "contextWindowUsageByThread"
+    | "contextWindowUsageLoadedAtByThread"
+    | "contextWindowUsageErrorByThread"
+    | "isLoadingContextWindowUsageByThread"
+> {
+  return {
+    contextWindowUsageByThread: {
+      ...state.contextWindowUsageByThread,
+      [threadId]: usage
+    },
+    contextWindowUsageLoadedAtByThread: {
+      ...state.contextWindowUsageLoadedAtByThread,
+      [threadId]: Date.now()
+    },
+    contextWindowUsageErrorByThread: {
+      ...state.contextWindowUsageErrorByThread,
+      [threadId]: undefined
+    },
+    isLoadingContextWindowUsageByThread: {
+      ...state.isLoadingContextWindowUsageByThread,
+      [threadId]: false
+    }
+  };
+}
+
+function extractContextWindowUsage(value: unknown): ContextWindowUsage | undefined {
+  const object = objectValue(value);
+  const tokensUsed = firstNumberForKeys(object, [
+    "tokensUsed",
+    "tokens_used",
+    "totalTokens",
+    "total_tokens",
+    "usedTokens",
+    "used_tokens",
+    "inputTokens",
+    "input_tokens"
+  ]);
+  const explicitLimit = firstNumberForKeys(object, [
+    "tokenLimit",
+    "token_limit",
+    "maxTokens",
+    "max_tokens",
+    "contextWindow",
+    "context_window",
+    "contextSize",
+    "context_size",
+    "maxContextTokens",
+    "max_context_tokens",
+    "inputTokenLimit",
+    "input_token_limit",
+    "maxInputTokens",
+    "max_input_tokens"
+  ]);
+  const tokensRemaining = firstNumberForKeys(object, [
+    "tokensRemaining",
+    "tokens_remaining",
+    "remainingTokens",
+    "remaining_tokens",
+    "remainingInputTokens",
+    "remaining_input_tokens"
+  ]);
+
+  const resolvedTokensUsed = Math.max(0, Math.round(tokensUsed ?? 0));
+  const tokenLimit = explicitLimit != null
+    ? Math.round(explicitLimit)
+    : tokensRemaining != null
+      ? resolvedTokensUsed + Math.max(0, Math.round(tokensRemaining))
+      : undefined;
+  if (tokenLimit == null || tokenLimit <= 0) {
+    return undefined;
+  }
+
+  return {
+    tokensUsed: Math.min(resolvedTokensUsed, tokenLimit),
+    tokenLimit
+  };
+}
+
+function firstNumberForKeys(object: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = readNumber(object[key]);
+    if (value != null) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function hasThreadRunState<T extends TimelineState>(
+  state: T
+): state is T & { threadRunStateByThread: Record<string, ThreadRunState | undefined> } {
+  return "threadRunStateByThread" in state;
+}
+
+function reconcileThreadRunStateWithRunningTurns(
+  stateByThread: Record<string, ThreadRunState | undefined>,
+  runningTurnByThread: Record<string, string | undefined>
+): Record<string, ThreadRunState | undefined> {
+  let next = stateByThread;
+  const threadIds = new Set([
+    ...Object.keys(stateByThread),
+    ...Object.keys(runningTurnByThread)
+  ]);
+
+  for (const threadId of threadIds) {
+    const current = next[threadId];
+    if (runningTurnByThread[threadId]) {
+      if (current !== "approval" && current !== "running") {
+        next = {
+          ...next,
+          [threadId]: "running"
+        };
+      }
+      continue;
+    }
+    if (current === "running") {
+      const { [threadId]: _removed, ...rest } = next;
+      next = rest;
+    }
+  }
+
+  return next;
 }
 
 function applyThreadActivityUpdate<T extends RemodexStore>(
@@ -987,6 +1298,15 @@ function objectValue(value: unknown): Record<string, unknown> {
 function titleForThread(threads: CodexThread[], threadId: string): string {
   const thread = threads.find((entry) => entry.id === threadId);
   return thread?.title || thread?.name || "Conversation";
+}
+
+function renameThreadEntries(threads: CodexThread[], threadId: string, name: string): CodexThread[] {
+  return threads.map((thread) => thread.id === threadId ? {
+    ...thread,
+    title: name,
+    name,
+    updatedAt: thread.updatedAt ?? Date.now()
+  } : thread);
 }
 
 function approvalNotificationBody(request: ApprovalRequest): string {
