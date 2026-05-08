@@ -1921,10 +1921,14 @@ function threadSubtitle(thread: CodexThread, project: ProjectGroup): string {
   if (!project.cwd && thread.cwd) {
     return thread.cwd;
   }
-  return timeLabel(thread.updatedAt ?? thread.createdAt)
+  return timeLabel(threadCreatedAt(thread))
     || thread.status
     || thread.sourceKind
     || project.label;
+}
+
+function threadCreatedAt(thread: CodexThread): string | number | undefined {
+  return timestampFromUUIDv7(thread.id) || thread.createdAt;
 }
 
 function timeLabel(value: string | number | undefined): string | undefined {
@@ -1941,13 +1945,29 @@ function timeLabel(value: string | number | undefined): string | undefined {
 
 function timestampValue(value: string | number | undefined): number {
   if (typeof value === "number") {
-    return value;
+    return value > 10_000_000_000 ? value : value * 1000;
   }
   if (!value) {
     return 0;
   }
+  const numericValue = Number(value);
+  if (Number.isFinite(numericValue) && value.trim() === String(numericValue)) {
+    return numericValue > 10_000_000_000 ? numericValue : numericValue * 1000;
+  }
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function timestampFromUUIDv7(value: string | undefined): number {
+  const normalized = value?.replaceAll("-", "") ?? "";
+  if (!/^[0-9a-f]{32}$/i.test(normalized) || normalized[12].toLowerCase() !== "7") {
+    return 0;
+  }
+  const timestamp = Number.parseInt(normalized.slice(0, 12), 16);
+  const latestReasonableCreation = Date.now() + 24 * 60 * 60 * 1000;
+  return Number.isFinite(timestamp) && timestamp > 0 && timestamp <= latestReasonableCreation
+    ? timestamp
+    : 0;
 }
 
 async function copyText(value: string): Promise<void> {
