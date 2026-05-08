@@ -30,12 +30,14 @@ final class BridgeMenuBarStore: ObservableObject {
     @Published var snapshot: BridgeSnapshot?
     @Published var cliAvailability: BridgeCLIAvailability = .checking
     @Published var relayOverride: String
+    @Published var tailscaleHostOverride: String
     @Published var isRefreshing = false
     @Published var isPerformingAction = false
     @Published var transientMessage = ""
     @Published var errorMessage = ""
 
     private static let relayOverrideKey = "remodex.menuBar.relayOverride"
+    private static let tailscaleHostOverrideKey = "remodex.menuBar.tailscaleHostOverride"
     private let service: BridgeControlService
     private var refreshLoopTask: Task<Void, Never>?
 
@@ -44,6 +46,7 @@ final class BridgeMenuBarStore: ObservableObject {
     init(service: BridgeControlService? = nil) {
         self.service = service ?? BridgeControlService()
         self.relayOverride = UserDefaults.standard.string(forKey: Self.relayOverrideKey) ?? ""
+        self.tailscaleHostOverride = UserDefaults.standard.string(forKey: Self.tailscaleHostOverrideKey) ?? ""
         startRefreshLoop()
 
         Task {
@@ -78,6 +81,23 @@ final class BridgeMenuBarStore: ObservableObject {
 
     func clearRelayOverride() {
         applyRelayOverride("", successMessage: "Default relay restored.")
+    }
+
+    func saveTailscaleHostOverride(_ value: String) {
+        let normalizedHost = Self.normalizeTailscaleHost(value)
+        tailscaleHostOverride = normalizedHost
+        if normalizedHost.isEmpty {
+            UserDefaults.standard.removeObject(forKey: Self.tailscaleHostOverrideKey)
+            transientMessage = "Tailscale address cleared."
+        } else {
+            UserDefaults.standard.set(normalizedHost, forKey: Self.tailscaleHostOverrideKey)
+            transientMessage = "Tailscale address saved."
+        }
+        errorMessage = ""
+    }
+
+    func clearTailscaleHostOverride() {
+        saveTailscaleHostOverride("")
     }
 
     private func applyRelayOverride(_ value: String, successMessage: String) {
@@ -225,6 +245,32 @@ final class BridgeMenuBarStore: ObservableObject {
 
     private var effectiveRelayOverride: String? {
         relayOverride.isEmpty ? nil : relayOverride
+    }
+
+    var effectiveTailscaleHost: String {
+        if let overrideHost = Self.normalizeTailscaleHost(tailscaleHostOverride).nonEmptyTrimmed {
+            return overrideHost
+        }
+
+        return snapshot?.tailscaleDNSName?.nonEmptyTrimmed ?? ""
+    }
+
+    var tailscaleRelayURL: String {
+        let host = effectiveTailscaleHost
+        guard !host.isEmpty else {
+            return snapshot?.tailscaleRelayURL ?? ""
+        }
+
+        return "wss://\(host)/relay"
+    }
+
+    var tailscaleWebAppURL: String {
+        let host = effectiveTailscaleHost
+        guard !host.isEmpty else {
+            return snapshot?.tailscaleWebAppURL ?? ""
+        }
+
+        return "https://\(host)/app/"
     }
 
     var isCLIAvailable: Bool {
@@ -385,6 +431,31 @@ final class BridgeMenuBarStore: ObservableObject {
         return normalized
     }
 
+    private static func normalizeTailscaleHost(_ value: String) -> String {
+        let trimmed = value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard !trimmed.isEmpty else {
+            return ""
+        }
+
+        let parseCandidate = trimmed.contains("://") ? trimmed : "https://\(trimmed)"
+        if let components = URLComponents(string: parseCandidate),
+           let host = components.host?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !host.isEmpty {
+            return host
+                .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+                .lowercased()
+        }
+
+        return trimmed
+            .split(separator: "/")
+            .first
+            .map(String.init)?
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            .lowercased() ?? ""
+    }
+
     private func runAction(
         successMessage: String,
         operation: @escaping @MainActor () async throws -> Void
@@ -409,5 +480,12 @@ final class BridgeMenuBarStore: ObservableObject {
                 self.errorMessage = error.localizedDescription
             }
         }
+    }
+}
+
+private extension String {
+    var nonEmptyTrimmed: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

@@ -19,6 +19,7 @@ struct BridgeSnapshot: Codable, Equatable {
     let trustedDevices: [BridgeTrustedDevice]?
     let stdoutLogPath: String
     let stderrLogPath: String
+    let tailscaleDNSName: String?
 }
 
 struct BridgeDaemonConfig: Codable, Equatable {
@@ -189,11 +190,15 @@ extension BridgeSnapshot {
     }
 
     var tailscaleRelayURL: String {
-        guard classifyRelay(effectiveRelayURL) != "Local" else {
+        if classifyRelay(effectiveRelayURL) != "Local" {
+            return effectiveRelayURL
+        }
+
+        guard let host = tailscaleDNSName?.nonEmptyTrimmed else {
             return ""
         }
 
-        return effectiveRelayURL
+        return "wss://\(host)/relay"
     }
 
     var tailscaleWebAppURL: String {

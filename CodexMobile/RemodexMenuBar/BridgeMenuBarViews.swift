@@ -207,6 +207,7 @@ struct BridgeMenuBarContentView: View {
 struct BridgeControlCenterWindow: View {
     @ObservedObject var store: BridgeMenuBarStore
     @State private var relayDraft = ""
+    @State private var tailscaleHostDraft = ""
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -232,9 +233,13 @@ struct BridgeControlCenterWindow: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .task {
             relayDraft = store.relayOverride
+            tailscaleHostDraft = store.tailscaleHostOverride
         }
         .onChange(of: store.relayOverride) { _, newValue in
             relayDraft = newValue
+        }
+        .onChange(of: store.tailscaleHostOverride) { _, newValue in
+            tailscaleHostDraft = newValue
         }
     }
 
@@ -361,6 +366,34 @@ struct BridgeControlCenterWindow: View {
                 }
                 CompactActionButton("Copy Local Relay", style: .secondary, isDisabled: !isActiveLocalLANRelay) {
                     store.copyTextToPasteboard(localLANRelayURLLabel, successMessage: "Local relay copied.")
+                }
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 7) {
+                LabelValueRow(label: "Tailscale Address", value: tailscaleHostAddressLabel)
+
+                TextField("mac-name.tailxxxx.ts.net or https://mac-name.tailxxxx.ts.net/app/", text: $tailscaleHostDraft)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color(nsColor: .textBackgroundColor).opacity(0.82), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    )
+
+                HStack(spacing: 8) {
+                    CompactActionButton("Save Tailscale Address", style: .primary) {
+                        store.saveTailscaleHostOverride(tailscaleHostDraft)
+                    }
+                    CompactActionButton("Auto Detect", style: .secondary) {
+                        tailscaleHostDraft = ""
+                        store.clearTailscaleHostOverride()
+                        Task { await store.refresh(showSpinner: true) }
+                    }
                 }
             }
 
@@ -584,11 +617,16 @@ struct BridgeControlCenterWindow: View {
     }
 
     private var tailscaleRelayURLLabel: String {
-        store.snapshot?.tailscaleRelayURL ?? ""
+        store.tailscaleRelayURL
     }
 
     private var tailscaleWebAppURLLabel: String {
-        store.snapshot?.tailscaleWebAppURL ?? ""
+        store.tailscaleWebAppURL
+    }
+
+    private var tailscaleHostAddressLabel: String {
+        let host = store.effectiveTailscaleHost
+        return host.isEmpty ? "Auto detect or paste address" : host
     }
 
     private var localLANRelayURLLabel: String {
@@ -623,11 +661,8 @@ struct BridgeControlCenterWindow: View {
         }
 
         var queryItems = [URLQueryItem(name: "entry", value: entry)]
-        if entry == "tailscale" {
-            queryItems.append(URLQueryItem(name: "tailscaleRelay", value: tailscaleRelayURLLabel))
-        } else if entry == "local" {
-            queryItems.append(URLQueryItem(name: "localRelay", value: localLANRelayURLLabel))
-        }
+        queryItems.append(URLQueryItem(name: "tailscaleRelay", value: tailscaleRelayURLLabel))
+        queryItems.append(URLQueryItem(name: "localRelay", value: localLANRelayURLLabel))
 
         components.queryItems = queryItems.filter { !($0.value ?? "").isEmpty }
 

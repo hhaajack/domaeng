@@ -156,6 +156,7 @@ final class BridgeControlService {
     private let cliCacheTTL: TimeInterval = 60
     private var cachedInvocation: BridgeCLIInvocation?
     private var cachedAvailability: (availability: BridgeCLIAvailability, checkedAt: Date)?
+    private var cachedTailscaleDNSName: (value: String, checkedAt: Date)?
 
     init(runner: ShellCommandRunner = ShellCommandRunner()) {
         self.runner = runner
@@ -320,7 +321,8 @@ final class BridgeControlService {
             pairingSession: pairingSession,
             trustedDevices: [],
             stdoutLogPath: stdoutLogPath,
-            stderrLogPath: stderrLogPath
+            stderrLogPath: stderrLogPath,
+            tailscaleDNSName: await tailscaleDNSName()
         )
     }
 
@@ -344,8 +346,131 @@ final class BridgeControlService {
             pairingSession: pairingSession,
             trustedDevices: trustedDevices,
             stdoutLogPath: stateDirectory.appendingPathComponent("logs/bridge.stdout.log").path,
-            stderrLogPath: stateDirectory.appendingPathComponent("logs/bridge.stderr.log").path
+            stderrLogPath: stateDirectory.appendingPathComponent("logs/bridge.stderr.log").path,
+            tailscaleDNSName: await tailscaleDNSName()
         )
+    }
+
+    private func tailscaleDNSName() async -> String? {
+        if let cachedTailscaleDNSName,
+           Date().timeIntervalSince(cachedTailscaleDNSName.checkedAt) < cliCacheTTL {
+            return nonEmptyTrimmed(cachedTailscaleDNSName.value)
+        }
+
+        let detectedDNSName: String?
+        if let cliDNSName = await tailscaleDNSNameFromCLI() {
+            detectedDNSName = cliDNSName
+        } else if let defaultsDNSName = await tailscaleDNSNameFromDefaults() {
+            detectedDNSName = defaultsDNSName
+        } else {
+            detectedDNSName = tailscaleDNSNameFromCachedProfile()
+        }
+
+        if let dnsName = detectedDNSName {
+            let normalized = normalizeTailscaleDNSName(dnsName)
+            cachedTailscaleDNSName = (normalized, Date())
+            return nonEmptyTrimmed(normalized)
+        }
+
+        cachedTailscaleDNSName = ("", Date())
+        return nil
+    }
+
+    private func tailscaleDNSNameFromCLI() async -> String? {
+        do {
+            let result = try await runner.run(command: "tailscale status --json")
+            guard let data = result.stdout.data(using: .utf8),
+                  let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let selfObject = object["Self"] as? [String: Any],
+                  let dnsName = selfObject["DNSName"] as? String else {
+                return nil
+            }
+
+            return nonEmptyTrimmed(dnsName)
+        } catch {
+            return nil
+        }
+    }
+
+    private func tailscaleDNSNameFromDefaults() async -> String? {
+        do {
+            let result = try await runner.runExecutable(
+                "/usr/bin/defaults",
+                arguments: ["export", "io.tailscale.ipn.macos", "-"]
+            )
+            guard let plistData = result.stdout.data(using: .utf8),
+                  let magicDNSName = tailscaleMagicDNSName(fromPlistData: plistData) else {
+                return nil
+            }
+
+            return "\(tailscaleNodeName()).\(magicDNSName)"
+        } catch {
+            return nil
+        }
+    }
+
+    private func tailscaleDNSNameFromCachedProfile() -> String? {
+        let preferencesURL = URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Preferences", isDirectory: true)
+            .appendingPathComponent("io.tailscale.ipn.macos.plist")
+
+        guard let plistData = try? Data(contentsOf: preferencesURL),
+              let magicDNSName = tailscaleMagicDNSName(fromPlistData: plistData) else {
+            return nil
+        }
+
+        let nodeName = tailscaleNodeName()
+        return "\(nodeName).\(magicDNSName)"
+    }
+
+    private func tailscaleMagicDNSName(fromPlistData plistData: Data) -> String? {
+        let profileKey = "com.tailscale.cached.currentProfile"
+        var format = PropertyListSerialization.PropertyListFormat.xml
+        guard let plist = try? PropertyListSerialization.propertyList(from: plistData, format: &format) as? [String: Any],
+              let profileData = plist[profileKey] as? Data else {
+            return nil
+        }
+
+        return tailscaleMagicDNSName(fromProfileData: profileData)
+    }
+
+    private func tailscaleMagicDNSName(fromProfileData profileData: Data) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: profileData) as? [String: Any],
+              let networkProfile = object["NetworkProfile"] as? [String: Any],
+              let magicDNSName = networkProfile["MagicDNSName"] as? String else {
+            return nil
+        }
+
+        return nonEmptyTrimmed(normalizeTailscaleDNSName(magicDNSName))
+    }
+
+    private func tailscaleNodeName() -> String {
+        let hostName = ProcessInfo.processInfo.hostName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            .replacingOccurrences(of: " ", with: "-")
+            .lowercased()
+        let withoutLocalSuffix = hostName.hasSuffix(".local")
+            ? String(hostName.dropLast(".local".count))
+            : hostName
+
+        guard !withoutLocalSuffix.isEmpty else {
+            return "localhost"
+        }
+
+        return withoutLocalSuffix
+    }
+
+    private func normalizeTailscaleDNSName(_ dnsName: String) -> String {
+        dnsName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+    }
+
+    private func nonEmptyTrimmed(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private func readLaunchAgentState() async -> (loaded: Bool, pid: Int?) {
