@@ -207,3 +207,53 @@ test("remodex trusted-device disable emits machine-readable result", async () =>
   assert.equal(payload.trustedDevice.id, "dev_abc123");
   assert.equal(payload.trustedDevice.status, "disabled");
 });
+
+test("remodex renew-pairing emits the fresh daemon pairing session", async () => {
+  const writes = [];
+  const originalWrite = process.stdout.write;
+
+  process.stdout.write = (chunk, encoding, callback) => {
+    writes.push(String(chunk));
+    if (typeof callback === "function") {
+      callback();
+    }
+    return true;
+  };
+
+  try {
+    await main({
+      argv: ["node", "remodex", "renew-pairing", "--json"],
+      platform: "darwin",
+      consoleImpl: {
+        log() {},
+        error(message) {
+          throw new Error(`unexpected error: ${message}`);
+        },
+      },
+      exitImpl(code) {
+        throw new Error(`unexpected exit ${code}`);
+      },
+      deps: {
+        async requestMacOSBridgePairingRenewal(options) {
+          assert.deepEqual(options, { waitForPairing: true });
+          return {
+            request: { id: "renew-1" },
+            pairingSession: {
+              pairingCode: "ABCD2345EF",
+              pairingPayload: {
+                sessionId: "session-renewed",
+              },
+            },
+          };
+        },
+      },
+    });
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+
+  const payload = JSON.parse(writes.join("").trim());
+  assert.equal(payload.ok, true);
+  assert.equal(payload.request.id, "renew-1");
+  assert.equal(payload.pairingSession.pairingPayload.sessionId, "session-renewed");
+});

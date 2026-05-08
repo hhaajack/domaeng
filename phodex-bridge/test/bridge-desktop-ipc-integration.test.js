@@ -341,6 +341,7 @@ function createPlaintextSecureTransport() {
     queueOutboundApplicationMessage(message, sendWireMessage) {
       sendWireMessage(message);
     },
+    replaceDeviceState() {},
   };
 }
 
@@ -356,8 +357,18 @@ function createSecureDeviceStateDouble() {
     getEnabledTrustedPhones(deviceState) {
       return deviceState.trustedPhones || {};
     },
+    readBridgeDeviceState() {
+      return {
+        macDeviceId: "mac-test",
+        macIdentityPublicKey: "mac-key-test",
+        trustedPhones: {},
+      };
+    },
     rememberLastSeenPhoneAppVersion(deviceState) {
       return deviceState;
+    },
+    resolveBridgeDeviceStateFile() {
+      return "/tmp/remodex-device-state-test.json";
     },
     resolveBridgeRelaySession(deviceState) {
       return {

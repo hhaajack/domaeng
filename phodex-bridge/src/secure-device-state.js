@@ -347,6 +347,10 @@ function resolveStoreFile() {
     || path.join(resolveStoreDir(), "device-state.json");
 }
 
+function resolveBridgeDeviceStateFile() {
+  return resolveStoreFile();
+}
+
 function resolveKeychainMirrorFile() {
   return normalizeNonEmptyString(process.env.REMODEX_DEVICE_STATE_KEYCHAIN_MOCK_FILE);
 }
@@ -710,6 +714,7 @@ module.exports = {
   renameTrustedDevice,
   revokeTrustedDevice,
   resetBridgeDeviceState,
+  resolveBridgeDeviceStateFile,
   resolveBridgeRelaySession,
   setTrustedDeviceEnabled,
 };

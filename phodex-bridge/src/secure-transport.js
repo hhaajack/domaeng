@@ -532,6 +532,10 @@ function createBridgeSecureTransport({
     }
   }
 
+  function replaceDeviceState(nextDeviceState) {
+    currentDeviceState = nextDeviceState;
+  }
+
   return {
     PAIRING_QR_VERSION,
     SECURE_PROTOCOL_VERSION,
@@ -540,6 +544,7 @@ function createBridgeSecureTransport({
     handleIncomingWireMessage,
     isSecureChannelReady,
     queueOutboundApplicationMessage,
+    replaceDeviceState,
   };
 }
 

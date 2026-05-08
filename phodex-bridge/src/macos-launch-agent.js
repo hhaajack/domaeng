@@ -20,6 +20,7 @@ const {
   readBridgeStatus,
   readDaemonConfig,
   readPairingSession,
+  writePairingRenewRequest,
   resolveBridgeStderrLogPath,
   resolveBridgeStdoutLogPath,
   resolveRemodexStateDir,
@@ -154,6 +155,46 @@ function resetMacOSBridgePairing({
     fsImpl,
   });
   return resetBridgePairingImpl();
+}
+
+async function requestMacOSBridgePairingRenewal({
+  env = process.env,
+  platform = process.platform,
+  execFileSyncImpl = execFileSync,
+  fsImpl = fs,
+  waitForPairing = true,
+  pairingTimeoutMs = 5_000,
+  pairingPollIntervalMs = DEFAULT_PAIRING_WAIT_INTERVAL_MS,
+} = {}) {
+  assertDarwinPlatform(platform);
+  const launchd = readLaunchAgentState({
+    env,
+    execFileSyncImpl,
+  });
+  if (!launchd.loaded) {
+    throw new Error("The macOS bridge service is not running. Start Remodex before renewing the pairing code.");
+  }
+
+  const request = writePairingRenewRequest({ env, fsImpl });
+  if (!waitForPairing) {
+    return {
+      request,
+      pairingSession: null,
+    };
+  }
+
+  const requestedAt = Date.parse(request.requestedAt || "") || Date.now();
+  const pairingSession = await waitForFreshPairingSession({
+    env,
+    fsImpl,
+    startedAt: requestedAt,
+    timeoutMs: pairingTimeoutMs,
+    intervalMs: pairingPollIntervalMs,
+  });
+  return {
+    request,
+    pairingSession,
+  };
 }
 
 function getMacOSBridgeServiceStatus({
@@ -489,6 +530,7 @@ module.exports = {
   mergeBridgeStatusForDaemon,
   printMacOSBridgePairingQr,
   printMacOSBridgeServiceStatus,
+  requestMacOSBridgePairingRenewal,
   resetMacOSBridgePairing,
   resolveLaunchAgentPlistPath,
   runMacOSBridgeService,

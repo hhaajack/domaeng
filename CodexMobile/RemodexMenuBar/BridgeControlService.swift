@@ -2,8 +2,10 @@
 // Purpose: Wraps the existing remodex shell commands so the menu bar app can detect the global CLI and control the bridge.
 // Layer: Companion app service
 // Exports: BridgeControlService, ShellCommandRunner
-// Depends on: Foundation, BridgeControlModels
+// Depends on: CryptoKit, Darwin, Foundation, BridgeControlModels
 
+import CryptoKit
+import Darwin
 import Foundation
 
 struct BridgeCLIInvocation {
@@ -82,6 +84,55 @@ final class ShellCommandRunner {
         }.value
     }
 
+    // Runs a known executable directly for local control-plane reads that do not need shell PATH setup.
+    func runExecutable(
+        _ executablePath: String,
+        arguments: [String],
+        environment: [String: String] = [:]
+    ) async throws -> ShellCommandResult {
+        try await Task.detached(priority: .userInitiated) {
+            let process = Process()
+            let stdoutPipe = Pipe()
+            let stderrPipe = Pipe()
+            let stdoutReader = Task.detached(priority: .userInitiated) {
+                stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+            }
+            let stderrReader = Task.detached(priority: .userInitiated) {
+                stderrPipe.fileHandleForReading.readDataToEndOfFile()
+            }
+
+            process.executableURL = URL(fileURLWithPath: executablePath)
+            process.arguments = arguments
+            process.currentDirectoryURL = URL(fileURLWithPath: NSHomeDirectory())
+            process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, override in
+                override
+            }
+            process.standardOutput = stdoutPipe
+            process.standardError = stderrPipe
+
+            try process.run()
+            process.waitUntilExit()
+
+            let stdout = String(data: await stdoutReader.value, encoding: .utf8) ?? ""
+            let stderr = String(data: await stderrReader.value, encoding: .utf8) ?? ""
+            let result = ShellCommandResult(
+                stdout: stdout.trimmingCharacters(in: .whitespacesAndNewlines),
+                stderr: stderr.trimmingCharacters(in: .whitespacesAndNewlines),
+                exitCode: process.terminationStatus
+            )
+
+            guard result.exitCode == 0 else {
+                let message = result.stderr.isEmpty ? result.stdout : result.stderr
+                throw BridgeControlError.commandFailed(
+                    command: ([executablePath] + arguments).joined(separator: " "),
+                    message: message.isEmpty ? "Command failed: \(executablePath)" : message
+                )
+            }
+
+            return result
+        }.value
+    }
+
     // Silently loads interactive zsh PATH customizations so GUI-launched commands see the same global CLI install as Terminal.
     private nonisolated func wrappedShellCommand(_ command: String) -> String {
         [
@@ -102,28 +153,49 @@ final class BridgeControlService {
         .appendingPathComponent("Library", isDirectory: true)
         .appendingPathComponent("LaunchAgents", isDirectory: true)
         .appendingPathComponent("com.remodex.bridge.plist")
+    private let cliCacheTTL: TimeInterval = 60
+    private var cachedInvocation: BridgeCLIInvocation?
+    private var cachedAvailability: (availability: BridgeCLIAvailability, checkedAt: Date)?
 
     init(runner: ShellCommandRunner = ShellCommandRunner()) {
         self.runner = runner
     }
 
     // Confirms the product contract for this companion: a global `remodex` CLI must be runnable first.
-    func detectCLIAvailability() async -> BridgeCLIAvailability {
+    func detectCLIAvailability(forceRefresh: Bool = false) async -> BridgeCLIAvailability {
+        if !forceRefresh,
+           let cachedAvailability,
+           Date().timeIntervalSince(cachedAvailability.checkedAt) < cliCacheTTL {
+            return cachedAvailability.availability
+        }
+
         do {
-            let invocation = try await resolveCLIInvocation()
+            let invocation = try await resolveCLIInvocation(forceRefresh: forceRefresh)
             let result = try await runner.run(command: invocation.command(["--version"]))
             guard let version = parseVersion(result.stdout) else {
-                return .broken(message: "The installed CLI returned an unreadable version.")
+                let availability: BridgeCLIAvailability = .broken(message: "The installed CLI returned an unreadable version.")
+                cachedAvailability = (availability, Date())
+                return availability
             }
 
-            return .available(version: version)
+            let availability: BridgeCLIAvailability = .available(version: version)
+            cachedAvailability = (availability, Date())
+            return availability
         } catch {
-            return classifyCLIAvailability(from: error)
+            cachedInvocation = nil
+            let availability = classifyCLIAvailability(from: error)
+            cachedAvailability = (availability, Date())
+            return availability
         }
     }
 
-    // Loads the daemon snapshot from the CLI so the menu bar stays aligned with the package's real control plane.
+    // Loads the daemon snapshot from local state first, avoiding a full shell + Node CLI round-trip on every refresh.
     func loadSnapshot(relayOverride: String?) async throws -> BridgeSnapshot {
+        let currentVersion = cachedVersionLabel ?? BridgeClientCompatibility.fallbackSupportedBridgeVersion
+        if let snapshot = await loadLocalSnapshot(currentVersion: currentVersion) {
+            return snapshot
+        }
+
         let invocation = try await resolveCLIInvocation()
         let result = try await runner.run(
             command: invocation.command(["status", "--json"]),
@@ -168,6 +240,14 @@ final class BridgeControlService {
         let invocation = try await resolveCLIInvocation()
         _ = try await runner.run(
             command: invocation.command(["reset-pairing"]),
+            environment: commandEnvironment(relayOverride: relayOverride)
+        )
+    }
+
+    func renewPairing(relayOverride: String?) async throws {
+        let invocation = try await resolveCLIInvocation()
+        _ = try await runner.run(
+            command: invocation.command(["renew-pairing", "--json"]),
             environment: commandEnvironment(relayOverride: relayOverride)
         )
     }
@@ -244,11 +324,142 @@ final class BridgeControlService {
         )
     }
 
+    private func loadLocalSnapshot(currentVersion: String) async -> BridgeSnapshot? {
+        let stateDirectory = resolveStateDirectory(statusLines: [:])
+        let launchdState = await readLaunchAgentState()
+        let daemonConfig: BridgeDaemonConfig? = readStateFile(named: "daemon-config.json", in: stateDirectory)
+        let bridgeStatus: BridgeRuntimeStatus? = readStateFile(named: "bridge-status.json", in: stateDirectory)
+        let pairingSession: BridgePairingSession? = readStateFile(named: "pairing-session.json", in: stateDirectory)
+        let trustedDevices = readTrustedDevices(in: stateDirectory)
+
+        return BridgeSnapshot(
+            currentVersion: currentVersion,
+            label: "com.remodex.bridge",
+            platform: "darwin",
+            installed: fileManager.fileExists(atPath: launchAgentPlistURL.path),
+            launchdLoaded: launchdState.loaded,
+            launchdPid: launchdState.pid,
+            daemonConfig: daemonConfig,
+            bridgeStatus: bridgeStatus,
+            pairingSession: pairingSession,
+            trustedDevices: trustedDevices,
+            stdoutLogPath: stateDirectory.appendingPathComponent("logs/bridge.stdout.log").path,
+            stderrLogPath: stateDirectory.appendingPathComponent("logs/bridge.stderr.log").path
+        )
+    }
+
+    private func readLaunchAgentState() async -> (loaded: Bool, pid: Int?) {
+        let labelDomain = "gui/\(getuid())/com.remodex.bridge"
+        do {
+            let result = try await runner.runExecutable(
+                "/bin/launchctl",
+                arguments: ["print", labelDomain]
+            )
+            return (true, parseLaunchdPid(result.stdout))
+        } catch {
+            return (false, nil)
+        }
+    }
+
+    private func parseLaunchdPid(_ output: String) -> Int? {
+        guard let regex = try? NSRegularExpression(pattern: "\\bpid = (\\d+)") else {
+            return nil
+        }
+
+        let range = NSRange(output.startIndex..<output.endIndex, in: output)
+        guard let match = regex.firstMatch(in: output, range: range),
+              match.numberOfRanges > 1,
+              let pidRange = Range(match.range(at: 1), in: output) else {
+            return nil
+        }
+
+        return Int(output[pidRange])
+    }
+
+    private func readTrustedDevices(in stateDirectory: URL) -> [BridgeTrustedDevice] {
+        let deviceStateURL = stateDirectory.appendingPathComponent("device-state.json")
+        guard let data = try? Data(contentsOf: deviceStateURL),
+              let state = try? decoder.decode(BridgeDeviceStateFile.self, from: data) else {
+            return []
+        }
+
+        return (state.trustedPhones ?? [:])
+            .map { deviceId, publicKey in
+                trustedDeviceSnapshot(
+                    deviceId: deviceId,
+                    publicKey: publicKey,
+                    metadata: state.trustedPhoneMetadata?[deviceId]
+                )
+            }
+            .sorted(by: compareTrustedDevices)
+    }
+
+    private func trustedDeviceSnapshot(
+        deviceId: String,
+        publicKey: String,
+        metadata: BridgeTrustedPhoneMetadata?
+    ) -> BridgeTrustedDevice {
+        let fingerprint = trustedDeviceFingerprint(publicKey)
+        let kind = normalizeDeviceKind(metadata?.deviceKind) ?? inferTrustedDeviceKind(deviceId)
+        let displayName = normalizeDisplayName(metadata?.displayName)
+            ?? defaultTrustedDeviceDisplayName(kind: kind, fingerprint: fingerprint)
+        let disabledAt = normalizeDateString(metadata?.disabledAt)
+
+        return BridgeTrustedDevice(
+            id: trustedDeviceRecordId(deviceId: deviceId, publicKey: publicKey),
+            displayName: displayName,
+            kind: kind,
+            fingerprint: fingerprint,
+            trustedAt: normalizeDateString(metadata?.trustedAt),
+            lastSeenAt: normalizeDateString(metadata?.lastSeenAt),
+            disabledAt: disabledAt,
+            status: disabledAt == nil ? "enabled" : "disabled"
+        )
+    }
+
+    private func compareTrustedDevices(_ lhs: BridgeTrustedDevice, _ rhs: BridgeTrustedDevice) -> Bool {
+        let lhsTime = Date.parseBridgeControlDate(lhs.lastSeenAt ?? lhs.trustedAt ?? "")?.timeIntervalSince1970 ?? 0
+        let rhsTime = Date.parseBridgeControlDate(rhs.lastSeenAt ?? rhs.trustedAt ?? "")?.timeIntervalSince1970 ?? 0
+        if lhsTime != rhsTime {
+            return lhsTime > rhsTime
+        }
+        return lhs.displayName.localizedCompare(rhs.displayName) == .orderedAscending
+    }
+
+    private func trustedDeviceRecordId(deviceId: String, publicKey: String) -> String {
+        let input = "\(deviceId)\u{0}\(publicKey)"
+        return "dev_" + String(sha256Hex(Data(input.utf8)).prefix(12))
+    }
+
+    private func trustedDeviceFingerprint(_ publicKey: String) -> String {
+        let normalizedPublicKey = publicKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let inputData = Data(base64Encoded: normalizedPublicKey) ?? Data(normalizedPublicKey.utf8)
+        let digest = sha256Hex(inputData).prefix(8).uppercased()
+        guard digest.count == 8 else {
+            return digest
+        }
+        let splitIndex = digest.index(digest.startIndex, offsetBy: 4)
+        return "\(digest[..<splitIndex]) \(digest[splitIndex...])"
+    }
+
     // Resolves both the CLI script and the Node runtime from stable absolute paths before the menu bar invokes them.
-    private func resolveCLIInvocation() async throws -> BridgeCLIInvocation {
+    private var cachedVersionLabel: String? {
+        guard case .available(let version) = cachedAvailability?.availability else {
+            return nil
+        }
+        return version
+    }
+
+    private func resolveCLIInvocation(forceRefresh: Bool = false) async throws -> BridgeCLIInvocation {
+        if !forceRefresh, let cachedInvocation {
+            return cachedInvocation
+        }
+
         let remodexPath = try await resolveExecutable(named: "remodex")
         let nodePath = try await resolveNodePath(for: remodexPath)
-        return BridgeCLIInvocation(nodePath: nodePath, remodexPath: remodexPath)
+        let invocation = BridgeCLIInvocation(nodePath: nodePath, remodexPath: remodexPath)
+        cachedInvocation = invocation
+        return invocation
     }
 
     private func parseStatusLines(_ output: String) -> [String: String] {
@@ -511,6 +722,92 @@ final class BridgeControlService {
         return [
             "REMODEX_RELAY": relayOverride.trimmingCharacters(in: .whitespacesAndNewlines),
         ]
+    }
+}
+
+private struct BridgeDeviceStateFile: Decodable {
+    let trustedPhones: [String: String]?
+    let trustedPhoneMetadata: [String: BridgeTrustedPhoneMetadata]?
+}
+
+private struct BridgeTrustedPhoneMetadata: Decodable {
+    let displayName: String?
+    let deviceKind: String?
+    let trustedAt: String?
+    let lastSeenAt: String?
+    let disabledAt: String?
+}
+
+private func sha256Hex(_ data: Data) -> String {
+    SHA256.hash(data: data)
+        .map { String(format: "%02x", $0) }
+        .joined()
+}
+
+private func normalizeDisplayName(_ value: String?) -> String? {
+    let trimmed = value?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .components(separatedBy: .whitespacesAndNewlines)
+        .filter { !$0.isEmpty }
+        .joined(separator: " ") ?? ""
+    guard !trimmed.isEmpty else {
+        return nil
+    }
+    return String(trimmed.prefix(80))
+}
+
+private func normalizeDeviceKind(_ value: String?) -> String? {
+    let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    if normalized == "ios" || normalized == "web" || normalized == "android" {
+        return normalized
+    }
+    return normalized.isEmpty ? nil : "unknown"
+}
+
+private func inferTrustedDeviceKind(_ deviceId: String) -> String {
+    deviceId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("web-") ? "web" : "ios"
+}
+
+private func defaultTrustedDeviceDisplayName(kind: String, fingerprint: String) -> String {
+    switch kind {
+    case "web":
+        return "Web Device \(fingerprint)"
+    case "ios":
+        return "iPhone \(fingerprint)"
+    case "android":
+        return "Android Device \(fingerprint)"
+    default:
+        return "Device \(fingerprint)"
+    }
+}
+
+private func normalizeDateString(_ value: String?) -> String? {
+    guard let date = Date.parseBridgeControlDate(value ?? "") else {
+        return nil
+    }
+    return bridgeControlISO8601Formatter.string(from: date)
+}
+
+private let bridgeControlISO8601Formatter: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+}()
+
+private let bridgeControlPlainISO8601Formatter: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime]
+    return formatter
+}()
+
+private extension Date {
+    static func parseBridgeControlDate(_ value: String) -> Date? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        return bridgeControlISO8601Formatter.date(from: trimmed)
+            ?? bridgeControlPlainISO8601Formatter.date(from: trimmed)
     }
 }
 

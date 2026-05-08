@@ -56,11 +56,12 @@ final class BridgeMenuBarStore: ObservableObject {
     }
 
     // Refreshes the bridge snapshot so the menu bar stays aligned with the local control plane.
-    func refresh(showSpinner: Bool = false) async {
+    func refresh(showSpinner: Bool = false, forceCLIRefresh: Bool = false) async {
         do {
             _ = try await performRefresh(
                 showSpinner: showSpinner,
-                clearSnapshotOnFailure: false
+                clearSnapshotOnFailure: false,
+                forceCLIRefresh: forceCLIRefresh
             )
         } catch {
             // Passive refreshes keep the last known snapshot so brief shell hiccups do not blank the menu bar.
@@ -135,8 +136,18 @@ final class BridgeMenuBarStore: ObservableObject {
         runAction(successMessage: "Pairing refreshed.") {
             try await self.requireCLIAvailability()
             let previousPairingDate = self.snapshot?.pairingSession?.createdDate
-            try await self.service.startBridge(relayOverride: self.effectiveRelayOverride)
-            try await self.waitForFreshPairing(after: previousPairingDate, expectedRelayURL: self.effectiveRelayOverride)
+            if self.snapshot?.launchdLoaded == true {
+                do {
+                    try await self.service.renewPairing(relayOverride: self.effectiveRelayOverride)
+                    try await self.refreshAfterAction()
+                } catch {
+                    try await self.service.startBridge(relayOverride: self.effectiveRelayOverride)
+                    try await self.waitForFreshPairing(after: previousPairingDate, expectedRelayURL: self.effectiveRelayOverride)
+                }
+            } else {
+                try await self.service.startBridge(relayOverride: self.effectiveRelayOverride)
+                try await self.waitForFreshPairing(after: previousPairingDate, expectedRelayURL: self.effectiveRelayOverride)
+            }
         }
     }
 
@@ -169,7 +180,7 @@ final class BridgeMenuBarStore: ObservableObject {
 
     func retryCLISetup() {
         Task {
-            await self.refresh(showSpinner: true)
+            await self.refresh(showSpinner: true, forceCLIRefresh: true)
         }
     }
 
@@ -245,7 +256,12 @@ final class BridgeMenuBarStore: ObservableObject {
 
     @discardableResult
     private func refreshCLIAvailability() async -> BridgeCLIAvailability {
-        let availability = await service.detectCLIAvailability()
+        await refreshCLIAvailability(forceRefresh: false)
+    }
+
+    @discardableResult
+    private func refreshCLIAvailability(forceRefresh: Bool) async -> BridgeCLIAvailability {
+        let availability = await service.detectCLIAvailability(forceRefresh: forceRefresh)
         cliAvailability = availability
         return availability
     }
@@ -271,11 +287,7 @@ final class BridgeMenuBarStore: ObservableObject {
         _ = device
         runAction(successMessage: successMessage) {
             try await self.requireCLIAvailability()
-            let shouldRestartBridge = self.snapshot?.launchdLoaded == true
             try await action()
-            if shouldRestartBridge {
-                try await self.service.startBridge(relayOverride: self.effectiveRelayOverride)
-            }
             try await self.refreshAfterAction()
         }
     }
@@ -284,14 +296,16 @@ final class BridgeMenuBarStore: ObservableObject {
     private func refreshAfterAction() async throws {
         _ = try await performRefresh(
             showSpinner: false,
-            clearSnapshotOnFailure: true
+            clearSnapshotOnFailure: true,
+            forceCLIRefresh: false
         )
     }
 
     @discardableResult
     private func performRefresh(
         showSpinner: Bool,
-        clearSnapshotOnFailure: Bool
+        clearSnapshotOnFailure: Bool,
+        forceCLIRefresh: Bool
     ) async throws -> BridgeSnapshot? {
         if showSpinner {
             isRefreshing = true
@@ -301,7 +315,7 @@ final class BridgeMenuBarStore: ObservableObject {
             isRefreshing = false
         }
 
-        let cliAvailability = await refreshCLIAvailability()
+        let cliAvailability = await refreshCLIAvailability(forceRefresh: forceCLIRefresh)
         guard cliAvailability.isAvailable else {
             snapshot = nil
             transientMessage = ""

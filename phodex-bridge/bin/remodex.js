@@ -10,6 +10,7 @@ const {
   printMacOSBridgePairingQr,
   printMacOSBridgeServiceStatus,
   readBridgeConfig,
+  requestMacOSBridgePairingRenewal,
   resetMacOSBridgePairing,
   renameTrustedDevice,
   runMacOSBridgeService,
@@ -29,6 +30,7 @@ const defaultDeps = {
   printMacOSBridgePairingQr,
   printMacOSBridgeServiceStatus,
   readBridgeConfig,
+  requestMacOSBridgePairingRenewal,
   resetMacOSBridgePairing,
   renameTrustedDevice,
   runMacOSBridgeService,
@@ -213,6 +215,34 @@ async function main({
     return;
   }
 
+  if (command === "renew-pairing") {
+    assertMacOSCommand(command, {
+      platform,
+      consoleImpl,
+      exitImpl,
+    });
+    try {
+      const result = await deps.requestMacOSBridgePairingRenewal({
+        waitForPairing: true,
+      });
+      emitResult({
+        payload: {
+          ok: true,
+          currentVersion: version,
+          pairingSession: result?.pairingSession || null,
+          request: result?.request || null,
+        },
+        message: "[remodex] Pairing code renewed.",
+        jsonOutput,
+        consoleImpl,
+      });
+    } catch (error) {
+      consoleImpl.error(`[remodex] ${(error && error.message) || "Failed to renew the pairing code."}`);
+      exitImpl(1);
+    }
+    return;
+  }
+
   if (command === "trusted-device") {
     try {
       const result = runTrustedDeviceCommand({
@@ -273,9 +303,10 @@ async function main({
   consoleImpl.error(`Unknown command: ${command}`);
   consoleImpl.error(
     "Usage: remodex up | remodex run | remodex start | remodex restart | remodex stop | remodex status | "
-    + "remodex reset-pairing | remodex trusted-device <enable|disable|revoke|rename> <id> [name] | "
+    + "remodex reset-pairing | remodex renew-pairing | "
+    + "remodex trusted-device <enable|disable|revoke|rename> <id> [name] | "
     + "remodex resume | remodex watch [threadId] | remodex --version | "
-    + "append --json to start/restart/stop/status/reset-pairing/trusted-device/resume for machine-readable output"
+    + "append --json to start/restart/stop/status/reset-pairing/renew-pairing/trusted-device/resume for machine-readable output"
   );
   exitImpl(1);
 }

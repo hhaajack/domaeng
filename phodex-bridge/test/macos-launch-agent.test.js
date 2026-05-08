@@ -13,6 +13,7 @@ const {
   buildLaunchAgentPlist,
   getMacOSBridgeServiceStatus,
   mergeBridgeStatusForDaemon,
+  requestMacOSBridgePairingRenewal,
   resetMacOSBridgePairing,
   resolveLaunchAgentPlistPath,
   runMacOSBridgeService,
@@ -22,6 +23,7 @@ const {
 const {
   writeDaemonConfig,
   readBridgeStatus,
+  readPairingRenewRequest,
   readPairingSession,
   writeBridgeStatus,
   writePairingSession,
@@ -142,6 +144,29 @@ test("startMacOSBridgeService kickstarts the launch agent after bootstrap", () =
         ["launchctl", "kickstart", "-k", `gui/${process.getuid()}/com.remodex.bridge`],
       ]
     );
+  });
+});
+
+test("requestMacOSBridgePairingRenewal writes a lightweight request without restarting launchd", async () => {
+  await withTempDaemonEnv(async ({ rootDir }) => {
+    writeDaemonConfig({ relayUrl: "ws://127.0.0.1:9000/relay" });
+    writePairingSession({ sessionId: "session-before" });
+
+    const result = await requestMacOSBridgePairingRenewal({
+      platform: "darwin",
+      waitForPairing: false,
+      env: { HOME: rootDir, REMODEX_DEVICE_STATE_DIR: rootDir },
+      execFileSyncImpl(command, args) {
+        assert.equal(command, "launchctl");
+        assert.deepEqual(args, ["print", `gui/${process.getuid()}/com.remodex.bridge`]);
+        return "pid = 55";
+      },
+    });
+
+    const request = readPairingRenewRequest();
+    assert.equal(typeof result.request.id, "string");
+    assert.equal(request.id, result.request.id);
+    assert.equal(result.pairingSession, null);
   });
 });
 
@@ -292,9 +317,7 @@ function withTempDaemonEnv(run) {
   process.env.REMODEX_DEVICE_STATE_DIR = rootDir;
   process.env.HOME = rootDir;
 
-  try {
-    return run({ rootDir });
-  } finally {
+  const cleanup = () => {
     if (previousDir === undefined) {
       delete process.env.REMODEX_DEVICE_STATE_DIR;
     } else {
@@ -306,5 +329,17 @@ function withTempDaemonEnv(run) {
       process.env.HOME = previousHome;
     }
     fs.rmSync(rootDir, { recursive: true, force: true });
+  };
+
+  try {
+    const result = run({ rootDir });
+    if (result && typeof result.then === "function") {
+      return result.finally(cleanup);
+    }
+    cleanup();
+    return result;
+  } catch (error) {
+    cleanup();
+    throw error;
   }
 }

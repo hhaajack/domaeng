@@ -5,6 +5,7 @@
 // Depends on: ws, crypto, os, ./codex-home, ./qr, ./codex-desktop-refresher, ./codex-transport, ./rollout-watch, ./voice-handler, ./ios-app-compatibility
 
 const WebSocket = require("ws");
+const fs = require("fs");
 const { randomBytes } = require("crypto");
 const { execFile, spawn } = require("child_process");
 const path = require("path");
@@ -20,7 +21,12 @@ const { createThreadRolloutActivityWatcher } = require("./rollout-watch");
 const { printQR } = require("./qr");
 const { rememberActiveThread } = require("./session-state");
 const { handleDesktopRequest } = require("./desktop-handler");
-const { readDaemonConfig, writeDaemonConfig } = require("./daemon-state");
+const {
+  clearPairingRenewRequest,
+  readDaemonConfig,
+  readPairingRenewRequest,
+  writeDaemonConfig,
+} = require("./daemon-state");
 const { handleGitRequest } = require("./git-handler");
 const { handleThreadContextRequest } = require("./thread-context-handler");
 const { handleWorkspaceRequest } = require("./workspace-handler");
@@ -38,7 +44,9 @@ const { resolveCodexGeneratedImagesRoot } = require("./codex-home");
 const {
   getEnabledTrustedPhones,
   loadOrCreateBridgeDeviceState,
+  readBridgeDeviceState,
   rememberLastSeenPhoneAppVersion,
+  resolveBridgeDeviceStateFile,
   resolveBridgeRelaySession,
 } = require("./secure-device-state");
 const { createBridgeSecureTransport } = require("./secure-transport");
@@ -62,6 +70,8 @@ const RELAY_WATCHDOG_STALE_AFTER_MS = 70_000;
 const RELAY_CLOSE_INVALID_SESSION_OR_ROLE = 4000;
 const RELAY_CLOSE_REPLACED_BY_NEW_MAC = 4001;
 const BRIDGE_STATUS_HEARTBEAT_INTERVAL_MS = 5_000;
+const PAIRING_RENEW_REQUEST_POLL_INTERVAL_MS = 250;
+const DEVICE_STATE_WATCH_INTERVAL_MS = 500;
 const STALE_RELAY_STATUS_MESSAGE = "Relay heartbeat stalled; reconnect pending.";
 const RELAY_HISTORY_IMAGE_REFERENCE_URL = "remodex://history-image-elided";
 const RELAY_THREAD_PAYLOAD_SOFT_LIMIT_BYTES = 4 * 1024 * 1024;
@@ -155,9 +165,12 @@ function startBridge({
   let reconnectTimer = null;
   let relayWatchdogTimer = null;
   let statusHeartbeatTimer = null;
+  let pairingRenewRequestTimer = null;
+  let deviceStateWatcherPath = "";
   let lastRelayActivityAt = 0;
   let lastPublishedBridgeStatus = null;
   let lastConnectionStatus = null;
+  let lastPairingRenewRequestId = "";
   let codexLaunchState = config.codexEndpoint ? "connected" : "starting";
   let codexHandshakeState = config.codexEndpoint ? "warm" : "cold";
   const forwardedInitializeRequestIds = new Set();
@@ -306,6 +319,86 @@ function startBridge({
     statusHeartbeatTimer = null;
   }
 
+  function startPairingRenewRequestWatcher() {
+    if (pairingRenewRequestTimer) {
+      return;
+    }
+
+    const existingRequest = readPairingRenewRequest();
+    lastPairingRenewRequestId = normalizeNonEmptyString(existingRequest?.id);
+    pairingRenewRequestTimer = setInterval(() => {
+      if (isShuttingDown) {
+        clearPairingRenewRequestWatcher();
+        return;
+      }
+      handlePairingRenewRequest();
+    }, PAIRING_RENEW_REQUEST_POLL_INTERVAL_MS);
+    pairingRenewRequestTimer.unref?.();
+  }
+
+  function clearPairingRenewRequestWatcher() {
+    if (!pairingRenewRequestTimer) {
+      return;
+    }
+
+    clearInterval(pairingRenewRequestTimer);
+    pairingRenewRequestTimer = null;
+  }
+
+  function handlePairingRenewRequest() {
+    const request = readPairingRenewRequest();
+    const requestId = normalizeNonEmptyString(request?.id);
+    if (!requestId || requestId === lastPairingRenewRequestId) {
+      return;
+    }
+
+    lastPairingRenewRequestId = requestId;
+    pairingSession = createPairingSession();
+    publishPairingSession(pairingSession);
+    clearPairingRenewRequest();
+  }
+
+  function startDeviceStateRefreshWatcher() {
+    if (deviceStateWatcherPath) {
+      return;
+    }
+
+    deviceStateWatcherPath = resolveBridgeDeviceStateFile();
+    fs.watchFile(
+      deviceStateWatcherPath,
+      { interval: DEVICE_STATE_WATCH_INTERVAL_MS, persistent: false },
+      (current, previous) => {
+        if (
+          current.mtimeMs === previous.mtimeMs
+          && current.size === previous.size
+        ) {
+          return;
+        }
+        refreshDeviceStateFromDisk();
+      }
+    );
+  }
+
+  function clearDeviceStateRefreshWatcher() {
+    if (!deviceStateWatcherPath) {
+      return;
+    }
+
+    fs.unwatchFile(deviceStateWatcherPath);
+    deviceStateWatcherPath = "";
+  }
+
+  function refreshDeviceStateFromDisk() {
+    const nextDeviceState = readBridgeDeviceState();
+    if (!nextDeviceState) {
+      return;
+    }
+
+    deviceState = nextDeviceState;
+    secureTransport.replaceDeviceState(nextDeviceState);
+    sendRelayRegistrationUpdate(nextDeviceState);
+  }
+
   // Tracks relay liveness locally so sleep/wake zombie sockets can be force-reconnected.
   function markRelayActivity() {
     lastRelayActivityAt = Date.now();
@@ -380,6 +473,8 @@ function startBridge({
         clearReconnectTimer();
         clearRelayWatchdog();
         clearBridgeStatusHeartbeat();
+        clearPairingRenewRequestWatcher();
+        clearDeviceStateRefreshWatcher();
       });
       return;
     }
@@ -479,15 +574,28 @@ function startBridge({
     });
   }
 
-  const pairingPayload = secureTransport.createPairingPayload();
-  const pairingSession = {
-    pairingPayload,
-    pairingCode: createShortPairingCode({ length: SHORT_PAIRING_CODE_LENGTH }),
-  };
-  onPairingSession?.(pairingSession);
+  function createPairingSession() {
+    return {
+      pairingPayload: secureTransport.createPairingPayload(),
+      pairingCode: createShortPairingCode({ length: SHORT_PAIRING_CODE_LENGTH }),
+    };
+  }
+
+  function publishPairingSession(nextPairingSession, { updateRelay = true } = {}) {
+    pairingSession = nextPairingSession;
+    onPairingSession?.(pairingSession);
+    if (updateRelay) {
+      sendRelayRegistrationUpdate(deviceState);
+    }
+  }
+
+  let pairingSession = createPairingSession();
+  publishPairingSession(pairingSession, { updateRelay: false });
   if (printPairingQr) {
     printQR(pairingSession);
   }
+  startPairingRenewRequestWatcher();
+  startDeviceStateRefreshWatcher();
   pushServiceClient.logUnavailable();
   connectRelay();
 
@@ -509,6 +617,8 @@ function startBridge({
   codex.onClose(() => {
     clearRelayWatchdog();
     clearBridgeStatusHeartbeat();
+    clearPairingRenewRequestWatcher();
+    clearDeviceStateRefreshWatcher();
     logConnectionStatus("disconnected");
     publishBridgeStatus({
       state: "stopped",
@@ -538,6 +648,8 @@ function startBridge({
     clearReconnectTimer();
     clearRelayWatchdog();
     clearBridgeStatusHeartbeat();
+    clearPairingRenewRequestWatcher();
+    clearDeviceStateRefreshWatcher();
   }));
   process.on("SIGTERM", () => shutdown(codex, () => socket, () => {
     isShuttingDown = true;
@@ -546,6 +658,8 @@ function startBridge({
     clearReconnectTimer();
     clearRelayWatchdog();
     clearBridgeStatusHeartbeat();
+    clearPairingRenewRequestWatcher();
+    clearDeviceStateRefreshWatcher();
   }));
 
   // Routes decrypted app payloads through the same bridge handlers as before.

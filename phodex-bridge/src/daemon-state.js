@@ -2,15 +2,17 @@
 // Purpose: Persists macOS service config/runtime state outside the repo for the launchd bridge flow.
 // Layer: CLI helper
 // Exports: path resolvers plus read/write helpers for daemon config, pairing payloads, and service status.
-// Depends on: fs, os, path
+// Depends on: fs, os, path, crypto
 
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const { randomUUID } = require("crypto");
 
 const DEFAULT_STATE_DIR_NAME = ".remodex";
 const DAEMON_CONFIG_FILE = "daemon-config.json";
 const PAIRING_SESSION_FILE = "pairing-session.json";
+const PAIRING_RENEW_REQUEST_FILE = "pairing-renew-request.json";
 const BRIDGE_STATUS_FILE = "bridge-status.json";
 const LOGS_DIR = "logs";
 const BRIDGE_STDOUT_LOG_FILE = "bridge.stdout.log";
@@ -28,6 +30,10 @@ function resolveDaemonConfigPath(options = {}) {
 
 function resolvePairingSessionPath(options = {}) {
   return path.join(resolveRemodexStateDir(options), PAIRING_SESSION_FILE);
+}
+
+function resolvePairingRenewRequestPath(options = {}) {
+  return path.join(resolveRemodexStateDir(options), PAIRING_RENEW_REQUEST_FILE);
 }
 
 function resolveBridgeStatusPath(options = {}) {
@@ -71,6 +77,23 @@ function readPairingSession(options = {}) {
 
 function clearPairingSession({ fsImpl = fs, ...options } = {}) {
   removeFile(resolvePairingSessionPath(options), fsImpl);
+}
+
+function writePairingRenewRequest({ id = randomUUID(), now = () => Date.now(), ...options } = {}) {
+  const request = {
+    id,
+    requestedAt: new Date(now()).toISOString(),
+  };
+  writeJsonFile(resolvePairingRenewRequestPath(options), request, options);
+  return request;
+}
+
+function readPairingRenewRequest(options = {}) {
+  return readJsonFile(resolvePairingRenewRequestPath(options), options);
+}
+
+function clearPairingRenewRequest({ fsImpl = fs, ...options } = {}) {
+  removeFile(resolvePairingRenewRequestPath(options), fsImpl);
 }
 
 // Captures the last known service heartbeat so `remodex status` does not depend on launchctl output alone.
@@ -135,19 +158,23 @@ function normalizeNonEmptyString(value) {
 module.exports = {
   clearBridgeStatus,
   clearPairingSession,
+  clearPairingRenewRequest,
   ensureRemodexLogsDir,
   ensureRemodexStateDir,
   readBridgeStatus,
   readDaemonConfig,
   readPairingSession,
+  readPairingRenewRequest,
   resolveBridgeLogsDir,
   resolveBridgeStderrLogPath,
   resolveBridgeStatusPath,
   resolveBridgeStdoutLogPath,
   resolveDaemonConfigPath,
+  resolvePairingRenewRequestPath,
   resolvePairingSessionPath,
   resolveRemodexStateDir,
   writeBridgeStatus,
   writeDaemonConfig,
   writePairingSession,
+  writePairingRenewRequest,
 };
