@@ -8,11 +8,17 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["favicon.svg"],
+      includeAssets: [
+        "favicon.png",
+        "favicon-32.png",
+        "apple-touch-icon.png",
+        "icons/domaeng-icon-192.png",
+        "icons/domaeng-icon-512.png"
+      ],
       manifest: {
-        name: "Remodex Web",
-        short_name: "Remodex",
-        description: "Local-first Remodex browser client",
+        name: "Domaeng Web",
+        short_name: "Domaeng",
+        description: "Local-first Domaeng browser client",
         display: "standalone",
         start_url: "/app/",
         scope: "/app/",
@@ -20,9 +26,20 @@ export default defineConfig({
         theme_color: "#0b1112",
         icons: [
           {
-            src: "favicon.svg",
-            sizes: "any",
-            type: "image/svg+xml"
+            src: "icons/domaeng-icon-192.png",
+            sizes: "192x192",
+            type: "image/png"
+          },
+          {
+            src: "icons/domaeng-icon-512.png",
+            sizes: "512x512",
+            type: "image/png"
+          },
+          {
+            src: "icons/domaeng-icon-512.png",
+            sizes: "512x512",
+            type: "image/png",
+            purpose: "maskable"
           }
         ]
       },

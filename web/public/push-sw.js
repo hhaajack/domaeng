@@ -3,7 +3,7 @@ self.addEventListener("push", (event) => {
   const title = readString(payload.title) || "Domaeng";
   const body = readString(payload.body) || "Thread status changed.";
   const tag = readString(payload.tag) || `${readString(payload.kind) || "thread"}:${readString(payload.threadId) || "unknown"}`;
-  const iconURL = new URL("favicon.svg", self.registration.scope).toString();
+  const iconURL = new URL("icons/domaeng-icon-192.png", self.registration.scope).toString();
 
   event.waitUntil(self.registration.showNotification(title, {
     body,
