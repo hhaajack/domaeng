@@ -784,6 +784,16 @@ textarea {
   background: rgba(255, 255, 255, 0.54);
   border-color: rgba(255, 255, 255, 0.62);
   box-shadow: var(--inner-highlight);
+  isolation: isolate;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.thread-actions-button svg {
+  color: currentColor;
+  stroke: currentColor;
+  opacity: 1;
+  filter: none;
 }
 
 .thread-row-shell:hover .thread-actions-button,
@@ -792,9 +802,13 @@ textarea {
   opacity: 1;
 }
 
-@media (hover: none) {
+@media (hover: none), (pointer: coarse), (max-width: 760px) {
   .thread-actions-button {
+    color: var(--ink);
     opacity: 1;
+    background: rgba(255, 255, 255, 0.76);
+    border-color: rgba(255, 255, 255, 0.56);
+    box-shadow: var(--inner-highlight), 0 6px 16px rgba(20, 24, 29, 0.1);
   }
 }
 

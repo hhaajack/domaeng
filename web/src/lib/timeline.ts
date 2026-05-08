@@ -314,7 +314,23 @@ function appendStreamingText(
     messagesByThread: {
       ...state.messagesByThread,
       [threadId]: nextMessages
-    }
+    },
+    runningTurnByThread: markThreadRunning(state.runningTurnByThread, threadId, turnId)
+  };
+}
+
+function markThreadRunning(
+  runningTurnByThread: Record<string, string | undefined>,
+  threadId: string,
+  turnId: string | undefined
+): Record<string, string | undefined> {
+  const nextTurnId = turnId || runningTurnByThread[threadId] || "__running__";
+  if (runningTurnByThread[threadId] === nextTurnId) {
+    return runningTurnByThread;
+  }
+  return {
+    ...runningTurnByThread,
+    [threadId]: nextTurnId
   };
 }
 

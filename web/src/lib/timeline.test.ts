@@ -112,4 +112,14 @@ describe("timeline item reconciliation", () => {
       turnId: "turn-1"
     });
   });
+
+  it("infers running state from live streamed thread activity", () => {
+    const next = applyNotification(state(), "item/reasoning/textDelta", {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      delta: "thinking"
+    });
+
+    expect(next.runningTurnByThread["thread-1"]).toBe("turn-1");
+  });
 });
