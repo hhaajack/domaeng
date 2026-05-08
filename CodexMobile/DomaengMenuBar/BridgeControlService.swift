@@ -1,5 +1,5 @@
 // FILE: BridgeControlService.swift
-// Purpose: Wraps the existing remodex shell commands so the menu bar app can detect the global CLI and control the bridge.
+// Purpose: Wraps the existing Domaeng shell commands so the menu bar app can detect the global CLI and control the bridge.
 // Layer: Companion app service
 // Exports: BridgeControlService, ShellCommandRunner
 // Depends on: CryptoKit, Darwin, Foundation, BridgeControlModels
@@ -10,11 +10,11 @@ import Foundation
 
 struct BridgeCLIInvocation {
     let nodePath: String
-    let remodexPath: String
+    let cliPath: String
 
     // Executes the actual CLI entrypoint via an absolute Node binary so GUI PATH drift does not break nvm installs.
     func command(_ arguments: [String]) -> String {
-        ([shellQuoted(nodePath), shellQuoted(remodexPath)] + arguments).joined(separator: " ")
+        ([shellQuoted(nodePath), shellQuoted(cliPath)] + arguments).joined(separator: " ")
     }
 }
 
@@ -162,7 +162,7 @@ final class BridgeControlService {
         self.runner = runner
     }
 
-    // Confirms the product contract for this companion: a global `remodex` CLI must be runnable first.
+    // Confirms the product contract for this companion: the global Domaeng CLI must be runnable first.
     func detectCLIAvailability(forceRefresh: Bool = false) async -> BridgeCLIAvailability {
         if !forceRefresh,
            let cachedAvailability,
@@ -580,9 +580,9 @@ final class BridgeControlService {
             return cachedInvocation
         }
 
-        let remodexPath = try await resolveExecutable(named: "remodex")
-        let nodePath = try await resolveNodePath(for: remodexPath)
-        let invocation = BridgeCLIInvocation(nodePath: nodePath, remodexPath: remodexPath)
+        let cliPath = try await resolveFirstExecutable(named: ["domaeng", "remodex"])
+        let nodePath = try await resolveNodePath(for: cliPath)
+        let invocation = BridgeCLIInvocation(nodePath: nodePath, cliPath: cliPath)
         cachedInvocation = invocation
         return invocation
     }
@@ -592,8 +592,7 @@ final class BridgeControlService {
             .split(separator: "\n", omittingEmptySubsequences: true)
             .reduce(into: [String: String]()) { partialResult, line in
                 let cleaned = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                let prefix = "[remodex] "
-                guard cleaned.hasPrefix(prefix) else {
+                guard let prefix = ["[domaeng] ", "[remodex] "].first(where: cleaned.hasPrefix) else {
                     return
                 }
 
@@ -642,19 +641,19 @@ final class BridgeControlService {
     }
 
     // Prefers the Node runtime sitting next to the resolved CLI binary so mixed installs stay compatible.
-    private func resolveNodePath(for remodexPath: String) async throws -> String {
-        if let colocatedNodePath = resolveColocatedNodePath(for: remodexPath) {
+    private func resolveNodePath(for cliPath: String) async throws -> String {
+        if let colocatedNodePath = resolveColocatedNodePath(for: cliPath) {
             return colocatedNodePath
         }
 
         return try await resolveExecutable(named: "node")
     }
 
-    private func resolveColocatedNodePath(for remodexPath: String) -> String? {
-        let remodexURL = URL(fileURLWithPath: remodexPath)
+    private func resolveColocatedNodePath(for cliPath: String) -> String? {
+        let cliURL = URL(fileURLWithPath: cliPath)
         let candidateDirectories = [
-            remodexURL.deletingLastPathComponent().path,
-            remodexURL.resolvingSymlinksInPath().deletingLastPathComponent().path,
+            cliURL.deletingLastPathComponent().path,
+            cliURL.resolvingSymlinksInPath().deletingLastPathComponent().path,
         ]
 
         var seenDirectories = Set<String>()
@@ -668,6 +667,19 @@ final class BridgeControlService {
         }
 
         return nil
+    }
+
+    private func resolveFirstExecutable(named names: [String]) async throws -> String {
+        for name in names {
+            if let path = try? await resolveExecutable(named: name) {
+                return path
+            }
+        }
+
+        throw BridgeControlError.commandFailed(
+            command: names.joined(separator: " or "),
+            message: "Neither the `domaeng` CLI nor the legacy `remodex` CLI was found in the app shell environment."
+        )
     }
 
     private func resolveExecutable(named name: String) async throws -> String {
@@ -725,7 +737,8 @@ final class BridgeControlService {
 
     // Mirrors the bridge daemon-state lookup order so old CLI output still hydrates the companion correctly.
     private func resolveStateDirectory(statusLines: [String: String]) -> URL {
-        if let explicitStateDirectory = normalizeNonEmptyString(ProcessInfo.processInfo.environment["REMODEX_DEVICE_STATE_DIR"]) {
+        if let explicitStateDirectory = normalizeNonEmptyString(ProcessInfo.processInfo.environment["DOMAENG_DEVICE_STATE_DIR"])
+            ?? normalizeNonEmptyString(ProcessInfo.processInfo.environment["REMODEX_DEVICE_STATE_DIR"]) {
             return URL(fileURLWithPath: explicitStateDirectory, isDirectory: true)
         }
 
@@ -744,7 +757,8 @@ final class BridgeControlService {
         guard let data = try? Data(contentsOf: launchAgentPlistURL),
               let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any],
               let environment = plist["EnvironmentVariables"] as? [String: Any],
-              let stateDirectory = normalizeNonEmptyString(environment["REMODEX_DEVICE_STATE_DIR"] as? String) else {
+              let stateDirectory = normalizeNonEmptyString(environment["DOMAENG_DEVICE_STATE_DIR"] as? String)
+                ?? normalizeNonEmptyString(environment["REMODEX_DEVICE_STATE_DIR"] as? String) else {
             return nil
         }
 
@@ -828,7 +842,10 @@ final class BridgeControlService {
         let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalized = message.lowercased()
 
-        if normalized.contains("command not found: remodex")
+        if normalized.contains("command not found: domaeng")
+            || normalized.contains("domaeng: command not found")
+            || normalized.contains("domaeng: not found")
+            || normalized.contains("command not found: remodex")
             || normalized.contains("remodex: command not found")
             || normalized.contains("remodex: not found")
             || normalized.contains("no such file or directory") {
@@ -845,6 +862,7 @@ final class BridgeControlService {
         }
 
         return [
+            "DOMAENG_RELAY": relayOverride.trimmingCharacters(in: .whitespacesAndNewlines),
             "REMODEX_RELAY": relayOverride.trimmingCharacters(in: .whitespacesAndNewlines),
         ]
     }

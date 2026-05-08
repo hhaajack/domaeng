@@ -18,7 +18,7 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<key>RemodexSupportedBridgeVersion</key>
+	<key>DomaengSupportedBridgeVersion</key>
 	<string>$(REMODEX_SUPPORTED_BRIDGE_VERSION)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>

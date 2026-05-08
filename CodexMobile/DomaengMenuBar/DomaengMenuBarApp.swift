@@ -1,17 +1,17 @@
-// FILE: RemodexMenuBarApp.swift
+// FILE: DomaengMenuBarApp.swift
 // Purpose: Entry point for the macOS companion that turns the existing bridge CLI into a menu bar control center.
 // Layer: Companion app
-// Exports: RemodexMenuBarApp
+// Exports: DomaengMenuBarApp
 // Depends on: SwiftUI, BridgeMenuBarStore, BridgeMenuBarViews
 
 import SwiftUI
 
-enum RemodexWindowID {
-    static let controlCenter = "remodex-control-center"
+enum DomaengWindowID {
+    static let controlCenter = "domaeng-control-center"
 }
 
 @main
-struct RemodexMenuBarApp: App {
+struct DomaengMenuBarApp: App {
     @StateObject private var store = BridgeMenuBarStore()
 
     var body: some Scene {
@@ -25,7 +25,7 @@ struct RemodexMenuBarApp: App {
         }
         .menuBarExtraStyle(.window)
 
-        WindowGroup("Remodex", id: RemodexWindowID.controlCenter) {
+        WindowGroup("Domaeng", id: DomaengWindowID.controlCenter) {
             BridgeControlCenterWindow(store: store)
         }
         .defaultSize(width: 720, height: 640)

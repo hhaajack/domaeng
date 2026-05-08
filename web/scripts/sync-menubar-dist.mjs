@@ -6,12 +6,15 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(__dirname, "..");
 const sourceDist = path.join(webRoot, "dist");
-const appPath = process.env.REMODEX_MENUBAR_APP_PATH || "/Applications/RemodexMenuBar.app";
+const appPath =
+  process.env.DOMAENG_MENUBAR_APP_PATH ||
+  process.env.REMODEX_MENUBAR_APP_PATH ||
+  "/Applications/DomaengMenuBar.app";
 const targetDist = path.join(appPath, "Contents", "Resources", "dist");
 const restart = process.argv.includes("--restart");
 
 await assertDirectory(sourceDist, "Build output is missing. Run `npm run build` first.");
-await assertDirectory(path.dirname(targetDist), `RemodexMenuBar resources directory was not found: ${path.dirname(targetDist)}`);
+await assertDirectory(path.dirname(targetDist), `DomaengMenuBar resources directory was not found: ${path.dirname(targetDist)}`);
 
 await rm(targetDist, { recursive: true, force: true });
 await mkdir(targetDist, { recursive: true });
@@ -25,7 +28,7 @@ if (restart) {
   }
   spawnChecked("pkill", ["-f", appPath], { allowFailure: true });
   spawnChecked("/usr/bin/open", ["-a", appPath]);
-  console.log("Restarted RemodexMenuBar.app");
+  console.log("Restarted DomaengMenuBar.app");
 }
 
 async function assertDirectory(directory, message) {

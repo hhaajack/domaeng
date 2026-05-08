@@ -1,5 +1,5 @@
 // FILE: BridgeMenuBarViews.swift
-// Purpose: Renders the lightweight menu bar service popover plus the full Remodex control center window.
+// Purpose: Renders the lightweight menu bar service popover plus the full Domaeng control center window.
 // Layer: Companion app view
 // Exports: BridgeMenuBarContentView, BridgeControlCenterWindow, BridgeMenuBarLabel
 // Depends on: SwiftUI, AppKit, CoreImage, BridgeMenuBarStore, BridgeControlModels
@@ -33,7 +33,7 @@ struct BridgeMenuBarContentView: View {
     private var compactHeader: some View {
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Remodex")
+                Text("Domaeng")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.primary)
                 Text(versionSummary)
@@ -199,7 +199,7 @@ struct BridgeMenuBarContentView: View {
     }
 
     private func openControlCenter() {
-        openWindow(id: RemodexWindowID.controlCenter)
+        openWindow(id: DomaengWindowID.controlCenter)
         NSApp.activate(ignoringOtherApps: true)
     }
 }
@@ -246,7 +246,7 @@ struct BridgeControlCenterWindow: View {
     private var windowHeader: some View {
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Remodex")
+                Text("Domaeng")
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(.primary)
                 Text(store.snapshot?.label ?? "com.remodex.bridge")
@@ -455,7 +455,7 @@ struct BridgeControlCenterWindow: View {
                     }
                 }
             } else {
-                Text("Start Remodex to publish a pairing QR.")
+                Text("Start Domaeng to publish a pairing QR.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }

@@ -64,7 +64,7 @@ struct BridgeTrustedDevice: Codable, Equatable, Identifiable {
 }
 
 enum BridgeClientCompatibility {
-    static let supportedBridgeVersionInfoKey = "RemodexSupportedBridgeVersion"
+    static let supportedBridgeVersionInfoKey = "DomaengSupportedBridgeVersion"
     static let fallbackSupportedBridgeVersion = "1.5.1"
 
     static var supportedBridgeVersion: String {
@@ -85,7 +85,7 @@ enum BridgeCLIAvailability: Equatable {
     case broken(message: String)
 
     static var installCommand: String {
-        "npm install -g remodex@\(BridgeClientCompatibility.supportedBridgeVersion)"
+        "npm install -g domaeng@\(BridgeClientCompatibility.supportedBridgeVersion)"
     }
 
     var isAvailable: Bool {
@@ -133,13 +133,13 @@ enum BridgeCLIAvailability: Equatable {
     var setupMessage: String {
         switch self {
         case .checking:
-            return "Looking for a globally installed `remodex` command before enabling the companion controls."
+            return "Looking for a globally installed `domaeng` command before enabling the companion controls."
         case .available(let version):
-            return "Detected the global `remodex` CLI (`\(version)`)."
+            return "Detected the global Domaeng CLI (`\(version)`)."
         case .missing:
-            return "This companion only works when the global `remodex` CLI is installed and visible to the app shell environment."
+            return "This companion only works when the global `domaeng` CLI is installed and visible to the app shell environment."
         case .broken(let message):
-            return "Found `remodex`, but the CLI could not be used. \(message)"
+            return "Found Domaeng, but the CLI could not be used. \(message)"
         }
     }
 }

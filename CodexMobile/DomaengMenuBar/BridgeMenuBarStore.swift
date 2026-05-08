@@ -16,7 +16,7 @@ enum BridgeMenuBarActionError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingCLI:
-            return "Install the global `remodex` CLI before using this companion."
+            return "Install the global `domaeng` CLI before using this companion."
         case .brokenCLI(let message):
             return message
         case .pairingTimeout:
@@ -36,8 +36,10 @@ final class BridgeMenuBarStore: ObservableObject {
     @Published var transientMessage = ""
     @Published var errorMessage = ""
 
-    private static let relayOverrideKey = "remodex.menuBar.relayOverride"
-    private static let tailscaleHostOverrideKey = "remodex.menuBar.tailscaleHostOverride"
+    private static let relayOverrideKey = "domaeng.menuBar.relayOverride"
+    private static let tailscaleHostOverrideKey = "domaeng.menuBar.tailscaleHostOverride"
+    private static let legacyRelayOverrideKey = "remodex.menuBar.relayOverride"
+    private static let legacyTailscaleHostOverrideKey = "remodex.menuBar.tailscaleHostOverride"
     private let service: BridgeControlService
     private var refreshLoopTask: Task<Void, Never>?
 
@@ -45,8 +47,12 @@ final class BridgeMenuBarStore: ObservableObject {
 
     init(service: BridgeControlService? = nil) {
         self.service = service ?? BridgeControlService()
-        self.relayOverride = UserDefaults.standard.string(forKey: Self.relayOverrideKey) ?? ""
-        self.tailscaleHostOverride = UserDefaults.standard.string(forKey: Self.tailscaleHostOverrideKey) ?? ""
+        self.relayOverride = UserDefaults.standard.string(forKey: Self.relayOverrideKey)
+            ?? UserDefaults.standard.string(forKey: Self.legacyRelayOverrideKey)
+            ?? ""
+        self.tailscaleHostOverride = UserDefaults.standard.string(forKey: Self.tailscaleHostOverrideKey)
+            ?? UserDefaults.standard.string(forKey: Self.legacyTailscaleHostOverrideKey)
+            ?? ""
         startRefreshLoop()
 
         Task {
