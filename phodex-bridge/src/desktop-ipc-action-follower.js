@@ -175,7 +175,6 @@ function createDesktopIpcActionFollower({
 
   function onDisconnect() {
     rawStatesByThreadId.clear();
-    pendingRoutesByRequestId.clear();
     recoveringThreadIds.clear();
     queuedChangesByThreadId.clear();
     desktopOwnerClientIdsByThreadId.clear();
@@ -244,18 +243,28 @@ function createDesktopIpcActionFollower({
 
     for (const action of actions) {
       if (pendingRoutesByRequestId.has(action.id)) {
+        const route = pendingRoutesByRequestId.get(action.id);
+        const ownerClientId = desktopOwnerClientIdsByThreadId.get(threadId) || "";
+        if (route && ownerClientId) {
+          route.ownerClientId = ownerClientId;
+        }
         continue;
       }
 
       pendingRoutesByRequestId.set(action.id, {
         requestId: action.id,
+        desktopRequestId: action.desktopRequestId,
         method: action.method,
         threadId,
+        ownerClientId: desktopOwnerClientIdsByThreadId.get(threadId) || "",
       });
+      const ownerClientId = desktopOwnerClientIdsByThreadId.get(threadId) || "";
       sendApplicationResponse(JSON.stringify({
-        id: action.id,
+        id: action.desktopRequestId,
         method: action.method,
-        params: action.params,
+        params: ownerClientId
+          ? { ...action.params, remodexDesktopOwnerClientId: ownerClientId }
+          : action.params,
       }));
     }
   }
@@ -266,7 +275,39 @@ function createDesktopIpcActionFollower({
     }
 
     const requestId = requestIdKey(message.id);
-    return requestId ? pendingRoutesByRequestId.get(requestId) || null : null;
+    if (!requestId) {
+      return null;
+    }
+
+    const pendingRoute = pendingRoutesByRequestId.get(requestId);
+    if (pendingRoute) {
+      const ownerClientId = readString(message.remodexDesktopOwnerClientId);
+      if (ownerClientId) {
+        pendingRoute.ownerClientId = ownerClientId;
+      }
+      return pendingRoute;
+    }
+
+    const method = readString(message.remodexRequestMethod);
+    const threadId = readString(message.remodexThreadId);
+    if (!method || !threadId || !ACTION_METHODS.has(method) || !activeThreadIds.has(threadId)) {
+      if (looksLikeDesktopActionResponse(message)) {
+        console.warn(`${logPrefix} desktop action reply had no route for requestId=${requestId}`);
+      }
+      return null;
+    }
+
+    const recoveredRoute = {
+      requestId,
+      desktopRequestId: desktopRequestIdValue(message.id, requestId),
+      method,
+      threadId,
+      ownerClientId: readString(message.remodexDesktopOwnerClientId)
+        || desktopOwnerClientIdsByThreadId.get(threadId)
+        || "",
+    };
+    pendingRoutesByRequestId.set(requestId, recoveredRoute);
+    return recoveredRoute;
   }
 
   function desktopRouteForRuntimeRequest(message) {
@@ -308,9 +349,10 @@ function createDesktopIpcActionFollower({
       return;
     }
 
-    ipc.sendRequest(payload.method, payload.params)
+    sendDesktopIpcRequest(payload.method, payload.params, route)
       .then(() => {
         pendingRoutesByRequestId.delete(route.requestId);
+        console.log(`${logPrefix} desktop action reply sent method=${payload.method} requestId=${route.requestId} target=${desktopTargetClientIdForRoute(route) ? "owner" : "default"}`);
         sendApplicationResponse(JSON.stringify({
           method: "serverRequest/resolved",
           params: {
@@ -344,7 +386,7 @@ function createDesktopIpcActionFollower({
       return;
     }
 
-    ipc.sendRequest(payload.method, payload.params)
+    sendDesktopIpcRequest(payload.method, payload.params, route)
       .then((result) => {
         sendApplicationResponse(JSON.stringify({
           id: route.requestId,
@@ -366,6 +408,24 @@ function createDesktopIpcActionFollower({
           },
         }));
       });
+  }
+
+  function sendDesktopIpcRequest(method, params, route) {
+    const targetClientId = desktopTargetClientIdForRoute(route);
+    return ipc.sendRequest(method, params, { targetClientId })
+      .catch((error) => {
+        if (!targetClientId || !isMissingTargetClientError(error)) {
+          throw error;
+        }
+
+        return ipc.sendRequest(method, params);
+      });
+  }
+
+  function desktopTargetClientIdForRoute(route) {
+    return readString(route?.ownerClientId)
+      || desktopOwnerClientIdsByThreadId.get(route?.threadId)
+      || "";
   }
 
   function queueThreadChange(threadId, change) {
@@ -473,7 +533,7 @@ function createDesktopIpcClient({
     });
   }
 
-  function sendRequest(method, params) {
+  function sendRequest(method, params, { targetClientId = "" } = {}) {
     ensureConnected();
     if (!socket || socket.destroyed) {
       return Promise.reject(new Error("Desktop IPC is not connected."));
@@ -488,6 +548,9 @@ function createDesktopIpcClient({
       method,
       params: params || {},
     };
+    if (targetClientId) {
+      envelope.targetClientId = targetClientId;
+    }
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -623,7 +686,7 @@ function desktopFollowerPayloadForResponse(route, responseMessage) {
       method,
       params: {
         conversationId: route.threadId,
-        requestId: route.requestId,
+        requestId: desktopRequestIdForRoute(route),
         response: {
           answers,
         },
@@ -655,7 +718,7 @@ function desktopFollowerPayloadForResponse(route, responseMessage) {
       method,
       params: {
         conversationId: route.threadId,
-        requestId: route.requestId,
+        requestId: desktopRequestIdForRoute(route),
         response: payloadResponse,
       },
     };
@@ -670,7 +733,7 @@ function desktopFollowerPayloadForResponse(route, responseMessage) {
     method,
     params: {
       conversationId: route.threadId,
-      requestId: route.requestId,
+      requestId: desktopRequestIdForRoute(route),
       decision,
     },
   };
@@ -738,6 +801,14 @@ function shouldFallbackToBridgeRuntime(error) {
     || message.includes("not-connected");
 }
 
+function isMissingTargetClientError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return message.includes("no-client-found")
+    || message.includes("client-not-found")
+    || message.includes("client-cannot-handle-request")
+    || message.includes("client-disconnected");
+}
+
 function projectPendingDesktopActions(threadId, conversationState) {
   const requests = Array.isArray(conversationState?.requests) ? conversationState.requests : [];
   return requests
@@ -766,12 +837,17 @@ function projectPendingDesktopAction(threadId, request) {
 
   return {
     id: requestId,
+    desktopRequestId: desktopRequestIdValue(request.id, requestId),
     method,
     params: {
       ...params,
       threadId: readString(params.threadId) || readString(params.thread_id) || threadId,
     },
   };
+}
+
+function desktopRequestIdForRoute(route) {
+  return desktopRequestIdValue(route?.desktopRequestId, route?.requestId || "");
 }
 
 function inferThreadRunStatus(previousState, nextState, change) {
@@ -1051,6 +1127,29 @@ function requestIdKey(value) {
     return String(value);
   }
   return "";
+}
+
+function desktopRequestIdValue(value, fallbackKey) {
+  if (typeof value === "string" && value) {
+    return value;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  return fallbackKey;
+}
+
+function looksLikeDesktopActionResponse(message) {
+  if (!message || typeof message !== "object" || message.method || message.id == null || message.error) {
+    return false;
+  }
+  const result = message.result;
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    return false;
+  }
+  return Object.prototype.hasOwnProperty.call(result, "decision")
+    || Object.prototype.hasOwnProperty.call(result, "answers")
+    || Object.prototype.hasOwnProperty.call(result, "permissions");
 }
 
 function readString(value) {

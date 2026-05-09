@@ -14,6 +14,8 @@ const originalClientMethods = {
   startTurn: client.startTurn.bind(client),
   steerTurn: client.steerTurn.bind(client),
   refreshDesktopThread: client.refreshDesktopThread.bind(client),
+  approve: client.approve.bind(client),
+  answerUserInput: client.answerUserInput.bind(client),
   listModels: client.listModels.bind(client),
   readContextWindowUsage: client.readContextWindowUsage.bind(client),
   readRateLimits: client.readRateLimits.bind(client),
@@ -33,6 +35,8 @@ function restoreClientMethods() {
   client.startTurn = originalClientMethods.startTurn;
   client.steerTurn = originalClientMethods.steerTurn;
   client.refreshDesktopThread = originalClientMethods.refreshDesktopThread;
+  client.approve = originalClientMethods.approve;
+  client.answerUserInput = originalClientMethods.answerUserInput;
   client.listModels = originalClientMethods.listModels;
   client.readContextWindowUsage = originalClientMethods.readContextWindowUsage;
   client.readRateLimits = originalClientMethods.readRateLimits;
@@ -147,7 +151,7 @@ describe("useRemodexStore sendComposer", () => {
     expect(client.refreshDesktopThread).toHaveBeenCalledWith("thread-1");
   });
 
-  it("steers the active turn instead of starting a second turn", async () => {
+  it("does not steer when send discovers the thread is already running", async () => {
     client.resumeThread = vi.fn().mockResolvedValue({
       result: {
         thread: {
@@ -181,16 +185,14 @@ describe("useRemodexStore sendComposer", () => {
 
     await useRemodexStore.getState().sendComposer();
 
-    expect(client.steerTurn).toHaveBeenCalledWith(expect.objectContaining({
-      threadId: "thread-1",
-      expectedTurnId: "turn-live",
-      text: "follow up while running"
-    }));
+    expect(client.steerTurn).not.toHaveBeenCalled();
     expect(client.startTurn).not.toHaveBeenCalled();
-    expect(client.refreshDesktopThread).toHaveBeenCalledWith("thread-1");
+    expect(client.refreshDesktopThread).not.toHaveBeenCalled();
+    expect(useRemodexStore.getState().composerText).toBe("follow up while running");
+    expect(useRemodexStore.getState().lastError).toContain("Codex is still working");
   });
 
-  it("refreshes a fallback running marker before steering", async () => {
+  it("does not steer when a fallback running marker is rehydrated", async () => {
     client.resumeThread = vi.fn().mockResolvedValue({
       result: {
         thread: {
@@ -235,13 +237,11 @@ describe("useRemodexStore sendComposer", () => {
 
     await useRemodexStore.getState().sendComposer();
 
-    expect(client.readThread).toHaveBeenCalledWith("thread-1");
-    expect(client.steerTurn).toHaveBeenCalledWith(expect.objectContaining({
-      threadId: "thread-1",
-      expectedTurnId: "turn-refreshed",
-      text: "follow up after placeholder"
-    }));
+    expect(client.readThread).not.toHaveBeenCalled();
+    expect(client.steerTurn).not.toHaveBeenCalled();
     expect(client.startTurn).not.toHaveBeenCalled();
+    expect(useRemodexStore.getState().composerText).toBe("follow up after placeholder");
+    expect(useRemodexStore.getState().lastError).toContain("Codex is still working");
   });
 
   it("keeps the sent turn and surfaces a warning when desktop refresh fails", async () => {
@@ -594,6 +594,34 @@ describe("useRemodexStore thread activity", () => {
     expect(state.inAppNotifications.map((entry) => entry.kind)).toEqual(["approval", "ready"]);
     expect(state.pendingApprovals).toHaveLength(1);
     expect(state.pendingApprovals[0]?.id).toBe("approval-2");
+  });
+
+  it("keeps approval requests visible until the bridge confirms resolution", async () => {
+    client.approve = vi.fn().mockResolvedValue(undefined);
+    useRemodexStore.setState({
+      pendingApprovals: [{
+        id: "approval-1",
+        requestID: "approval-1",
+        method: "item/commandExecution/requestApproval",
+        command: "npm test",
+        threadId: "thread-bg",
+        turnId: "turn-bg"
+      }]
+    });
+
+    await useRemodexStore.getState().approve(useRemodexStore.getState().pendingApprovals[0], "accept");
+
+    expect(client.approve).toHaveBeenCalledWith(expect.objectContaining({ id: "approval-1" }), "accept");
+    expect(useRemodexStore.getState().pendingApprovals).toHaveLength(1);
+
+    emitClientEvent({
+      type: "notification",
+      method: "serverRequest/resolved",
+      params: {
+        requestId: "approval-1"
+      }
+    });
+    expect(useRemodexStore.getState().pendingApprovals).toHaveLength(0);
   });
 
   it("recovers a broken secure workspace through trusted reconnect", async () => {

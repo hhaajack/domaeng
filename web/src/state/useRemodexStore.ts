@@ -93,6 +93,7 @@ interface RemodexStore {
   queueDraft: () => void;
   sendQueuedDraft: (threadId: string, index: number) => Promise<void>;
   approve: (request: ApprovalRequest, decision: "accept" | "decline" | "acceptForSession") => Promise<void>;
+  answerUserInput: (request: ApprovalRequest, questionId: string, answer: string) => Promise<void>;
   dismissInAppNotification: (id: string) => void;
   setRuntimeSettings: (settings: Partial<RuntimeSettings>) => Promise<void>;
   refreshContextWindowUsage: (threadId: string) => Promise<void>;
@@ -268,12 +269,14 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
     runtimeSettings: RuntimeSettings,
     skillMentions: ComposerSkillMention[] = [],
     mentionMentions: ComposerMention[] = [],
-    onTargetReady?: (targetThreadId: string) => void
+    onTargetReady?: (targetThreadId: string) => void,
+    allowSteer = false
   ): Promise<string> {
     let targetThreadId = await ensureWritableThread(threadId, runtimeSettings);
+    assertCanStartNewTurn(targetThreadId, allowSteer);
     onTargetReady?.(targetThreadId);
     try {
-      await sendTurnInput(targetThreadId, text, attachments, runtimeSettings, skillMentions, mentionMentions);
+      await sendTurnInput(targetThreadId, text, attachments, runtimeSettings, skillMentions, mentionMentions, allowSteer);
       forgetLocallyStartedThread(targetThreadId);
       void refreshDesktopThreadBestEffort(targetThreadId);
     } catch (error) {
@@ -282,12 +285,22 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
       }
       removeLatestLocalUserMessage(targetThreadId, text, attachments);
       targetThreadId = await createContinuationThread(threadId, runtimeSettings);
+      assertCanStartNewTurn(targetThreadId, allowSteer);
       onTargetReady?.(targetThreadId);
-      await sendTurnInput(targetThreadId, text, attachments, runtimeSettings, skillMentions, mentionMentions);
+      await sendTurnInput(targetThreadId, text, attachments, runtimeSettings, skillMentions, mentionMentions, allowSteer);
       forgetLocallyStartedThread(targetThreadId);
       void refreshDesktopThreadBestEffort(targetThreadId);
     }
     return targetThreadId;
+  }
+
+  function assertCanStartNewTurn(threadId: string, allowSteer: boolean): void {
+    if (!allowSteer && get().runningTurnByThread[threadId]) {
+      throw codedStoreError(
+        "turn_running",
+        "Codex is still working on this thread. Queue this draft or wait for the current turn to finish."
+      );
+    }
   }
 
   async function sendTurnInput(
@@ -296,10 +309,17 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
     attachments: ImageAttachment[],
     runtimeSettings: RuntimeSettings,
     skillMentions: ComposerSkillMention[] = [],
-    mentionMentions: ComposerMention[] = []
+    mentionMentions: ComposerMention[] = [],
+    allowSteer = false
   ): Promise<void> {
     const activeTurnId = await resolveSteerTurnId(threadId);
     if (activeTurnId) {
+      if (!allowSteer) {
+        throw codedStoreError(
+          "turn_running",
+          "Codex is still working on this thread. Queue this draft or wait for the current turn to finish."
+        );
+      }
       await client.steerTurn({
         threadId,
         expectedTurnId: activeTurnId,
@@ -696,9 +716,12 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
 
     async approve(request, decision) {
       await client.approve(request, decision);
-      set((state) => ({
-        ...clearResolvedApprovalState(state, request.id)
-      }));
+      set({ lastError: undefined });
+    },
+
+    async answerUserInput(request, questionId, answer) {
+      await client.answerUserInput(request, questionId, answer);
+      set({ lastError: undefined });
     },
 
     dismissInAppNotification(id) {
@@ -1864,6 +1887,12 @@ function readTimestamp(value: unknown): string | number | undefined {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function codedStoreError(code: string, message: string): Error & { code: string } {
+  const error = new Error(message) as Error & { code: string };
+  error.code = code;
+  return error;
 }
 
 function mergeSkillMention(existing: ComposerSkillMention[], mention: ComposerSkillMention): ComposerSkillMention[] {

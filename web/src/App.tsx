@@ -1360,13 +1360,19 @@ function AttachmentPreview({ attachment }: { attachment: ImageAttachment }) {
 function ApprovalStack() {
   const pendingApprovals = useRemodexStore((state) => state.pendingApprovals);
   const approve = useRemodexStore((state) => state.approve);
+  const answerUserInput = useRemodexStore((state) => state.answerUserInput);
   if (!pendingApprovals.length) {
     return null;
   }
   return (
     <div className="approval-stack">
       {pendingApprovals.map((request) => (
-        <ApprovalCard key={request.id} request={request} onDecision={(decision) => void approve(request, decision)} />
+        <ApprovalCard
+          key={request.id}
+          request={request}
+          onDecision={(decision) => void approve(request, decision)}
+          onUserInput={(questionId, answer) => void answerUserInput(request, questionId, answer)}
+        />
       ))}
     </div>
   );
@@ -1374,16 +1380,19 @@ function ApprovalStack() {
 
 function ApprovalCard({
   request,
-  onDecision
+  onDecision,
+  onUserInput
 }: {
   request: ApprovalRequest;
   onDecision: (decision: "accept" | "decline" | "acceptForSession") => void;
+  onUserInput: (questionId: string, answer: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const title = approvalTitle(request);
   const detail = approvalDetail(request);
   const extraDetail = approvalExtraDetail(request, title);
   const permissionsRequest = request.method === "item/permissions/requestApproval";
+  const userInputQuestion = userInputApprovalQuestion(request);
   return (
     <div className={`approval-card ${expanded ? "expanded" : ""}`}>
       <button
@@ -1396,27 +1405,61 @@ function ApprovalCard({
         <span>{detail}</span>
         {expanded && extraDetail ? <pre>{extraDetail}</pre> : null}
       </button>
-      <div className="approval-actions">
-        <button
-          className="icon-button"
-          title={permissionsRequest ? "Continue without permissions" : "Decline"}
-          aria-label={permissionsRequest ? "Continue without permissions" : "Decline"}
-          onClick={() => onDecision("decline")}
-        >
-          <X size={16} />
-        </button>
-        <button onClick={() => onDecision("acceptForSession")}>Session</button>
-        <button
-          className="primary icon-button"
-          title={permissionsRequest ? "Allow for this turn" : "Accept"}
-          aria-label={permissionsRequest ? "Allow for this turn" : "Accept"}
-          onClick={() => onDecision("accept")}
-        >
-          <Check size={16} />
-        </button>
-      </div>
+      {userInputQuestion ? (
+        <div className="approval-actions">
+          {userInputQuestion.options.map((option) => (
+            <button
+              key={option}
+              className={option === userInputQuestion.options[0] ? "primary" : undefined}
+              onClick={() => onUserInput(userInputQuestion.id, option)}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="approval-actions">
+          <button
+            className="icon-button"
+            title={permissionsRequest ? "Continue without permissions" : "Decline"}
+            aria-label={permissionsRequest ? "Continue without permissions" : "Decline"}
+            onClick={() => onDecision("decline")}
+          >
+            <X size={16} />
+          </button>
+          <button onClick={() => onDecision("acceptForSession")}>Session</button>
+          <button
+            className="primary icon-button"
+            title={permissionsRequest ? "Allow for this turn" : "Accept"}
+            aria-label={permissionsRequest ? "Allow for this turn" : "Accept"}
+            onClick={() => onDecision("accept")}
+          >
+            <Check size={16} />
+          </button>
+        </div>
+      )}
     </div>
   );
+}
+
+function userInputApprovalQuestion(request: ApprovalRequest): { id: string; question: string; options: string[] } | undefined {
+  if (request.method !== "item/tool/requestUserInput" && request.method !== "tool/requestUserInput") {
+    return undefined;
+  }
+  const question = arrayValue(objectValue(request.params).questions)
+    .map((value) => objectValue(value))
+    .find((value) => typeof value.id === "string" && value.id.trim());
+  if (!question || typeof question.id !== "string") {
+    return undefined;
+  }
+  const options = arrayValue(question.options)
+    .map((value) => objectValue(value).label)
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  return {
+    id: question.id,
+    question: typeof question.question === "string" ? question.question : "Input requested",
+    options: options.length ? options : ["Yes"]
+  };
 }
 
 function approvalTitle(request: ApprovalRequest): string {
@@ -1429,12 +1472,19 @@ function approvalTitle(request: ApprovalRequest): string {
       return "File read";
     case "item/commandExecution/requestApproval":
       return request.command || "Command";
+    case "item/tool/requestUserInput":
+    case "tool/requestUserInput":
+      return "Input needed";
     default:
       return request.command || request.method;
   }
 }
 
 function approvalDetail(request: ApprovalRequest): string {
+  const userInputQuestion = userInputApprovalQuestion(request);
+  if (userInputQuestion?.question) {
+    return userInputQuestion.question;
+  }
   if (request.reason) {
     return request.reason;
   }

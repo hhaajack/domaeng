@@ -424,7 +424,17 @@ export class RemodexClient {
   }
 
   async approve(request: ApprovalRequest, decision: "accept" | "decline" | "acceptForSession"): Promise<void> {
-    await this.respond(request.requestID, approvalResponseForDecision(request, decision));
+    await this.respondToServerRequest(request, approvalResponseForDecision(request, decision));
+  }
+
+  async answerUserInput(request: ApprovalRequest, questionId: string, answer: string): Promise<void> {
+    await this.respondToServerRequest(request, {
+      answers: {
+        [questionId]: {
+          answers: [answer]
+        }
+      }
+    });
   }
 
   async request(method: string, params?: JSONValue, timeoutMs?: number): Promise<RPCMessage> {
@@ -439,6 +449,19 @@ export class RemodexClient {
       throw new Error("Domaeng is not connected");
     }
     await this.rpc.respond(id, result);
+  }
+
+  private async respondToServerRequest(request: ApprovalRequest, result: JSONValue): Promise<void> {
+    if (!this.rpc) {
+      throw new Error("Domaeng is not connected");
+    }
+    await this.sendApplicationText(JSON.stringify({
+      id: request.requestID,
+      result,
+      remodexRequestMethod: request.method,
+      remodexThreadId: request.threadId,
+      remodexDesktopOwnerClientId: request.desktopOwnerClientId
+    }));
   }
 
   private async open(relayState: RelaySessionState, mode: "qr_bootstrap" | "trusted_reconnect"): Promise<void> {
@@ -723,13 +746,15 @@ export class RemodexClient {
       } else {
         this.emit({ type: "notification", method: message.method, params: message.params });
       }
+    } else if (message.error) {
+      this.emit({ type: "error", error: new RPCError(message.error) });
     }
   }
 
   private handleServerRequest(message: RPCMessage): void {
     const requestID = message.id as string | number;
     const method = message.method ?? "";
-    if (method.includes("requestApproval")) {
+    if (method.includes("requestApproval") || method === "item/tool/requestUserInput" || method === "tool/requestUserInput") {
       const params = asObject(message.params);
       const request: ApprovalRequest = {
         id: idKey(requestID),
@@ -739,6 +764,7 @@ export class RemodexClient {
         reason: readString(params.reason),
         threadId: readString(params.threadId),
         turnId: readString(params.turnId),
+        desktopOwnerClientId: readString(params.remodexDesktopOwnerClientId),
         params: message.params
       };
       this.emit({ type: "approval", request });

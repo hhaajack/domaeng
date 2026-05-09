@@ -129,6 +129,130 @@ describe("RemodexClient slow-link request budgets", () => {
   });
 });
 
+describe("RemodexClient approval responses", () => {
+  it("includes route metadata so the bridge can recover desktop approvals after reconnects", async () => {
+    const client = new RemodexClient() as unknown as {
+      rpc: object;
+      approve: RemodexClient["approve"];
+      sendApplicationText: (text: string) => Promise<void>;
+    };
+    const sent: RPCMessage[] = [];
+    client.rpc = {};
+    client.sendApplicationText = async (text: string) => {
+      sent.push(JSON.parse(text) as RPCMessage);
+    };
+
+    await client.approve({
+      id: "req-command",
+      requestID: "req-command",
+      method: "item/commandExecution/requestApproval",
+      threadId: "thread-live",
+      desktopOwnerClientId: "desktop-owner"
+    }, "accept");
+
+    expect(sent).toEqual([{
+      id: "req-command",
+      result: { decision: "accept" },
+      remodexRequestMethod: "item/commandExecution/requestApproval",
+      remodexThreadId: "thread-live",
+      remodexDesktopOwnerClientId: "desktop-owner"
+    }]);
+  });
+
+  it("surfaces async approval reply failures from the bridge", () => {
+    const client = new RemodexClient() as unknown as {
+      handleRPCText: (rawText: string) => void;
+      on: (listener: (event: { type: string; error?: Error }) => void) => () => void;
+    };
+    const errors: string[] = [];
+    client.on((event) => {
+      if (event.type === "error" && event.error) {
+        errors.push(event.error.message);
+      }
+    });
+
+    client.handleRPCText(JSON.stringify({
+      id: "req-command",
+      error: {
+        code: -32000,
+        message: "Could not send this action to Codex on the Mac."
+      }
+    }));
+
+    expect(errors).toEqual(["Could not send this action to Codex on the Mac."]);
+  });
+
+  it("answers desktop user-input prompts with the selected option", async () => {
+    const client = new RemodexClient() as unknown as {
+      rpc: object;
+      answerUserInput: RemodexClient["answerUserInput"];
+      sendApplicationText: (text: string) => Promise<void>;
+    };
+    const sent: RPCMessage[] = [];
+    client.rpc = {};
+    client.sendApplicationText = async (text: string) => {
+      sent.push(JSON.parse(text) as RPCMessage);
+    };
+
+    await client.answerUserInput({
+      id: "req-input",
+      requestID: "req-input",
+      method: "item/tool/requestUserInput",
+      threadId: "thread-live",
+      desktopOwnerClientId: "desktop-owner"
+    }, "q1", "Yes");
+
+    expect(sent).toEqual([{
+      id: "req-input",
+      result: {
+        answers: {
+          q1: {
+            answers: ["Yes"]
+          }
+        }
+      },
+      remodexRequestMethod: "item/tool/requestUserInput",
+      remodexThreadId: "thread-live",
+      remodexDesktopOwnerClientId: "desktop-owner"
+    }]);
+  });
+
+  it("treats desktop user-input prompts as actionable requests", () => {
+    const client = new RemodexClient() as unknown as {
+      handleRPCText: (rawText: string) => void;
+      on: (listener: (event: { type: string; request?: { id: string; method: string } }) => void) => () => void;
+    };
+    const approvals: Array<{ id: string; method: string }> = [];
+    client.on((event) => {
+      if (event.type === "approval" && event.request) {
+        approvals.push(event.request);
+      }
+    });
+
+    client.handleRPCText(JSON.stringify({
+      id: "req-input",
+      method: "item/tool/requestUserInput",
+      params: {
+        threadId: "thread-live",
+        remodexDesktopOwnerClientId: "desktop-owner",
+        questions: [{
+          id: "q1",
+          question: "Approve?",
+          options: [{ label: "Yes" }]
+        }]
+      }
+    }));
+
+    expect(approvals).toEqual([
+      expect.objectContaining({
+        id: "req-input",
+        method: "item/tool/requestUserInput",
+        desktopOwnerClientId: "desktop-owner"
+      })
+    ]);
+  });
+});
+
 describe("RemodexClient approval reviewer params", () => {
   it("sends guardian approvals when auto review is enabled", async () => {
     const { client, captured } = createRequestCapturingClient();

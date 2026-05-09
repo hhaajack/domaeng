@@ -137,6 +137,7 @@ test("bridge forwards desktop IPC actions to the phone and routes replies back t
 
   const actionMessage = await waitForMessage(relayMessages, (message) => message.id === "req-ipc");
   assert.equal(actionMessage.method, "item/tool/requestUserInput");
+  assert.equal(actionMessage.params.remodexDesktopOwnerClientId, "desktop");
 
   relaySocket.send(JSON.stringify({
     id: "req-ipc",
@@ -151,6 +152,7 @@ test("bridge forwards desktop IPC actions to the phone and routes replies back t
     ipcFrames,
     (frame) => frame.method === "thread-follower-submit-user-input"
   );
+  assert.equal(ipcReply.targetClientId, "desktop");
   assert.deepEqual(ipcReply.params, {
     conversationId: "thread-ipc",
     requestId: "req-ipc",

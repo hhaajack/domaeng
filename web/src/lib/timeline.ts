@@ -208,7 +208,7 @@ function markTurnCompleted(state: TimelineState, object: JSONObject): TimelineSt
     runningTurnByThread: next,
     messagesByThread: {
       ...state.messagesByThread,
-      [threadId]: (state.messagesByThread[threadId] ?? []).map((entry) => ({ ...entry, streaming: false }))
+      [threadId]: finalizeMessagesForCompletedTurn(state.messagesByThread[threadId] ?? [], resolveTurnId(object))
     }
   };
 }
@@ -230,7 +230,7 @@ function appendCompletedItem(state: TimelineState, object: JSONObject): Timeline
   }
   const threadId = resolveThreadId(object) ?? (item ? resolveThreadIdFromItem(item) : undefined) ?? "local";
   const turnId = resolveTurnId(object) ?? (item ? resolveTurnIdFromItem(item) : undefined);
-  return reconcileOrAppendMessage(state, message({
+  const next = reconcileOrAppendMessage(state, message({
     role,
     kind: role === "reasoning" ? "reasoning" : "chat",
     threadId,
@@ -239,6 +239,10 @@ function appendCompletedItem(state: TimelineState, object: JSONObject): Timeline
     text,
     createdAt: Date.now()
   }));
+  if (role !== "assistant") {
+    return next;
+  }
+  return markTurnCompleted(next, turnId ? { threadId, turnId } : { threadId });
 }
 
 function appendMirroredUserMessage(state: TimelineState, object: JSONObject): TimelineState {
@@ -335,6 +339,22 @@ function markThreadRunning(
     ...runningTurnByThread,
     [threadId]: nextTurnId
   };
+}
+
+function finalizeMessagesForCompletedTurn(messages: TimelineMessage[], turnId: string | undefined): TimelineMessage[] {
+  return messages
+    .filter((entry) => !isPlaceholderThinkingForCompletedTurn(entry, turnId))
+    .map((entry) => ({ ...entry, streaming: false }));
+}
+
+function isPlaceholderThinkingForCompletedTurn(entry: TimelineMessage, turnId: string | undefined): boolean {
+  if (entry.role !== "reasoning" || entry.kind !== "reasoning" || entry.streaming !== true) {
+    return false;
+  }
+  if (turnId && entry.turnId && entry.turnId !== turnId) {
+    return false;
+  }
+  return normalizeMessageText(entry.text).replace(/[^a-z0-9]/gi, "").toLowerCase() === "thinking";
 }
 
 function appendSystemMessage(

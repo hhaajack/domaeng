@@ -64,6 +64,33 @@ describe("timeline item reconciliation", () => {
     });
   });
 
+  it("clears running state when the assistant completed item is the only terminal signal", () => {
+    let next = state();
+    next = applyNotification(next, "item/reasoning/textDelta", {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "thinking-thread-1-turn-1",
+      delta: "Thinking..."
+    });
+    next = applyNotification(next, "item/completed", {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      item: {
+        id: "assistant-item-1",
+        type: "assistant_message",
+        text: "final answer"
+      }
+    });
+
+    expect(next.runningTurnByThread["thread-1"]).toBeUndefined();
+    expect(next.messagesByThread["thread-1"]).toHaveLength(1);
+    expect(next.messagesByThread["thread-1"][0]).toMatchObject({
+      role: "assistant",
+      text: "final answer",
+      streaming: false
+    });
+  });
+
   it("reconciles assistant completion by turn when the streaming delta lacks item identity", () => {
     let next = state();
     next = applyNotification(next, "item/agentMessage/delta", {

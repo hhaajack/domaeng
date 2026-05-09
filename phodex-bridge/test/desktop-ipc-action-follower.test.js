@@ -45,6 +45,7 @@ test("projects desktop pending user input as an app-server request shape", () =>
 
   assert.deepEqual(actions, [{
     id: "req-user-input",
+    desktopRequestId: "req-user-input",
     method: "item/tool/requestUserInput",
     params: {
       threadId: "thread-1",
@@ -146,18 +147,19 @@ test("projects command, file, and permission approvals while ignoring completed 
 test("builds desktop follower reply payloads from iOS responses", () => {
   assert.deepEqual(
     desktopFollowerPayloadForResponse({
-      requestId: "req-command",
+      requestId: "4",
+      desktopRequestId: 4,
       method: "item/commandExecution/requestApproval",
       threadId: "thread-1",
     }, {
-      id: "req-command",
+      id: 4,
       result: { decision: "acceptForSession" },
     }),
     {
       method: "thread-follower-command-approval-decision",
       params: {
         conversationId: "thread-1",
-        requestId: "req-command",
+        requestId: 4,
         decision: "acceptForSession",
       },
     }
@@ -703,6 +705,7 @@ test("desktop IPC follower projects first add patch-only action updates without 
   assert.equal(baselineReads, 0);
   assert.equal(outbound[0].id, "req-patch");
   assert.equal(outbound[0].method, "item/tool/requestUserInput");
+  assert.equal(outbound[0].params.remodexDesktopOwnerClientId, "desktop");
 });
 
 test("desktop IPC follower mirrors stream activity as thread status notifications", async (t) => {
@@ -1265,6 +1268,7 @@ test("desktop IPC follower forwards pending actions and routes iOS replies back 
 
   assert.equal(outbound[0].id, "req-live");
   assert.equal(outbound[0].method, "item/tool/requestUserInput");
+  assert.equal(outbound[0].params.remodexDesktopOwnerClientId, "desktop");
 
   follower.observeInbound(JSON.stringify({
     id: "req-live",
@@ -1277,6 +1281,7 @@ test("desktop IPC follower forwards pending actions and routes iOS replies back 
   await wait(25);
 
   const replyFrame = serverFrames.find((frame) => frame.method === "thread-follower-submit-user-input");
+  assert.equal(replyFrame.targetClientId, "desktop");
   assert.deepEqual(replyFrame.params, {
     conversationId: "thread-live",
     requestId: "req-live",
@@ -1286,6 +1291,186 @@ test("desktop IPC follower forwards pending actions and routes iOS replies back 
       },
     },
   });
+  await waitFor(() => outbound.some((message) => message.method === "serverRequest/resolved"
+    && message.params?.requestId === "req-live"));
+});
+
+test("desktop IPC follower recovers approval routes from web metadata with the desktop owner", async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "remodex-ipc-route-metadata-"));
+  const socketPath = path.join(tempDir, "ipc.sock");
+  const serverFrames = [];
+  let serverSocket = null;
+
+  const server = net.createServer((socket) => {
+    serverSocket = socket;
+    attachFrameReader(socket, (frame) => {
+      serverFrames.push(frame);
+      if (frame.method === "initialize") {
+        writeFrame(socket, {
+          type: "response",
+          requestId: frame.requestId,
+          resultType: "success",
+          method: "initialize",
+          handledByClientId: "desktop",
+          result: { clientId: "remodex-test" },
+        });
+      } else if (frame.method === "thread-follower-command-approval-decision") {
+        writeFrame(socket, {
+          type: "response",
+          requestId: frame.requestId,
+          resultType: "success",
+          method: frame.method,
+          handledByClientId: "desktop-owner",
+          result: { ok: true },
+        });
+      }
+    });
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  t.after(() => {
+    server.close();
+    serverSocket?.destroy();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  const outbound = [];
+  const follower = createDesktopIpcActionFollower({
+    socketPath,
+    sendApplicationResponse(message) {
+      outbound.push(JSON.parse(message));
+    },
+    requestTimeoutMs: 500,
+  });
+  t.after(() => follower.stopAll());
+
+  follower.observeInbound(JSON.stringify({
+    method: "thread/resume",
+    params: { threadId: "thread-live" },
+  }));
+  await waitFor(() => serverSocket);
+
+  assert.equal(follower.observeInbound(JSON.stringify({
+    id: "req-command",
+    result: { decision: "accept" },
+    remodexRequestMethod: "item/commandExecution/requestApproval",
+    remodexThreadId: "thread-live",
+    remodexDesktopOwnerClientId: "desktop-owner",
+  })), true);
+
+  const replyFrame = await waitForMessage(
+    serverFrames,
+    (frame) => frame.method === "thread-follower-command-approval-decision"
+  );
+  assert.equal(replyFrame.targetClientId, "desktop-owner");
+  assert.deepEqual(replyFrame.params, {
+    conversationId: "thread-live",
+    requestId: "req-command",
+    decision: "accept",
+  });
+  await waitFor(() => outbound.some((message) => message.method === "serverRequest/resolved"
+    && message.params?.requestId === "req-command"));
+});
+
+test("desktop IPC follower routes approval replies after its IPC socket reconnects", async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "remodex-ipc-approval-reconnect-"));
+  const socketPath = path.join(tempDir, "ipc.sock");
+  const serverFrames = [];
+  let serverSocket = null;
+
+  const server = net.createServer((socket) => {
+    serverSocket = socket;
+    attachFrameReader(socket, (frame) => {
+      serverFrames.push(frame);
+      if (frame.method === "initialize") {
+        writeFrame(socket, {
+          type: "response",
+          requestId: frame.requestId,
+          resultType: "success",
+          method: "initialize",
+          handledByClientId: "desktop",
+          result: { clientId: "remodex-test" },
+        });
+      } else if (frame.method === "thread-follower-command-approval-decision") {
+        writeFrame(socket, {
+          type: "response",
+          requestId: frame.requestId,
+          resultType: "success",
+          method: frame.method,
+          handledByClientId: "desktop",
+          result: { ok: true },
+        });
+      }
+    });
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  t.after(() => {
+    server.close();
+    serverSocket?.destroy();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  const outbound = [];
+  const follower = createDesktopIpcActionFollower({
+    socketPath,
+    sendApplicationResponse(message) {
+      outbound.push(JSON.parse(message));
+    },
+    requestTimeoutMs: 500,
+  });
+  t.after(() => follower.stopAll());
+
+  follower.observeInbound(JSON.stringify({
+    method: "thread/resume",
+    params: { threadId: "thread-live" },
+  }));
+  await waitFor(() => serverSocket);
+  writeFrame(serverSocket, {
+    type: "broadcast",
+    method: "thread-stream-state-changed",
+    sourceClientId: "desktop",
+    version: 5,
+    params: {
+      conversationId: "thread-live",
+      change: {
+        type: "snapshot",
+        conversationState: {
+          requests: [{
+            id: "req-command",
+            method: "item/commandExecution/requestApproval",
+            params: {
+              threadId: "thread-live",
+              turnId: "turn-live",
+              itemId: "item-command",
+              command: "npm test",
+            },
+          }],
+        },
+      },
+    },
+  });
+  await waitFor(() => outbound.some((message) => message.id === "req-command"));
+
+  serverSocket.destroy();
+  await wait(25);
+  serverSocket = null;
+
+  assert.equal(follower.observeInbound(JSON.stringify({
+    id: "req-command",
+    result: { decision: "accept" },
+  })), true);
+
+  const replyFrame = await waitForMessage(
+    serverFrames,
+    (frame) => frame.method === "thread-follower-command-approval-decision"
+  );
+  assert.equal(replyFrame.targetClientId, "desktop");
+  assert.deepEqual(replyFrame.params, {
+    conversationId: "thread-live",
+    requestId: "req-command",
+    decision: "accept",
+  });
+  await waitFor(() => outbound.some((message) => message.method === "serverRequest/resolved"
+    && message.params?.requestId === "req-command"));
 });
 
 function attachFrameReader(socket, onFrame) {
