@@ -31,7 +31,16 @@ import {
   Upload,
   X
 } from "lucide-react";
-import { Component, useEffect, useRef, useState, type ClipboardEvent, type FormEvent, type ReactNode } from "react";
+import {
+  Component,
+  useEffect,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode
+} from "react";
 import ReactMarkdown from "react-markdown";
 import type {
   ApprovalRequest,
@@ -41,7 +50,9 @@ import type {
   CodexThread,
   ImageAttachment,
   InAppNotification,
+  JSONValue,
   ModelOption,
+  QueuedComposerDraft,
   ThreadRunState,
   TimelineMessage
 } from "./types";
@@ -55,7 +66,91 @@ import {
 } from "./lib/pairing";
 
 const EMPTY_MESSAGES: TimelineMessage[] = [];
-const EMPTY_DRAFTS: string[] = [];
+const EMPTY_DRAFTS: QueuedComposerDraft[] = [];
+const DEFAULT_PROJECT_THREAD_LIMIT = 8;
+const PROJECT_THREAD_INCREMENT = 8;
+
+type ComposerSuggestionKind = "command" | "plugin" | "skill";
+
+type ComposerSuggestion = {
+  id: string;
+  kind: ComposerSuggestionKind;
+  label: string;
+  insertText: string;
+  description: string;
+  skillMention?: { id: string; name?: string; path?: string };
+  mentionMention?: { name: string; path: string };
+};
+
+type ComposerMentionState = {
+  trigger: "/" | "@" | "$";
+  kind: ComposerSuggestionKind;
+  query: string;
+  start: number;
+  end: number;
+  selectedIndex: number;
+};
+
+const COMPOSER_SUGGESTIONS: ComposerSuggestion[] = [
+  { id: "command-review", kind: "command", label: "/review", insertText: "/review ", description: "Review current changes" },
+  { id: "command-fix", kind: "command", label: "/fix", insertText: "/fix ", description: "Fix the current issue" },
+  { id: "command-explain", kind: "command", label: "/explain", insertText: "/explain ", description: "Explain selected code or behavior" },
+  { id: "command-test", kind: "command", label: "/test", insertText: "/test ", description: "Run or add focused tests" },
+  { id: "command-commit", kind: "command", label: "/commit", insertText: "/commit ", description: "Prepare a commit message or commit" },
+  {
+    id: "plugin-browser-use",
+    kind: "plugin",
+    label: "@browser-use",
+    insertText: "@browser-use ",
+    description: "Use the in-app browser surface",
+    mentionMention: { name: "browser-use", path: "plugin://browser-use@openai-bundled" }
+  },
+  {
+    id: "plugin-chrome",
+    kind: "plugin",
+    label: "@chrome",
+    insertText: "@chrome ",
+    description: "Use Chrome with the user profile",
+    mentionMention: { name: "chrome", path: "plugin://chrome@openai-bundled" }
+  },
+  {
+    id: "plugin-computer-use",
+    kind: "plugin",
+    label: "@computer-use",
+    insertText: "@computer-use ",
+    description: "Control local desktop apps",
+    mentionMention: { name: "computer-use", path: "plugin://computer-use@openai-bundled" }
+  },
+  { id: "plugin-github", kind: "plugin", label: "@github", insertText: "@github ", description: "Work with repositories and PRs", mentionMention: { name: "github", path: "plugin://github@openai-curated" } },
+  {
+    id: "skill-browser",
+    kind: "skill",
+    label: "$browser-use:browser",
+    insertText: "$browser-use:browser ",
+    description: "Browser automation workflow"
+  },
+  {
+    id: "skill-imagegen",
+    kind: "skill",
+    label: "$imagegen",
+    insertText: "$imagegen ",
+    description: "Generate or edit bitmap images"
+  },
+  {
+    id: "skill-openai-docs",
+    kind: "skill",
+    label: "$openai-docs",
+    insertText: "$openai-docs ",
+    description: "Use official OpenAI documentation"
+  },
+  {
+    id: "skill-computer-use",
+    kind: "skill",
+    label: "$computer-use:computer-use",
+    insertText: "$computer-use:computer-use ",
+    description: "Operate local Mac apps"
+  }
+];
 
 export function App() {
   const hydrate = useRemodexStore((state) => state.hydrate);
@@ -414,11 +509,13 @@ function seedPreviewWorkspace() {
       reasoningEffort: "medium"
     },
     composerText: "",
+    composerSkillMentions: [],
+    composerMentionMentions: [],
     attachments: [],
     queuedDraftsByThread: {
       [PREVIEW_THREAD_ID]: [
-        "Polish mobile spacing",
-        "Check relay reconnect copy"
+        { text: "Polish mobile spacing" },
+        { text: "Check relay reconnect copy" }
       ]
     },
     gitStatus: {
@@ -440,6 +537,7 @@ function seedPreviewWorkspace() {
 function Workspace() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [projectOpenByKey, setProjectOpenByKey] = useState<Record<string, boolean>>({});
+  const [projectThreadLimitByKey, setProjectThreadLimitByKey] = useState<Record<string, number>>({});
   const [sidebarSearch, setSidebarSearch] = useState("");
   const [openThreadMenuId, setOpenThreadMenuId] = useState<string | undefined>();
   const [renamingThread, setRenamingThread] = useState<CodexThread | undefined>();
@@ -565,6 +663,14 @@ function Workspace() {
 
   return (
     <section className="workspace">
+      {sidebarOpen ? (
+        <button
+          className="sidebar-scrim"
+          type="button"
+          aria-label="Close sidebar"
+          onClick={() => setSidebarOpen(false)}
+        />
+      ) : null}
       <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="sidebar-header">
           <div className="brand-lockup">
@@ -610,6 +716,18 @@ function Workspace() {
             const open = projectIsOpen(project.key);
             const projectActive = project.key === activeProjectKey;
             const projectState = projectThreadState(project.threads, runningTurnByThread, threadRunStateByThread, pendingApprovals);
+            const searching = sidebarSearch.trim().length > 0;
+            const configuredThreadLimit = projectThreadLimitByKey[project.key] ?? DEFAULT_PROJECT_THREAD_LIMIT;
+            let projectThreads = searching
+              ? project.threads
+              : project.threads.slice(0, configuredThreadLimit);
+            if (!searching && activeThreadId && !projectThreads.some((thread) => thread.id === activeThreadId)) {
+              const activeProjectThread = project.threads.find((thread) => thread.id === activeThreadId);
+              if (activeProjectThread) {
+                projectThreads = [...projectThreads, activeProjectThread];
+              }
+            }
+            const hiddenThreadCount = Math.max(0, project.threads.length - projectThreads.length);
             return (
               <section key={project.key} className={`project-group ${projectActive ? "active" : ""}`}>
                 <div className="project-row">
@@ -643,7 +761,7 @@ function Workspace() {
                 </div>
                 {open ? (
                   <div className="project-threads">
-                    {project.threads.map((thread) => {
+                    {projectThreads.map((thread) => {
                       const threadState = threadActivityState(thread.id, runningTurnByThread, threadRunStateByThread, pendingApprovals);
                       const menuOpen = openThreadMenuId === thread.id;
                       return (
@@ -663,8 +781,8 @@ function Workspace() {
                             <span className="thread-title-line">
                               <ThreadStateDot state={threadState} />
                               <span className="thread-row-title">{thread.title || thread.name || "Conversation"}</span>
+                              <small>{threadSubtitle(thread, project)}</small>
                             </span>
-                            <small>{threadSubtitle(thread, project)}</small>
                           </button>
                           <button
                             className="thread-actions-button"
@@ -703,6 +821,23 @@ function Workspace() {
                         </div>
                       );
                     })}
+                    {hiddenThreadCount > 0 ? (
+                      <button
+                        className="project-view-more"
+                        onClick={() => {
+                          setProjectThreadLimitByKey((state) => ({
+                            ...state,
+                            [project.key]: Math.min(
+                              project.threads.length,
+                              configuredThreadLimit + PROJECT_THREAD_INCREMENT
+                            )
+                          }));
+                        }}
+                      >
+                        <span>View more</span>
+                        <small>{hiddenThreadCount} hidden</small>
+                      </button>
+                    ) : null}
                   </div>
                 ) : null}
               </section>
@@ -1345,9 +1480,13 @@ function objectValue(value: unknown): Record<string, unknown> {
 
 function Composer() {
   const activeThreadId = useRemodexStore((state) => state.activeThreadId);
+  const activeThread = useRemodexStore((state) => state.threads.find((thread) => thread.id === state.activeThreadId));
+  const client = useRemodexStore((state) => state.client);
   const previewMode = localPreviewModeEnabled();
   const text = useRemodexStore((state) => state.composerText);
   const setText = useRemodexStore((state) => state.setComposerText);
+  const addComposerSkillMention = useRemodexStore((state) => state.addComposerSkillMention);
+  const addComposerMentionMention = useRemodexStore((state) => state.addComposerMentionMention);
   const attachments = useRemodexStore((state) => state.attachments);
   const addFiles = useRemodexStore((state) => state.addFiles);
   const removeAttachment = useRemodexStore((state) => state.removeAttachment);
@@ -1363,10 +1502,14 @@ function Composer() {
   const queuedDrafts = useRemodexStore((state) => activeThreadId ? state.queuedDraftsByThread[activeThreadId] ?? EMPTY_DRAFTS : EMPTY_DRAFTS);
   const sendQueuedDraft = useRemodexStore((state) => state.sendQueuedDraft);
   const [openChoiceMenu, setOpenChoiceMenu] = useState<"model" | "reasoning" | null>(null);
+  const [mentionState, setMentionState] = useState<ComposerMentionState | null>(null);
+  const [remoteSuggestions, setRemoteSuggestions] = useState<ComposerSuggestion[]>([]);
   const choiceMenuRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const selectedModel = availableModels.find((model) => model.id === runtimeSettings.model || model.model === runtimeSettings.model);
   const autoReview = runtimeSettings.autoReview === true;
   const accessTitle = autoReview ? "Auto review" : "Default permissions";
+  const mentionSuggestions = mentionState ? filteredComposerSuggestions(mentionState, remoteSuggestions) : [];
   const reasoningOptions = selectedModel?.supportedReasoningEfforts?.length
     ? selectedModel.supportedReasoningEfforts
     : [
@@ -1413,6 +1556,35 @@ function Composer() {
     };
   }, [openChoiceMenu]);
 
+  useEffect(() => {
+    if (!mentionState || previewMode || (mentionState.kind !== "skill" && mentionState.kind !== "plugin")) {
+      setRemoteSuggestions([]);
+      return;
+    }
+
+    let cancelled = false;
+    const cwds = activeThread?.cwd ? [activeThread.cwd] : undefined;
+    const loadSuggestions = mentionState.kind === "skill"
+      ? client.listSkills(cwds).then(decodeSkillSuggestions)
+      : client.listPlugins(cwds).then(decodePluginSuggestions);
+
+    loadSuggestions
+      .then((suggestions) => {
+        if (!cancelled) {
+          setRemoteSuggestions(suggestions);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRemoteSuggestions([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeThread?.cwd, client, mentionState?.kind, previewMode]);
+
   function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
     const files = pastedImageFiles(event.clipboardData);
     if (!files.length) {
@@ -1424,6 +1596,67 @@ function Composer() {
     void addFiles(files);
   }
 
+  function updateComposerText(nextText: string, cursor: number | null) {
+    setText(nextText);
+    setMentionState(resolveComposerMention(nextText, cursor ?? nextText.length));
+  }
+
+  function insertComposerSuggestion(suggestion: ComposerSuggestion) {
+    if (!mentionState) {
+      return;
+    }
+    const nextText = `${text.slice(0, mentionState.start)}${suggestion.insertText}${text.slice(mentionState.end)}`;
+    const nextCursor = mentionState.start + suggestion.insertText.length;
+    setText(nextText);
+    if (suggestion.skillMention) {
+      addComposerSkillMention(suggestion.skillMention);
+    }
+    if (suggestion.mentionMention) {
+      addComposerMentionMention(suggestion.mentionMention);
+    }
+    setMentionState(null);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextCursor, nextCursor);
+    });
+  }
+
+  function handleComposerKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
+    if (mentionState && mentionSuggestions.length) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setMentionState({
+          ...mentionState,
+          selectedIndex: (mentionState.selectedIndex + 1) % mentionSuggestions.length
+        });
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setMentionState({
+          ...mentionState,
+          selectedIndex: (mentionState.selectedIndex + mentionSuggestions.length - 1) % mentionSuggestions.length
+        });
+        return;
+      }
+      if (event.key === "Enter" || event.key === "Tab") {
+        event.preventDefault();
+        insertComposerSuggestion(mentionSuggestions[mentionState.selectedIndex] ?? mentionSuggestions[0]);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMentionState(null);
+        return;
+      }
+    }
+
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      previewMode ? sendPreviewComposer() : void sendComposer();
+    }
+  }
+
   return (
     <footer className="composer">
       {lastError && !previewMode ? <p className="composer-error">{lastError}</p> : null}
@@ -1432,12 +1665,12 @@ function Composer() {
           <div className="queued-drafts">
             {queuedDrafts.map((draft, index) => (
               <button
-                key={`${draft}-${index}`}
+                key={`${draft.text}-${index}`}
                 onClick={() => activeThreadId && (previewMode
                   ? sendPreviewQueuedDraft(activeThreadId, index)
                   : void sendQueuedDraft(activeThreadId, index))}
               >
-                {draft}
+                {draft.text}
               </button>
             ))}
           </div>
@@ -1452,17 +1685,42 @@ function Composer() {
             ))}
           </div>
         ) : null}
+        {mentionState && mentionSuggestions.length ? (
+          <div className="composer-suggestion-popover" role="listbox" aria-label="Composer suggestions">
+            <div className="composer-suggestion-header">{composerSuggestionTitle(mentionState.kind)}</div>
+            {mentionSuggestions.map((suggestion, index) => (
+              <button
+                key={suggestion.id}
+                type="button"
+                className={index === mentionState.selectedIndex ? "selected" : ""}
+                role="option"
+                aria-selected={index === mentionState.selectedIndex}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => insertComposerSuggestion(suggestion)}
+              >
+                <span>
+                  <strong>{suggestion.label}</strong>
+                  <small>{suggestion.description}</small>
+                </span>
+                {index === mentionState.selectedIndex ? <Check size={14} /> : null}
+              </button>
+            ))}
+          </div>
+        ) : null}
         <textarea
+          ref={textareaRef}
           value={text}
-          onChange={(event) => setText(event.target.value)}
+          onChange={(event) => updateComposerText(event.target.value, event.target.selectionStart)}
+          onClick={(event) => setMentionState(resolveComposerMention(event.currentTarget.value, event.currentTarget.selectionStart))}
+          onKeyUp={(event) => {
+            if (["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(event.key)) {
+              return;
+            }
+            setMentionState(resolveComposerMention(event.currentTarget.value, event.currentTarget.selectionStart));
+          }}
           onPaste={handlePaste}
           placeholder="Ask anything... @plugins, $skills, /commands"
-          onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-              event.preventDefault();
-              previewMode ? sendPreviewComposer() : void sendComposer();
-            }
-          }}
+          onKeyDown={handleComposerKeyDown}
         />
         <div className="composer-bar" ref={choiceMenuRef}>
           <label className="icon-upload" title="Attach image" aria-label="Attach image">
@@ -1589,6 +1847,138 @@ function Composer() {
   );
 }
 
+function resolveComposerMention(value: string, cursor: number): ComposerMentionState | null {
+  let start = cursor;
+  while (start > 0 && !/\s/.test(value[start - 1])) {
+    start -= 1;
+  }
+
+  const token = value.slice(start, cursor);
+  if (!/^[\/@$][\w-]*$/.test(token)) {
+    return null;
+  }
+
+  const trigger = token[0] as "/" | "@" | "$";
+  const kind = trigger === "/"
+    ? "command"
+    : trigger === "@"
+      ? "plugin"
+      : "skill";
+  return {
+    trigger,
+    kind,
+    query: token.slice(1).toLowerCase(),
+    start,
+    end: cursor,
+    selectedIndex: 0
+  };
+}
+
+function filteredComposerSuggestions(mention: ComposerMentionState, remoteSuggestions: ComposerSuggestion[] = []): ComposerSuggestion[] {
+  const query = mention.query.trim().toLowerCase();
+  const source = remoteSuggestions.some((suggestion) => suggestion.kind === mention.kind)
+    ? remoteSuggestions
+    : COMPOSER_SUGGESTIONS;
+  return source
+    .filter((suggestion) => suggestion.kind === mention.kind)
+    .filter((suggestion) => {
+      if (!query) {
+        return true;
+      }
+      const label = suggestion.label.slice(1).toLowerCase();
+      return label.includes(query) || suggestion.description.toLowerCase().includes(query);
+    })
+    .slice(0, 6);
+}
+
+function composerSuggestionTitle(kind: ComposerSuggestionKind): string {
+  if (kind === "command") {
+    return "Commands";
+  }
+  if (kind === "plugin") {
+    return "Plugins";
+  }
+  return "Skills";
+}
+
+function decodeSkillSuggestions(result: JSONValue): ComposerSuggestion[] {
+  const buckets = arrayValue(objectValue(result).data);
+  const flatSkills = [
+    ...arrayValue(objectValue(result).skills),
+    ...buckets.flatMap((bucket) => arrayValue(objectValue(bucket).skills))
+  ];
+  const seen = new Set<string>();
+  return flatSkills.flatMap((value) => {
+    const skill = objectValue(value);
+    if (skill.enabled === false) {
+      return [];
+    }
+    const name = stringValue(skill.name);
+    if (!name || seen.has(name.toLowerCase())) {
+      return [];
+    }
+    seen.add(name.toLowerCase());
+    const path = stringValue(skill.path);
+    const interfaceObject = objectValue(skill.interface);
+    const skillMention = path ? { id: name, name, path } : undefined;
+    return [{
+      id: `skill-${name}`,
+      kind: "skill" as const,
+      label: `$${name}`,
+      insertText: `$${name} `,
+      description: stringValue(interfaceObject.shortDescription) || stringValue(skill.description) || "Use this Codex skill",
+      skillMention
+    }];
+  });
+}
+
+function decodePluginSuggestions(result: JSONValue): ComposerSuggestion[] {
+  const marketplaces = arrayValue(objectValue(result).marketplaces);
+  const seen = new Set<string>();
+  return marketplaces.flatMap((marketplaceValue) => {
+    const marketplace = objectValue(marketplaceValue);
+    const marketplaceName = stringValue(marketplace.name);
+    if (!marketplaceName) {
+      return [];
+    }
+    return arrayValue(marketplace.plugins).flatMap((pluginValue) => {
+      const plugin = objectValue(pluginValue);
+      const name = stringValue(plugin.name);
+      const mentionPath = name ? `plugin://${name}@${marketplaceName}` : "";
+      if (!name || seen.has(mentionPath)) {
+        return [];
+      }
+      const available = plugin.installed === true
+        || plugin.enabled === true
+        || stringValue(plugin.installPolicy) === "INSTALLED_BY_DEFAULT";
+      if (!available) {
+        return [];
+      }
+      seen.add(mentionPath);
+      const interfaceObject = objectValue(plugin.interface);
+      return [{
+        id: `plugin-${mentionPath}`,
+        kind: "plugin" as const,
+        label: `@${name}`,
+        insertText: `@${name} `,
+        description: stringValue(interfaceObject.shortDescription) || stringValue(plugin.shortDescription) || "Use this Codex plugin",
+        mentionMention: {
+          name,
+          path: mentionPath
+        }
+      }];
+    });
+  });
+}
+
+function arrayValue(value: unknown): JSONValue[] {
+  return Array.isArray(value) ? value as JSONValue[] : [];
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
 function sendPreviewComposer() {
   const state = useRemodexStore.getState();
   const activeThreadId = state.activeThreadId;
@@ -1598,16 +1988,18 @@ function sendPreviewComposer() {
   }
   appendPreviewExchange(activeThreadId, text || "Preview attachment", {
     composerText: "",
+    composerSkillMentions: [],
+    composerMentionMentions: [],
     attachments: []
   });
 }
 
 function sendPreviewQueuedDraft(threadId: string, index: number) {
   const draft = useRemodexStore.getState().queuedDraftsByThread[threadId]?.[index];
-  if (!draft) {
+  if (!draft?.text) {
     return;
   }
-  appendPreviewExchange(threadId, draft, {
+  appendPreviewExchange(threadId, draft.text, {
     queuedDraftsByThread: {
       ...useRemodexStore.getState().queuedDraftsByThread,
       [threadId]: (useRemodexStore.getState().queuedDraftsByThread[threadId] ?? []).filter((_, entryIndex) => entryIndex !== index)
@@ -1713,10 +2105,29 @@ function SettingsSheet({ onClose }: { onClose: () => void }) {
   const webPushError = useRemodexStore((state) => state.webPushError);
   const enableWebPushNotifications = useRemodexStore((state) => state.enableWebPushNotifications);
   const disableWebPushNotifications = useRemodexStore((state) => state.disableWebPushNotifications);
+  const refreshWebPushStatus = useRemodexStore((state) => state.refreshWebPushStatus);
   const disconnect = useRemodexStore((state) => state.disconnect);
   const webPushBusy = webPushStatus === "checking" || webPushStatus === "subscribing";
   const webPushEnabled = webPushStatus === "enabled";
-  const webPushUnavailable = webPushStatus === "unsupported" || webPushStatus === "insecure";
+  const webPushUnavailable = webPushStatus === "unsupported";
+  const browserNotificationPermission = typeof window !== "undefined" && "Notification" in window
+    ? Notification.permission
+    : "unsupported";
+  const browserAlertsEnabled = browserNotificationPermission === "granted";
+  const notificationsEnabled = webPushEnabled || (webPushStatus === "insecure" && browserAlertsEnabled);
+  const notificationLabel = webPushStatus === "insecure"
+    ? (browserAlertsEnabled ? "Browser alerts enabled; push needs HTTPS" : "Enable browser alerts; push needs HTTPS")
+    : webPushLabel(webPushStatus, webPushError);
+  async function toggleNotifications() {
+    if (webPushStatus === "insecure") {
+      if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+        await Notification.requestPermission();
+      }
+      await refreshWebPushStatus();
+      return;
+    }
+    await (webPushEnabled ? disableWebPushNotifications() : enableWebPushNotifications());
+  }
   async function setGitToolbarEnabled(enabled: boolean) {
     await setRuntimeSettings({ gitToolbarEnabled: enabled });
     if (enabled) {
@@ -1742,14 +2153,29 @@ function SettingsSheet({ onClose }: { onClose: () => void }) {
             <input value={runtimeSettings.model ?? ""} onChange={(event) => void setRuntimeSettings({ model: event.target.value || undefined })} />
           )}
         </label>
-        <label className="field">
+        <div className="field">
           <span>Service tier (optional)</span>
-          <input
-            value={runtimeSettings.serviceTier ?? ""}
-            onChange={(event) => void setRuntimeSettings({ serviceTier: event.target.value || undefined })}
-            placeholder="fast"
-          />
-        </label>
+          <div className="segmented-control" role="radiogroup" aria-label="Service tier">
+            <button
+              type="button"
+              className={!runtimeSettings.serviceTier ? "selected" : ""}
+              role="radio"
+              aria-checked={!runtimeSettings.serviceTier}
+              onClick={() => void setRuntimeSettings({ serviceTier: undefined })}
+            >
+              Standard
+            </button>
+            <button
+              type="button"
+              className={runtimeSettings.serviceTier === "fast" ? "selected" : ""}
+              role="radio"
+              aria-checked={runtimeSettings.serviceTier === "fast"}
+              onClick={() => void setRuntimeSettings({ serviceTier: "fast" })}
+            >
+              Fast
+            </button>
+          </div>
+        </div>
         <label className="toggle-row">
           <input
             type="checkbox"
@@ -1769,16 +2195,16 @@ function SettingsSheet({ onClose }: { onClose: () => void }) {
         <div className="push-settings-row">
           <div>
             <span>Notifications</span>
-            <small>{webPushLabel(webPushStatus, webPushError)}</small>
+            <small>{notificationLabel}</small>
           </div>
           <button
-            className={`icon-button ${webPushEnabled ? "selected" : ""}`}
+            className={`icon-button ${notificationsEnabled ? "selected" : ""}`}
             disabled={webPushBusy || webPushUnavailable}
-            title={webPushEnabled ? "Disable notifications" : "Enable notifications"}
-            aria-label={webPushEnabled ? "Disable notifications" : "Enable notifications"}
-            onClick={() => void (webPushEnabled ? disableWebPushNotifications() : enableWebPushNotifications())}
+            title={notificationsEnabled ? "Notifications enabled" : "Enable notifications"}
+            aria-label={notificationsEnabled ? "Notifications enabled" : "Enable notifications"}
+            onClick={() => void toggleNotifications()}
           >
-            {webPushEnabled ? <Bell size={17} /> : <BellOff size={17} />}
+            {notificationsEnabled ? <Bell size={17} /> : <BellOff size={17} />}
           </button>
         </div>
         <button className="danger wide" onClick={disconnect}>Disconnect</button>
@@ -1791,7 +2217,7 @@ function webPushLabel(status: string, error?: string): string {
   if (status === "enabled") return "Enabled";
   if (status === "subscribing") return "Updating...";
   if (status === "checking") return "Checking...";
-  if (status === "insecure") return "HTTPS or localhost required";
+  if (status === "insecure") return "Push requires HTTPS; live browser alerts still work";
   if (status === "unsupported") return "Unsupported";
   if (status === "error") return error || "Failed";
   return "Off";
@@ -2150,7 +2576,14 @@ function buildProjectGroups(threads: CodexThread[]): ProjectGroup[] {
       threads: [thread]
     });
   }
-  return [...groups.values()].sort((left, right) => right.updatedAt - left.updatedAt);
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      threads: [...group.threads].sort((left, right) =>
+        timestampValue(right.updatedAt ?? right.createdAt) - timestampValue(left.updatedAt ?? left.createdAt)
+      )
+    }))
+    .sort((left, right) => right.updatedAt - left.updatedAt);
 }
 
 function filterProjectGroups(projectGroups: ProjectGroup[], query: string): ProjectGroup[] {

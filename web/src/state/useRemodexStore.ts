@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import type {
   ApprovalRequest,
+  ComposerMention,
+  ComposerSkillMention,
   ContextWindowUsage,
   CodexRateLimitBucket,
   CodexThread,
@@ -9,6 +11,7 @@ import type {
   InAppNotification,
   JSONValue,
   ModelOption,
+  QueuedComposerDraft,
   RuntimeSettings,
   SecureConnectionState,
   ThreadRunState,
@@ -64,8 +67,10 @@ interface RemodexStore {
   webPushStatus: WebPushStatus;
   webPushError?: string;
   composerText: string;
+  composerSkillMentions: ComposerSkillMention[];
+  composerMentionMentions: ComposerMention[];
   attachments: ImageAttachment[];
-  queuedDraftsByThread: Record<string, string[]>;
+  queuedDraftsByThread: Record<string, QueuedComposerDraft[]>;
   settingsOpen: boolean;
   scannerOpen: boolean;
   hydrate: () => Promise<void>;
@@ -79,6 +84,8 @@ interface RemodexStore {
   newThread: (cwd?: string) => Promise<void>;
   renameThread: (threadId: string, name: string) => Promise<void>;
   setComposerText: (value: string) => void;
+  addComposerSkillMention: (mention: ComposerSkillMention) => void;
+  addComposerMentionMention: (mention: ComposerMention) => void;
   addFiles: (files: FileList | File[]) => Promise<void>;
   removeAttachment: (id: string) => void;
   sendComposer: () => Promise<void>;
@@ -259,12 +266,14 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
     text: string,
     attachments: ImageAttachment[],
     runtimeSettings: RuntimeSettings,
+    skillMentions: ComposerSkillMention[] = [],
+    mentionMentions: ComposerMention[] = [],
     onTargetReady?: (targetThreadId: string) => void
   ): Promise<string> {
     let targetThreadId = await ensureWritableThread(threadId, runtimeSettings);
     onTargetReady?.(targetThreadId);
     try {
-      await sendTurnInput(targetThreadId, text, attachments, runtimeSettings);
+      await sendTurnInput(targetThreadId, text, attachments, runtimeSettings, skillMentions, mentionMentions);
       forgetLocallyStartedThread(targetThreadId);
       void refreshDesktopThreadBestEffort(targetThreadId);
     } catch (error) {
@@ -274,7 +283,7 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
       removeLatestLocalUserMessage(targetThreadId, text, attachments);
       targetThreadId = await createContinuationThread(threadId, runtimeSettings);
       onTargetReady?.(targetThreadId);
-      await sendTurnInput(targetThreadId, text, attachments, runtimeSettings);
+      await sendTurnInput(targetThreadId, text, attachments, runtimeSettings, skillMentions, mentionMentions);
       forgetLocallyStartedThread(targetThreadId);
       void refreshDesktopThreadBestEffort(targetThreadId);
     }
@@ -285,7 +294,9 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
     threadId: string,
     text: string,
     attachments: ImageAttachment[],
-    runtimeSettings: RuntimeSettings
+    runtimeSettings: RuntimeSettings,
+    skillMentions: ComposerSkillMention[] = [],
+    mentionMentions: ComposerMention[] = []
   ): Promise<void> {
     const activeTurnId = await resolveSteerTurnId(threadId);
     if (activeTurnId) {
@@ -294,7 +305,9 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
         expectedTurnId: activeTurnId,
         text,
         attachments,
-        settings: runtimeSettings
+        settings: runtimeSettings,
+        skillMentions,
+        mentionMentions
       });
       return;
     }
@@ -303,7 +316,9 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
       threadId,
       text,
       attachments,
-      settings: runtimeSettings
+      settings: runtimeSettings,
+      skillMentions,
+      mentionMentions
     });
   }
 
@@ -397,6 +412,8 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
     },
     webPushStatus: "checking",
     composerText: "",
+    composerSkillMentions: [],
+    composerMentionMentions: [],
     attachments: [],
     queuedDraftsByThread: {},
     settingsOpen: false,
@@ -488,11 +505,18 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
     async openThread(threadId) {
       set((state) => ({
         activeThreadId: threadId,
+        threads: promoteThreadByRecentUse(state.threads, threadId),
         threadRunStateByThread: clearThreadOutcomeState(state.threadRunStateByThread, threadId),
         inAppNotifications: state.inAppNotifications.filter((notification) => notification.threadId !== threadId)
       }));
       const response = await client.readThread(threadId);
-      set((state) => applyThreadReadResult(state, response.result));
+      set((state) => {
+        const patched = applyThreadReadResult(state, response.result);
+        return {
+          ...patched,
+          threads: promoteThreadByRecentUse(patched.threads, threadId)
+        };
+      });
       void get().refreshContextWindowUsage(threadId);
       if (get().runtimeSettings.gitToolbarEnabled === true) {
         await get().refreshGitStatus();
@@ -545,7 +569,36 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
     },
 
     setComposerText(value) {
-      set({ composerText: value });
+      set((state) => ({
+        composerText: value,
+        composerSkillMentions: filterSkillMentionsForText(value, state.composerSkillMentions),
+        composerMentionMentions: filterMentionMentionsForText(value, state.composerMentionMentions)
+      }));
+    },
+
+    addComposerSkillMention(mention) {
+      const normalizedId = mention.id.trim();
+      if (!normalizedId) {
+        return;
+      }
+      set((state) => ({
+        composerSkillMentions: mergeSkillMention(state.composerSkillMentions, {
+          id: normalizedId,
+          name: mention.name?.trim() || normalizedId,
+          path: mention.path?.trim() || undefined
+        })
+      }));
+    },
+
+    addComposerMentionMention(mention) {
+      const name = mention.name.trim();
+      const path = mention.path.trim();
+      if (!name || !path) {
+        return;
+      }
+      set((state) => ({
+        composerMentionMentions: mergeMentionMention(state.composerMentionMentions, { name, path })
+      }));
     },
 
     async addFiles(files) {
@@ -563,12 +616,17 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
       if (!activeThreadId || (!trimmed && attachments.length === 0)) {
         return;
       }
+      const effectiveText = expandComposerCommand(trimmed);
+      const skillMentions = filterSkillMentionsForText(trimmed, get().composerSkillMentions);
+      const mentionMentions = filterMentionMentionsForText(trimmed, get().composerMentionMentions);
       set({ lastError: undefined });
       try {
-        await startTurnOnWritableThread(activeThreadId, trimmed, attachments, runtimeSettings, (targetThreadId) => {
+        await startTurnOnWritableThread(activeThreadId, effectiveText, attachments, runtimeSettings, skillMentions, mentionMentions, (targetThreadId) => {
           set((state) => ({
-            ...applyTimelinePatch(state, appendLocalUserMessage(state, targetThreadId, trimmed, attachments)),
+            ...applyTimelinePatch(state, appendLocalUserMessage(state, targetThreadId, effectiveText, attachments)),
             composerText: "",
+            composerSkillMentions: [],
+            composerMentionMentions: [],
             attachments: []
           }));
         });
@@ -591,25 +649,40 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
       if (!activeThreadId || !trimmed) {
         return;
       }
+      const effectiveText = expandComposerCommand(trimmed);
+      const skillMentions = filterSkillMentionsForText(trimmed, get().composerSkillMentions);
+      const mentionMentions = filterMentionMentionsForText(trimmed, get().composerMentionMentions);
       set((state) => ({
         composerText: "",
+        composerSkillMentions: [],
+        composerMentionMentions: [],
         queuedDraftsByThread: {
           ...state.queuedDraftsByThread,
-          [activeThreadId]: [...(state.queuedDraftsByThread[activeThreadId] ?? []), trimmed]
+          [activeThreadId]: [
+            ...(state.queuedDraftsByThread[activeThreadId] ?? []),
+            { text: effectiveText, skillMentions, mentionMentions }
+          ]
         }
       }));
     },
 
     async sendQueuedDraft(threadId, index) {
       const draft = get().queuedDraftsByThread[threadId]?.[index];
-      if (!draft) {
+      if (!draft?.text) {
         return;
       }
       set({ lastError: undefined });
       try {
-        await startTurnOnWritableThread(threadId, draft, [], get().runtimeSettings, (targetThreadId) => {
+        await startTurnOnWritableThread(
+          threadId,
+          draft.text,
+          [],
+          get().runtimeSettings,
+          draft.skillMentions ?? [],
+          draft.mentionMentions ?? [],
+          (targetThreadId) => {
           set((state) => ({
-            ...applyTimelinePatch(state, appendLocalUserMessage(state, targetThreadId, draft, [])),
+            ...applyTimelinePatch(state, appendLocalUserMessage(state, targetThreadId, draft.text, [])),
             queuedDraftsByThread: {
               ...state.queuedDraftsByThread,
               [threadId]: (state.queuedDraftsByThread[threadId] ?? []).filter((_, entryIndex) => entryIndex !== index)
@@ -1448,6 +1521,18 @@ function renameThreadEntries(threads: CodexThread[], threadId: string, name: str
   } : thread);
 }
 
+function promoteThreadByRecentUse(threads: CodexThread[], threadId: string): CodexThread[] {
+  const thread = threads.find((entry) => entry.id === threadId);
+  if (!thread) {
+    return threads;
+  }
+  const promoted = {
+    ...thread,
+    updatedAt: Date.now()
+  };
+  return [promoted, ...threads.filter((entry) => entry.id !== threadId)];
+}
+
 function approvalNotificationBody(request: ApprovalRequest): string {
   if (request.command?.trim()) {
     return `Approval needed: ${request.command.trim()}`;
@@ -1779,4 +1864,75 @@ function readTimestamp(value: unknown): string | number | undefined {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function mergeSkillMention(existing: ComposerSkillMention[], mention: ComposerSkillMention): ComposerSkillMention[] {
+  if (existing.some((item) => item.id.toLowerCase() === mention.id.toLowerCase())) {
+    return existing.map((item) => item.id.toLowerCase() === mention.id.toLowerCase() ? mention : item);
+  }
+  return [...existing, mention];
+}
+
+function mergeMentionMention(existing: ComposerMention[], mention: ComposerMention): ComposerMention[] {
+  if (existing.some((item) => item.path === mention.path)) {
+    return existing.map((item) => item.path === mention.path ? mention : item);
+  }
+  return [...existing, mention];
+}
+
+function filterSkillMentionsForText(text: string, mentions: ComposerSkillMention[]): ComposerSkillMention[] {
+  return mentions.filter((mention) => hasBoundedToken(text, "$", mention.name || mention.id));
+}
+
+function filterMentionMentionsForText(text: string, mentions: ComposerMention[]): ComposerMention[] {
+  return mentions.filter((mention) => hasBoundedToken(text, "@", mention.name));
+}
+
+function hasBoundedToken(text: string, prefix: "$" | "@", rawName: string): boolean {
+  const name = rawName.trim();
+  if (!name) {
+    return false;
+  }
+  const token = `${prefix}${name}`;
+  let index = text.indexOf(token);
+  while (index >= 0) {
+    const before = index === 0 ? "" : text[index - 1];
+    const after = text[index + token.length] ?? "";
+    if ((!before || /\s/.test(before)) && (!after || /\s|[.,;:!?)]/.test(after))) {
+      return true;
+    }
+    index = text.indexOf(token, index + token.length);
+  }
+  return false;
+}
+
+function expandComposerCommand(text: string): string {
+  const match = text.match(/^\/([\w-]+)(?:\s+([\s\S]*))?$/);
+  if (!match) {
+    return text;
+  }
+  const command = match[1].toLowerCase();
+  const tail = match[2]?.trim();
+  const prompt = commandPrompt(command);
+  if (!prompt) {
+    return text;
+  }
+  return tail ? `${prompt}\n\n${tail}` : prompt;
+}
+
+function commandPrompt(command: string): string | undefined {
+  switch (command) {
+    case "review":
+      return "Review the current changes. Prioritize bugs, behavioral regressions, security or data-loss risks, and missing tests. Lead with findings and include file/line references when available.";
+    case "fix":
+      return "Fix the current issue end to end. Inspect the code first, make the necessary targeted changes, and verify the result.";
+    case "explain":
+      return "Explain the selected code, current behavior, or relevant implementation details clearly and concretely.";
+    case "test":
+      return "Run or add focused tests for the current issue. Keep the verification scoped to the changed behavior.";
+    case "commit":
+      return "Prepare a concise commit message for the current changes. Do not create the commit unless explicitly asked.";
+    default:
+      return undefined;
+  }
 }

@@ -227,3 +227,12 @@ export interface TurnInputOptions {
   mentionMentions?: Array<{ name: string; path: string }>;
   imageURLKey?: "url" | "image_url";
 }
+
+export type ComposerSkillMention = { id: string; name?: string; path?: string };
+export type ComposerMention = { name: string; path: string };
+
+export interface QueuedComposerDraft {
+  text: string;
+  skillMentions?: ComposerSkillMention[];
+  mentionMentions?: ComposerMention[];
+}

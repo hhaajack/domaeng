@@ -1,5 +1,7 @@
 import type {
   ApprovalRequest,
+  ComposerMention,
+  ComposerSkillMention,
   GitStatus,
   ImageAttachment,
   JSONObject,
@@ -60,6 +62,8 @@ type ControlWaiter = {
 type CodedError = Error & { code?: string };
 
 const CONTROL_WAIT_TIMEOUT_MS = 8_000;
+const INITIALIZE_REQUEST_TIMEOUT_MS = 180_000;
+const STARTUP_REFRESH_REQUEST_TIMEOUT_MS = 180_000;
 const APPROVAL_REVIEWER_USER = "user";
 const APPROVAL_REVIEWER_GUARDIAN = "guardian_subagent";
 
@@ -174,7 +178,7 @@ export class RemodexClient {
       limit,
       sourceKinds: ["cli", "vscode", "appServer", "exec", "unknown"],
       cursor: null
-    });
+    }, STARTUP_REFRESH_REQUEST_TIMEOUT_MS);
     const result = asObject(response.result);
     return asArray(result.data) ?? asArray(result.items) ?? asArray(result.threads) ?? [];
   }
@@ -217,7 +221,7 @@ export class RemodexClient {
     return this.request("thread/read", {
       threadId,
       includeTurns: true
-    });
+    }, STARTUP_REFRESH_REQUEST_TIMEOUT_MS);
   }
 
   async renameThread(threadId: string, name: string): Promise<JSONValue> {
@@ -262,19 +266,26 @@ export class RemodexClient {
     threadId,
     text,
     attachments,
-    settings
+    settings,
+    skillMentions = [],
+    mentionMentions = []
   }: {
     threadId: string;
     text: string;
     attachments: ImageAttachment[];
     settings: RuntimeSettings;
+    skillMentions?: ComposerSkillMention[];
+    mentionMentions?: ComposerMention[];
   }): Promise<RPCMessage> {
-    const params = this.turnParams(threadId, text, attachments, settings, "url");
+    const params = this.turnParams(threadId, text, attachments, settings, "url", skillMentions, mentionMentions);
     try {
       return await this.request("turn/start", params);
     } catch (error) {
       if (attachments.length > 0 && String(error).includes("image")) {
-        return this.request("turn/start", this.turnParams(threadId, text, attachments, settings, "image_url"));
+        return this.request("turn/start", this.turnParams(threadId, text, attachments, settings, "image_url", skillMentions, mentionMentions));
+      }
+      if ((skillMentions.length || mentionMentions.length) && isStructuredInputUnsupportedError(error)) {
+        return this.request("turn/start", this.turnParams(threadId, text, attachments, settings, "url"));
       }
       throw error;
     }
@@ -285,17 +296,68 @@ export class RemodexClient {
     expectedTurnId,
     text,
     attachments,
-    settings
+    settings,
+    skillMentions = [],
+    mentionMentions = []
   }: {
     threadId: string;
     expectedTurnId: string;
     text: string;
     attachments: ImageAttachment[];
     settings: RuntimeSettings;
+    skillMentions?: ComposerSkillMention[];
+    mentionMentions?: ComposerMention[];
   }): Promise<RPCMessage> {
-    const params = this.turnParams(threadId, text, attachments, settings, "url");
+    const params = this.turnParams(threadId, text, attachments, settings, "url", skillMentions, mentionMentions);
     params.expectedTurnId = expectedTurnId;
-    return this.request("turn/steer", params);
+    try {
+      return await this.request("turn/steer", params);
+    } catch (error) {
+      if ((skillMentions.length || mentionMentions.length) && isStructuredInputUnsupportedError(error)) {
+        const fallbackParams = this.turnParams(threadId, text, attachments, settings, "url");
+        fallbackParams.expectedTurnId = expectedTurnId;
+        return this.request("turn/steer", fallbackParams);
+      }
+      throw error;
+    }
+  }
+
+  async listSkills(cwds?: string[], forceReload = false): Promise<JSONValue> {
+    const params: JSONObject = {};
+    const normalizedCwds = (cwds ?? []).map((cwd) => cwd.trim()).filter(Boolean);
+    if (normalizedCwds.length) {
+      params.cwds = normalizedCwds;
+    }
+    if (forceReload) {
+      params.forceReload = true;
+    }
+    let response: RPCMessage;
+    try {
+      response = await this.request("skills/list", params, 30_000);
+    } catch (error) {
+      if (!normalizedCwds.length || !shouldRetrySkillsListWithCwdFallback(error)) {
+        throw error;
+      }
+      const fallbackParams: JSONObject = { cwd: normalizedCwds[0] };
+      if (forceReload) {
+        fallbackParams.forceReload = true;
+      }
+      response = await this.request("skills/list", fallbackParams, 30_000);
+    }
+    return response.result ?? null;
+  }
+
+  async listPlugins(cwds?: string[], forceReload = false): Promise<JSONValue> {
+    const params: JSONObject = {};
+    const normalizedCwds = (cwds ?? []).map((cwd) => cwd.trim()).filter(Boolean);
+    if (normalizedCwds.length) {
+      params.cwds = normalizedCwds;
+    }
+    if (forceReload) {
+      params.forceReload = true;
+    }
+    const response = await this.request("plugin/list", params, 30_000);
+    return response.result ?? null;
   }
 
   async interruptTurn(threadId: string, turnId?: string): Promise<RPCMessage> {
@@ -507,7 +569,7 @@ export class RemodexClient {
         experimentalApi: true
       }
     };
-    await rpc.request("initialize", modernParams);
+    await rpc.request("initialize", modernParams, INITIALIZE_REQUEST_TIMEOUT_MS);
     await rpc.notify("initialized");
     this.initialized = true;
   }
@@ -555,13 +617,17 @@ export class RemodexClient {
     text: string,
     attachments: ImageAttachment[],
     settings: RuntimeSettings,
-    imageURLKey: "url" | "image_url"
+    imageURLKey: "url" | "image_url",
+    skillMentions: ComposerSkillMention[] = [],
+    mentionMentions: ComposerMention[] = []
   ): JSONObject {
     const params: JSONObject = {
       threadId,
       input: makeTurnInputPayload({
         text,
         attachments,
+        skillMentions,
+        mentionMentions,
         imageURLKey
       })
     };
@@ -954,6 +1020,36 @@ function shouldRetryRateLimitsWithEmptyParams(error: unknown): boolean {
     || message.includes("expected")
     || message.includes("missing field `params`")
     || message.includes("missing field params");
+}
+
+function shouldRetrySkillsListWithCwdFallback(error: unknown): boolean {
+  if (!(error instanceof RPCError)) {
+    return false;
+  }
+  if (error.code !== -32602 && error.code !== -32600) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  return message.includes("cwds")
+    || message.includes("invalid params")
+    || message.includes("failed to parse")
+    || message.includes("missing field");
+}
+
+function isStructuredInputUnsupportedError(error: unknown): boolean {
+  if (!(error instanceof RPCError)) {
+    return false;
+  }
+  if (error.code !== -32600 && error.code !== -32602) {
+    return false;
+  }
+  const normalized = `${error.message} ${JSON.stringify(error.data ?? {})}`.toLowerCase();
+  return (normalized.includes("skill") || normalized.includes("mention"))
+    && (normalized.includes("invalid")
+      || normalized.includes("unknown")
+      || normalized.includes("unsupported")
+      || normalized.includes("failed to parse")
+      || normalized.includes("expected"));
 }
 
 function errorMessage(error: unknown): string {

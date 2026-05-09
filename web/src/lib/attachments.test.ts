@@ -38,4 +38,36 @@ describe("turn input payload", () => {
       }
     ]);
   });
+
+  it("encodes structured skill and plugin mention items after text", () => {
+    expect(makeTurnInputPayload({
+      text: "Use $imagegen and @browser-use",
+      attachments: [],
+      skillMentions: [{
+        id: "imagegen",
+        name: "imagegen",
+        path: "/Users/me/.codex/skills/.system/imagegen/SKILL.md"
+      }],
+      mentionMentions: [{
+        name: "browser-use",
+        path: "plugin://browser-use@openai-bundled"
+      }]
+    })).toEqual([
+      {
+        type: "text",
+        text: "Use $imagegen and @browser-use"
+      },
+      {
+        type: "skill",
+        id: "imagegen",
+        name: "imagegen",
+        path: "/Users/me/.codex/skills/.system/imagegen/SKILL.md"
+      },
+      {
+        type: "mention",
+        name: "browser-use",
+        path: "plugin://browser-use@openai-bundled"
+      }
+    ]);
+  });
 });

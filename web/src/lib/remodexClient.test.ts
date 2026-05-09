@@ -13,6 +13,7 @@ type UnsafeRemodexClient = {
 type CapturedRequest = {
   method: string;
   params?: JSONValue;
+  timeoutMs?: number;
 };
 
 const defaultSettings: RuntimeSettings = {
@@ -28,8 +29,8 @@ function createRequestCapturingClient(): {
 } {
   const client = new RemodexClient();
   const captured: CapturedRequest[] = [];
-  client.request = async (method: string, params?: JSONValue): Promise<RPCMessage> => {
-    captured.push({ method, params });
+  client.request = async (method: string, params?: JSONValue, timeoutMs?: number): Promise<RPCMessage> => {
+    captured.push({ method, params, timeoutMs });
     return { result: {} };
   };
   return { client, captured };
@@ -91,6 +92,40 @@ describe("RemodexClient secure relay boundary", () => {
     expect(events).not.toContain("rpc");
     expect(events).not.toContain("serverRequest");
     expect(events).not.toContain("notification");
+  });
+});
+
+describe("RemodexClient slow-link request budgets", () => {
+  it("gives initialize enough time to cross slow relay links", async () => {
+    const client = new RemodexClient() as unknown as {
+      rpc: { request: (method: string, params?: JSONValue, timeoutMs?: number) => Promise<RPCMessage>; notify: () => Promise<void> };
+      initializeSession: () => Promise<void>;
+    };
+    const captured: CapturedRequest[] = [];
+    client.rpc = {
+      async request(method, params, timeoutMs) {
+        captured.push({ method, params, timeoutMs });
+        return { result: {} };
+      },
+      async notify() {}
+    };
+
+    await client.initializeSession();
+
+    expect(captured[0]?.method).toBe("initialize");
+    expect(captured[0]?.timeoutMs).toBe(180_000);
+  });
+
+  it("uses slow-link timeouts for first thread list and read requests", async () => {
+    const { client, captured } = createRequestCapturingClient();
+
+    await client.listThreads();
+    await client.readThread("thread-1");
+
+    expect(captured[0]?.method).toBe("thread/list");
+    expect(captured[0]?.timeoutMs).toBe(180_000);
+    expect(captured[1]?.method).toBe("thread/read");
+    expect(captured[1]?.timeoutMs).toBe(180_000);
   });
 });
 
