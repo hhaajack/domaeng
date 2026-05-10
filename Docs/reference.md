@@ -6,7 +6,7 @@ This page keeps the details out of the front-page README. Start with [README.md]
 
 - [Getting started](getting-started.md): first install, first pairing, and first successful run.
 - [Tailscale setup](tailscale.md): private cross-device access without hardcoded hosted-service assumptions.
-- [Menu bar companion](menu-bar.md): macOS status/menu bar controls and source-build notes.
+- [Menu bar control](menu-bar.md): macOS status/menu bar controls and a Codex setup prompt.
 - [Operations guide](operations.md): user-facing explanations of common actions.
 - [Self-hosting Domaeng](self-hosting.md): local LAN, private relay, reverse proxy, and troubleshooting.
 
@@ -85,4 +85,4 @@ If npm reports a user-cache ownership error, retry with a temporary cache:
 npm --cache /private/tmp/domaeng-npm-cache install -g ./phodex-bridge
 ```
 
-The macOS menu bar companion lives in `CodexMobile/`. It is currently source-build only; this public repo does not publish a signed `.app`, `.dmg`, or `.zip` release yet.
+The macOS menu bar control source lives in `CodexMobile/`. The public repo does not publish a signed `.app`, `.dmg`, or `.zip` release yet; user-facing setup guidance lives in [Menu bar control](menu-bar.md), while maintainer build details live in [CONTRIBUTING.md](../CONTRIBUTING.md).

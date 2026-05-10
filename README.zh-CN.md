@@ -55,7 +55,7 @@ domaeng up
 | --- | --- |
 | 第一次安装并跑通 | [新手入门](Docs/zh-CN/getting-started.md) |
 | 手机或平板不在 Mac 同一个 Wi-Fi | [Tailscale 使用说明](Docs/zh-CN/tailscale.md) |
-| 从 macOS 状态栏/菜单栏控制 bridge | [菜单栏控制中心](Docs/zh-CN/menu-bar.md) |
+| 从 macOS 状态栏/菜单栏控制 bridge | [菜单栏控制](Docs/zh-CN/menu-bar.md) |
 | 看懂每个按钮和操作的含义 | [操作功能说明](Docs/zh-CN/operations.md) |
 | 自己运行 relay 或反向代理 | [Self-hosting guide](Docs/self-hosting.md) |
 | 查看所有命令和环境变量 | [Advanced reference](Docs/reference.md) |
@@ -123,7 +123,7 @@ cd domaeng
 | `phodex-bridge/` | `domaeng` CLI 背后的 Node.js bridge package |
 | `web/` | React + Vite Web/PWA client，由 relay 在 `/app/` 提供 |
 | `relay/` | 可自托管 WebSocket relay 和可选 push endpoints |
-| `CodexMobile/` | macOS 菜单栏 companion 源码和共享资源 |
+| `CodexMobile/` | macOS 菜单栏控制源码和共享资源 |
 | `Docs/` | 新手指南、操作说明、自托管说明和高级参考文档 |
 
 ## 更多细节
@@ -132,7 +132,7 @@ cd domaeng
 
 - [新手入门](Docs/zh-CN/getting-started.md)：第一次安装、第一次配对、第一次成功控制 Codex
 - [Tailscale 使用说明](Docs/zh-CN/tailscale.md)：用私有网络做跨设备访问，不引入硬编码托管服务假设
-- [菜单栏控制中心](Docs/zh-CN/menu-bar.md)：macOS 状态栏/菜单栏控制，以及源码构建说明
+- [菜单栏控制](Docs/zh-CN/menu-bar.md)：macOS 状态栏/菜单栏控制，以及可直接交给 Codex 的设置 prompt
 - [操作功能说明](Docs/zh-CN/operations.md)：Web App、bridge、配对、信任设备和 git 操作分别做什么
 - [Advanced reference](Docs/reference.md)：命令、环境变量、安全说明、集成、源码构建
 - [Self-hosting guide](Docs/self-hosting.md)：本地 LAN、VPS relay、反向代理、排障
@@ -143,7 +143,7 @@ cd domaeng
 - `domaeng` bridge CLI：通过 `npm install -g domaeng@latest` 安装
 - Web App：由 bridge / relay 在 `/app/` 提供
 - 移动端 App：没有单独下载包，使用浏览器或 PWA
-- macOS 菜单栏 companion：目前只能从源码构建，还没有签名的 `.app`、`.dmg` 或 `.zip` GitHub Release
+- macOS 菜单栏控制：还没有签名的 `.app`、`.dmg` 或 `.zip` GitHub Release；按 [菜单栏控制](Docs/zh-CN/menu-bar.md) 里的 Codex prompt 设置
 
 ## 和 Remodex 的关系
 

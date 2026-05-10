@@ -60,7 +60,7 @@ You do not need to read every document before trying Domaeng. Start with the pat
 | --- | --- |
 | Install Domaeng for the first time | [Getting started](Docs/getting-started.md) |
 | Use a phone or tablet away from the Mac's Wi-Fi | [Tailscale setup](Docs/tailscale.md) |
-| Control the bridge from the macOS status/menu bar | [Menu bar companion](Docs/menu-bar.md) |
+| Control the bridge from the macOS status/menu bar | [Menu bar control](Docs/menu-bar.md) |
 | Understand each button and operation | [Operations guide](Docs/operations.md) |
 | Run your own relay or reverse proxy | [Self-hosting guide](Docs/self-hosting.md) |
 | See every command and environment variable | [Advanced reference](Docs/reference.md) |
@@ -128,7 +128,7 @@ Use this when you want the relay on your own VPS or private network:
 | `phodex-bridge/` | Node.js bridge package behind the `domaeng` CLI |
 | `web/` | React + Vite Web/PWA client served at `/app/` |
 | `relay/` | Self-hostable WebSocket relay and optional push endpoints |
-| `CodexMobile/` | macOS menu bar companion source and shared app assets |
+| `CodexMobile/` | macOS menu bar control source and shared app assets |
 | `Docs/` | Beginner guides, operation guides, self-hosting notes, and advanced reference docs |
 
 ## More Detail
@@ -137,7 +137,7 @@ The front page is intentionally short. Use these when you need the deeper knobs:
 
 - [Getting started](Docs/getting-started.md): first install, first pairing, and first successful Codex run
 - [Tailscale setup](Docs/tailscale.md): private cross-device access without hardcoded hosted-service assumptions
-- [Menu bar companion](Docs/menu-bar.md): macOS status/menu bar control and source-build notes
+- [Menu bar control](Docs/menu-bar.md): macOS status/menu bar control and a Codex setup prompt
 - [Operations guide](Docs/operations.md): what the Web App, bridge, pairing, trusted devices, and git actions do
 - [Advanced reference](Docs/reference.md): commands, environment variables, security notes, integrations, source build notes
 - [Self-hosting guide](Docs/self-hosting.md): local LAN, VPS relay, reverse proxy, troubleshooting
@@ -148,7 +148,7 @@ The front page is intentionally short. Use these when you need the deeper knobs:
 - `domaeng` bridge CLI: install from npm with `npm install -g domaeng@latest`
 - Web App: served by the bridge / relay at `/app/`
 - Mobile app: no separate download; use the browser or installed PWA
-- macOS menu bar companion: source-build only for now; no signed `.app`, `.dmg`, or `.zip` GitHub Release yet
+- macOS menu bar control: no signed `.app`, `.dmg`, or `.zip` GitHub Release yet; use the Codex setup prompt in [Menu bar control](Docs/menu-bar.md)
 
 ## Relationship To Remodex
 

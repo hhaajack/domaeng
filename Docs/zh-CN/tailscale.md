@@ -43,7 +43,7 @@ Codex 仍然运行在 Mac 上。git 凭据和 workspace 文件也仍然留在 Ma
 
 ## 搭配菜单栏控制中心
 
-macOS 菜单栏 companion 的 Connection 区域可以辅助这个流程：
+macOS 菜单栏控制的 Connection 区域可以辅助这个流程：
 
 - `Tailscale Web`：根据检测到或保存的 Tailscale 地址生成 Web App URL。
 - `Tailscale Relay`：生成对应 relay URL。
