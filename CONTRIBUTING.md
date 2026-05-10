@@ -99,6 +99,39 @@ open CodexMobile.xcodeproj
 
 The historical iOS client is archived outside the active source tree. Keep menu bar changes scoped to `CodexMobile/DomaengMenuBar/` and its build support.
 
+For a command-line local build from the repo root:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+xcodebuild -project CodexMobile/CodexMobile.xcodeproj \
+  -scheme DomaengMenuBar \
+  -configuration Debug \
+  -destination 'platform=macOS' \
+  -derivedDataPath .build/xcode-derived \
+  CODE_SIGNING_ALLOWED=NO build
+```
+
+To use that build on your Mac, install the matching local bridge CLI and copy the app into `/Applications`:
+
+```sh
+cd web
+npm install
+npm run build
+cd ..
+npm install -g ./phodex-bridge
+
+APP_PATH=/Applications/DomaengMenuBar.app
+rm -rf "$APP_PATH"
+ditto .build/xcode-derived/Build/Products/Debug/DomaengMenuBar.app "$APP_PATH"
+rm -rf "$APP_PATH/Contents/Resources/dist"
+ditto web/dist "$APP_PATH/Contents/Resources/dist"
+open "$APP_PATH"
+```
+
+If npm reports a user-cache ownership error, rerun the install with `npm --cache /private/tmp/domaeng-npm-cache install -g ./phodex-bridge` instead of changing repo files.
+
+After installing, the menu bar app's Start action should start both the local relay launchd service and the bridge daemon. `http://127.0.0.1:9000/health` should return `{"ok":true}` before pairing from another device.
+
 ### Testing a full local session
 
 1. Start the local launcher: `./run-local-domaeng.sh`

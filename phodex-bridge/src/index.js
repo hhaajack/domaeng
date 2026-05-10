@@ -2,7 +2,7 @@
 // Purpose: Small entrypoint wrapper for bridge lifecycle commands.
 // Layer: CLI entry
 // Exports: bridge lifecycle, pairing reset, thread resume/watch, and macOS service helpers.
-// Depends on: ./bridge, ./secure-device-state, ./session-state, ./rollout-watch, ./macos-launch-agent
+// Depends on: ./bridge, ./secure-device-state, ./session-state, ./rollout-watch, ./macos-launch-agent, ./local-relay-launch-agent
 
 const { startBridge } = require("./bridge");
 const {
@@ -26,6 +26,11 @@ const {
   startMacOSBridgeService,
   stopMacOSBridgeService,
 } = require("./macos-launch-agent");
+const {
+  runLocalRelayService,
+  startLocalRelayService,
+  stopLocalRelayService,
+} = require("./local-relay-launch-agent");
 
 module.exports = {
   getMacOSBridgeServiceStatus,
@@ -38,10 +43,13 @@ module.exports = {
   renameTrustedDevice,
   revokeTrustedDevice,
   resetMacOSBridgePairing,
+  runLocalRelayService,
   startBridge,
   runMacOSBridgeService,
   startMacOSBridgeService,
+  startLocalRelayService,
   stopMacOSBridgeService,
+  stopLocalRelayService,
   resetBridgePairing: resetBridgeDeviceState,
   setTrustedDeviceEnabled,
   openLastActiveThread,

@@ -169,6 +169,84 @@ Then pass the generated `https://<random>.trycloudflare.com` URL to the local la
 
 The launcher advertises that as `wss://<random>.trycloudflare.com/relay` in the pairing QR while keeping the relay process local.
 
+## Build From Source For This Mac
+
+Use this when you want the checked-out source tree to become the version used by your local `domaeng` CLI and macOS menu bar companion.
+
+### Codex one-shot install
+
+If you already use Codex on your Mac, clone this repo, open the checkout in Codex, and paste this prompt:
+
+```text
+Build and install Domaeng from this checkout for local use on my Mac.
+
+Please:
+1. Confirm Node.js 18+, npm, and /Applications/Xcode.app are available.
+2. Do not run Xcode tests.
+3. Build the web app with `npm install` and `npm run build` in `web/`.
+4. Install the bridge CLI globally from `./phodex-bridge`. If npm reports a user-cache ownership error, retry with `npm --cache /private/tmp/domaeng-npm-cache install -g ./phodex-bridge`.
+5. Build the macOS companion with:
+   `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -project CodexMobile/CodexMobile.xcodeproj -scheme DomaengMenuBar -configuration Debug -destination platform=macOS -derivedDataPath .build/xcode-derived CODE_SIGNING_ALLOWED=NO build`
+6. Replace `/Applications/DomaengMenuBar.app` with `.build/xcode-derived/Build/Products/Debug/DomaengMenuBar.app`.
+7. Copy `web/dist` into `/Applications/DomaengMenuBar.app/Contents/Resources/dist`.
+8. Open `/Applications/DomaengMenuBar.app`.
+9. Click Start in the menu bar app, then verify `domaeng --version`, that DomaengMenuBar is running, that `/Applications/DomaengMenuBar.app/Contents/Resources/Domaeng.icns` exists, and that `http://127.0.0.1:9000/health` returns `{"ok":true}`.
+
+Keep the existing `~/.remodex` pairing and trusted-device state intact. Do not paste raw `domaeng status --json` output into the final answer because it can include live pairing data.
+```
+
+The menu bar app's Start action uses the global `domaeng` CLI. In a source checkout, that CLI starts a local launchd-managed relay on port `9000` before starting the bridge daemon, so first pairing should not require a separate terminal. If a Tailscale web URL returns `502`, the Tailscale Serve entry is up but its local upstream is not running yet; click Start again or run `domaeng start` from the checkout to repair the local relay service.
+
+Build the web app first, because the local relay serves `web/dist` at `/app/`:
+
+```sh
+cd web
+npm install
+npm run build
+```
+
+Install the bridge CLI from this checkout:
+
+```sh
+cd ..
+npm install -g ./phodex-bridge
+domaeng --version
+```
+
+If npm reports a broken user cache, keep the repo untouched and rerun with a temporary cache:
+
+```sh
+npm --cache /private/tmp/domaeng-npm-cache install -g ./phodex-bridge
+```
+
+Build and install the macOS menu bar companion:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+xcodebuild -project CodexMobile/CodexMobile.xcodeproj \
+  -scheme DomaengMenuBar \
+  -configuration Debug \
+  -destination 'platform=macOS' \
+  -derivedDataPath .build/xcode-derived \
+  CODE_SIGNING_ALLOWED=NO build
+
+APP_PATH=/Applications/DomaengMenuBar.app
+rm -rf "$APP_PATH"
+ditto .build/xcode-derived/Build/Products/Debug/DomaengMenuBar.app "$APP_PATH"
+rm -rf "$APP_PATH/Contents/Resources/dist"
+ditto web/dist "$APP_PATH/Contents/Resources/dist"
+open "$APP_PATH"
+```
+
+The debug app is ad-hoc signed for local use. After launch, verify the local install. Do not paste raw `status --json` output into public issues because it may include live pairing data.
+
+```sh
+domaeng status --json
+pgrep -fl DomaengMenuBar
+cd phodex-bridge
+npm --cache /private/tmp/domaeng-npm-cache pack --dry-run
+```
+
 ## Custom Relay Endpoint
 
 For a full public self-hosting walkthrough, see [`Docs/self-hosting.md`](Docs/self-hosting.md).

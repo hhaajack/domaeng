@@ -13,11 +13,14 @@ const {
   requestMacOSBridgePairingRenewal,
   resetMacOSBridgePairing,
   renameTrustedDevice,
+  runLocalRelayService,
   runMacOSBridgeService,
   revokeTrustedDevice,
   startBridge,
   startMacOSBridgeService,
+  startLocalRelayService,
   stopMacOSBridgeService,
+  stopLocalRelayService,
   setTrustedDeviceEnabled,
   resetBridgePairing,
   openLastActiveThread,
@@ -33,11 +36,14 @@ const defaultDeps = {
   requestMacOSBridgePairingRenewal,
   resetMacOSBridgePairing,
   renameTrustedDevice,
+  runLocalRelayService,
   runMacOSBridgeService,
   revokeTrustedDevice,
   startBridge,
   startMacOSBridgeService,
+  startLocalRelayService,
   stopMacOSBridgeService,
+  stopLocalRelayService,
   setTrustedDeviceEnabled,
   resetBridgePairing,
   openLastActiveThread,
@@ -94,6 +100,11 @@ async function main({
 
   if (command === "run-service") {
     deps.runMacOSBridgeService();
+    return;
+  }
+
+  if (command === "run-local-relay-service") {
+    deps.runLocalRelayService();
     return;
   }
 

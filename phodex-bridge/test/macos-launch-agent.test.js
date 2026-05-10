@@ -98,6 +98,21 @@ test("stopMacOSBridgeService falls back to label bootout when plist bootout fail
         [
           "bootout",
           `gui/${process.getuid()}`,
+          path.join(process.env.HOME, "Library", "LaunchAgents", "com.domaeng.relay.plist"),
+        ],
+      ],
+      [
+        "launchctl",
+        [
+          "bootout",
+          `gui/${process.getuid()}/com.domaeng.relay`,
+        ],
+      ],
+      [
+        "launchctl",
+        [
+          "bootout",
+          `gui/${process.getuid()}`,
           path.join(process.env.HOME, "Library", "LaunchAgents", "com.remodex.bridge.plist"),
         ],
       ],
@@ -112,17 +127,18 @@ test("stopMacOSBridgeService falls back to label bootout when plist bootout fail
   });
 });
 
-test("startMacOSBridgeService kickstarts the launch agent after bootstrap", () => {
-  withTempDaemonEnv(({ rootDir }) => {
+test("startMacOSBridgeService kickstarts the launch agent after bootstrap", async () => {
+  await withTempDaemonEnv(async ({ rootDir }) => {
     const calls = [];
     const env = {
       ...process.env,
       HOME: rootDir,
       REMODEX_DEVICE_STATE_DIR: rootDir,
       REMODEX_RELAY: "ws://127.0.0.1:9000/relay",
+      DOMAENG_LOCAL_RELAY_ENABLED: "false",
     };
 
-    startMacOSBridgeService({
+    await startMacOSBridgeService({
       env,
       platform: "darwin",
       waitForPairing: false,
@@ -156,7 +172,11 @@ test("requestMacOSBridgePairingRenewal writes a lightweight request without rest
     const result = await requestMacOSBridgePairingRenewal({
       platform: "darwin",
       waitForPairing: false,
-      env: { HOME: rootDir, REMODEX_DEVICE_STATE_DIR: rootDir },
+      env: {
+        HOME: rootDir,
+        REMODEX_DEVICE_STATE_DIR: rootDir,
+        DOMAENG_LOCAL_RELAY_ENABLED: "false",
+      },
       execFileSyncImpl(command, args) {
         assert.equal(command, "launchctl");
         assert.deepEqual(args, ["print", `gui/${process.getuid()}/com.remodex.bridge`]);
@@ -192,7 +212,7 @@ test("resetMacOSBridgePairing stops the daemon before revoking persisted trust",
       },
     });
 
-    assert.equal(stopCalls, 2);
+    assert.equal(stopCalls, 4);
     assert.equal(resetCalls, 1);
     assert.equal(result.hadState, true);
     assert.equal(readPairingSession(), null);

@@ -10,6 +10,7 @@ const os = require("os");
 const path = require("path");
 const { startBridge } = require("./bridge");
 const { readBridgeConfig } = require("./codex-desktop-refresher");
+const { startLocalRelayService, stopLocalRelayService } = require("./local-relay-launch-agent");
 const { printQR } = require("./qr");
 const { readTrustedDevicesSnapshot, resetBridgeDeviceState } = require("./secure-device-state");
 const {
@@ -84,6 +85,17 @@ async function startMacOSBridgeService({
   assertRelayConfigured(config);
   const startedAt = Date.now();
 
+  await startLocalRelayService({
+    config,
+    env,
+    platform,
+    fsImpl,
+    execFileSyncImpl,
+    osImpl,
+    nodePath,
+    cliPath,
+  });
+
   writeDaemonConfig(config, { env, fsImpl });
   clearPairingSession({ env, fsImpl });
   clearBridgeStatus({ env, fsImpl });
@@ -130,6 +142,11 @@ function stopMacOSBridgeService({
   fsImpl = fs,
 } = {}) {
   assertDarwinPlatform(platform);
+  stopLocalRelayService({
+    env,
+    platform,
+    execFileSyncImpl,
+  });
   bootoutLaunchAgent({
     env,
     execFileSyncImpl,
@@ -167,6 +184,14 @@ async function requestMacOSBridgePairingRenewal({
   pairingPollIntervalMs = DEFAULT_PAIRING_WAIT_INTERVAL_MS,
 } = {}) {
   assertDarwinPlatform(platform);
+  const config = readDaemonConfig({ env, fsImpl });
+  await startLocalRelayService({
+    config,
+    env,
+    platform,
+    fsImpl,
+    execFileSyncImpl,
+  });
   const launchd = readLaunchAgentState({
     env,
     execFileSyncImpl,
