@@ -228,7 +228,7 @@ p {
   height: 48px;
   flex: 0 0 auto;
   border-radius: var(--radius-md);
-  background: transparent url("/icons/domaeng-icon-192.png") center / 118% 118% no-repeat;
+  background: transparent url("/icons/domaeng-icon-192.png") center / cover no-repeat;
   color: transparent;
   font-size: 0;
   display: grid;
