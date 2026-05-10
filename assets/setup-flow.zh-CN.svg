@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="520" viewBox="0 0 720 520" role="img" aria-labelledby="title desc">
+  <title id="title">Domaeng 新手安装流程</title>
+  <desc id="desc">在 Mac 上安装 bridge，启动它，从任意设备打开 Web App，配对，然后控制 Mac 上的 Codex。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8fbf7"/>
+      <stop offset="1" stop-color="#edf6f8"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#17342b" flood-opacity="0.14"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#176c4f"/>
+    </marker>
+  </defs>
+  <style>
+    .title { fill: #0b1713; font: 800 30px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif; }
+    .step { fill: #0f1f19; font: 760 23px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif; }
+    .body { fill: #56635d; font: 620 17px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif; }
+    .num { fill: #ffffff; font: 800 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .arrow { stroke: #176c4f; stroke-width: 3.5; stroke-linecap: round; marker-end: url(#arrow); }
+  </style>
+  <rect width="720" height="520" rx="32" fill="url(#bg)"/>
+  <text class="title" x="56" y="62">最简单的使用路径</text>
+  <text class="body" x="56" y="92">Mac 负责运行 Codex，任意配对浏览器都是遥控器。</text>
+
+  <g filter="url(#shadow)">
+    <rect x="56" y="126" width="280" height="112" rx="24" fill="#ffffff" fill-opacity="0.92" stroke="#ffffff"/>
+    <rect x="384" y="126" width="280" height="112" rx="24" fill="#ffffff" fill-opacity="0.92" stroke="#ffffff"/>
+    <rect x="56" y="300" width="280" height="112" rx="24" fill="#ffffff" fill-opacity="0.92" stroke="#ffffff"/>
+    <rect x="384" y="300" width="280" height="112" rx="24" fill="#ffffff" fill-opacity="0.92" stroke="#ffffff"/>
+  </g>
+
+  <circle cx="92" cy="164" r="18" fill="#176c4f"/>
+  <text class="num" x="87" y="171">1</text>
+  <text class="step" x="124" y="159">安装到 Mac</text>
+  <text class="body" x="124" y="187">bridge 装在真正运行</text>
+  <text class="body" x="124" y="210">Codex 的那台 Mac 上。</text>
+
+  <line class="arrow" x1="336" y1="182" x2="374" y2="182"/>
+
+  <circle cx="420" cy="164" r="18" fill="#176c4f"/>
+  <text class="num" x="415" y="171">2</text>
+  <text class="step" x="452" y="159">启动 bridge</text>
+  <text class="body" x="452" y="187">运行 <tspan font-weight="760">domaeng up</tspan></text>
+  <text class="body" x="452" y="210">并让这台 Mac 可连接。</text>
+
+  <line class="arrow" x1="524" y1="238" x2="524" y2="290"/>
+
+  <circle cx="420" cy="338" r="18" fill="#176c4f"/>
+  <text class="num" x="415" y="345">3</text>
+  <text class="step" x="452" y="333">打开 Web App</text>
+  <text class="body" x="452" y="361">手机、平板、电脑浏览器</text>
+  <text class="body" x="452" y="384">或 PWA 都可以。</text>
+
+  <line class="arrow" x1="384" y1="356" x2="346" y2="356"/>
+
+  <circle cx="92" cy="338" r="18" fill="#176c4f"/>
+  <text class="num" x="87" y="345">4</text>
+  <text class="step" x="124" y="333">配对并控制</text>
+  <text class="body" x="124" y="361">扫码一次，之后就能</text>
+  <text class="body" x="124" y="384">遥控 Mac 上的 Codex。</text>
+
+  <text class="body" x="56" y="468">不需要下载移动端 App。浏览器就是控制界面。</text>
+</svg>
