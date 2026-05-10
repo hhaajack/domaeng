@@ -72,6 +72,51 @@ test("desktop-origin active runs replay thinking and exec command activity on re
   assert.equal(outbound[3].params.chunk, "On branch main");
 });
 
+test("desktop-origin active rollouts are discovered without a web thread read", async (t) => {
+  const { homeDir } = createTemporaryRolloutHome({
+    threadId: "thread-auto",
+    originator: "Codex Desktop",
+    source: "vscode",
+    lines: [
+      userMessage("Desktop started this"),
+      taskStarted("turn-auto"),
+      agentMessage("Working from desktop", "final_answer"),
+    ],
+  });
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = homeDir;
+  t.after(() => {
+    restoreCodexHome(previousCodexHome);
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  const outbound = [];
+  const controller = createRolloutLiveMirrorController({
+    sendApplicationResponse(message) {
+      outbound.push(JSON.parse(message));
+    },
+    autoDiscoverActiveRollouts: true,
+    pollIntervalMs: 5,
+    discoveryIntervalMs: 5,
+    idleTimeoutMs: 50,
+  });
+  t.after(() => controller.stopAll());
+
+  await wait(30);
+
+  assert.deepEqual(
+    outbound.map((message) => message.method),
+    [
+      "codex/event/user_message",
+      "turn/started",
+      "item/reasoning/textDelta",
+      "codex/event/agent_message",
+    ]
+  );
+  assert.equal(outbound[0].params.threadId, "thread-auto");
+  assert.equal(outbound[3].params.message, "Working from desktop");
+});
+
 test("desktop-origin bootstrap replays the pending user message and final assistant text", async (t) => {
   const { homeDir } = createTemporaryRolloutHome({
     threadId: "thread-chat",

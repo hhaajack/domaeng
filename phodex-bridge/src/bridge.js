@@ -229,6 +229,7 @@ function startBridge({
   const rolloutLiveMirror = !config.codexEndpoint
     ? createRolloutLiveMirrorController({
       sendApplicationResponse,
+      autoDiscoverActiveRollouts: true,
     })
     : null;
   const desktopIpcActionFollower = !config.codexEndpoint

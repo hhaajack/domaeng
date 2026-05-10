@@ -52,6 +52,19 @@ You do **not** need a separate mobile app download. The browser is the client.
 
 `Codex.app` is optional. Domaeng can share local thread history with it, but the Web App controls the bridge directly.
 
+## Choose Your Path
+
+You do not need to read every document before trying Domaeng. Start with the path that matches your setup:
+
+| Goal | Start here |
+| --- | --- |
+| Install Domaeng for the first time | [Getting started](Docs/getting-started.md) |
+| Use a phone or tablet away from the Mac's Wi-Fi | [Tailscale setup](Docs/tailscale.md) |
+| Control the bridge from the macOS status/menu bar | [Menu bar companion](Docs/menu-bar.md) |
+| Understand each button and operation | [Operations guide](Docs/operations.md) |
+| Run your own relay or reverse proxy | [Self-hosting guide](Docs/self-hosting.md) |
+| See every command and environment variable | [Advanced reference](Docs/reference.md) |
+
 ## What You Can Do
 
 - Start, steer, stop, and resume Codex runs from the Web App
@@ -87,6 +100,8 @@ domaeng up
 
 Use the URL and QR printed by the bridge. This is the easiest path for most users.
 
+For a step-by-step first run, see [Getting started](Docs/getting-started.md).
+
 ### Run From Source
 
 ```sh
@@ -97,7 +112,7 @@ cd domaeng
 
 The launcher starts a local relay, points the bridge at it, and prints the pairing QR for the Web App.
 
-For cross-device use, Tailscale or another stable private network is usually smoother than plain LAN routing.
+For cross-device use, Tailscale or another stable private network is usually smoother than plain LAN routing. See [Tailscale setup](Docs/tailscale.md).
 
 ### Self-Host The Relay
 
@@ -114,12 +129,16 @@ Use this when you want the relay on your own VPS or private network:
 | `web/` | React + Vite Web/PWA client served at `/app/` |
 | `relay/` | Self-hostable WebSocket relay and optional push endpoints |
 | `CodexMobile/` | macOS menu bar companion source and shared app assets |
-| `Docs/` | Self-hosting and advanced reference docs |
+| `Docs/` | Beginner guides, operation guides, self-hosting notes, and advanced reference docs |
 
 ## More Detail
 
 The front page is intentionally short. Use these when you need the deeper knobs:
 
+- [Getting started](Docs/getting-started.md): first install, first pairing, and first successful Codex run
+- [Tailscale setup](Docs/tailscale.md): private cross-device access without hardcoded hosted-service assumptions
+- [Menu bar companion](Docs/menu-bar.md): macOS status/menu bar control and source-build notes
+- [Operations guide](Docs/operations.md): what the Web App, bridge, pairing, trusted devices, and git actions do
 - [Advanced reference](Docs/reference.md): commands, environment variables, security notes, integrations, source build notes
 - [Self-hosting guide](Docs/self-hosting.md): local LAN, VPS relay, reverse proxy, troubleshooting
 - [Self-hosting model](SELF_HOSTING_MODEL.md): why public source builds stay local-first and generic
