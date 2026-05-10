@@ -119,6 +119,7 @@ export interface ApprovalRequest {
   reason?: string;
   threadId?: string;
   turnId?: string;
+  approvalRoute?: "bridgeRuntime" | "desktopIpc";
   desktopOwnerClientId?: string;
   params?: JSONValue;
 }

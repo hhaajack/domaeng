@@ -458,6 +458,7 @@ export class RemodexClient {
     await this.sendApplicationText(JSON.stringify({
       id: request.requestID,
       result,
+      remodexApprovalRoute: request.approvalRoute || "bridgeRuntime",
       remodexRequestMethod: request.method,
       remodexThreadId: request.threadId,
       remodexDesktopOwnerClientId: request.desktopOwnerClientId
@@ -764,6 +765,7 @@ export class RemodexClient {
         reason: readString(params.reason),
         threadId: readString(params.threadId),
         turnId: readString(params.turnId),
+        approvalRoute: approvalRouteFromParams(params),
         desktopOwnerClientId: readString(params.remodexDesktopOwnerClientId),
         params: message.params
       };
@@ -941,6 +943,11 @@ function approvalResponseForDecision(
     permissions: asObject(params.permissions),
     scope: decision === "acceptForSession" ? "session" : "turn"
   };
+}
+
+function approvalRouteFromParams(params: JSONObject): ApprovalRequest["approvalRoute"] {
+  const route = readString(params.remodexApprovalRoute);
+  return route === "desktopIpc" ? "desktopIpc" : "bridgeRuntime";
 }
 
 function readString(value: JSONValue | undefined): string | undefined {

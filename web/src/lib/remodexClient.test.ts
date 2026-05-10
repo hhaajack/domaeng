@@ -130,7 +130,35 @@ describe("RemodexClient slow-link request budgets", () => {
 });
 
 describe("RemodexClient approval responses", () => {
-  it("includes route metadata so the bridge can recover desktop approvals after reconnects", async () => {
+  it("defaults approval responses to bridge runtime routing", async () => {
+    const client = new RemodexClient() as unknown as {
+      rpc: object;
+      approve: RemodexClient["approve"];
+      sendApplicationText: (text: string) => Promise<void>;
+    };
+    const sent: RPCMessage[] = [];
+    client.rpc = {};
+    client.sendApplicationText = async (text: string) => {
+      sent.push(JSON.parse(text) as RPCMessage);
+    };
+
+    await client.approve({
+      id: "req-command",
+      requestID: "req-command",
+      method: "item/commandExecution/requestApproval",
+      threadId: "thread-live"
+    }, "accept");
+
+    expect(sent).toEqual([{
+      id: "req-command",
+      result: { decision: "accept" },
+      remodexApprovalRoute: "bridgeRuntime",
+      remodexRequestMethod: "item/commandExecution/requestApproval",
+      remodexThreadId: "thread-live"
+    }]);
+  });
+
+  it("marks desktop-projected approval responses for desktop IPC routing", async () => {
     const client = new RemodexClient() as unknown as {
       rpc: object;
       approve: RemodexClient["approve"];
@@ -147,16 +175,18 @@ describe("RemodexClient approval responses", () => {
       requestID: "req-command",
       method: "item/commandExecution/requestApproval",
       threadId: "thread-live",
+      approvalRoute: "desktopIpc",
       desktopOwnerClientId: "desktop-owner"
     }, "accept");
 
-    expect(sent).toEqual([{
+    expect(sent[0]).toMatchObject({
       id: "req-command",
       result: { decision: "accept" },
+      remodexApprovalRoute: "desktopIpc",
       remodexRequestMethod: "item/commandExecution/requestApproval",
       remodexThreadId: "thread-live",
       remodexDesktopOwnerClientId: "desktop-owner"
-    }]);
+    });
   });
 
   it("surfaces async approval reply failures from the bridge", () => {
@@ -211,6 +241,7 @@ describe("RemodexClient approval responses", () => {
           }
         }
       },
+      remodexApprovalRoute: "bridgeRuntime",
       remodexRequestMethod: "item/tool/requestUserInput",
       remodexThreadId: "thread-live",
       remodexDesktopOwnerClientId: "desktop-owner"
@@ -234,6 +265,7 @@ describe("RemodexClient approval responses", () => {
       method: "item/tool/requestUserInput",
       params: {
         threadId: "thread-live",
+        remodexApprovalRoute: "desktopIpc",
         remodexDesktopOwnerClientId: "desktop-owner",
         questions: [{
           id: "q1",
@@ -247,6 +279,7 @@ describe("RemodexClient approval responses", () => {
       expect.objectContaining({
         id: "req-input",
         method: "item/tool/requestUserInput",
+        approvalRoute: "desktopIpc",
         desktopOwnerClientId: "desktop-owner"
       })
     ]);

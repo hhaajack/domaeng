@@ -263,8 +263,8 @@ function createDesktopIpcActionFollower({
         id: action.desktopRequestId,
         method: action.method,
         params: ownerClientId
-          ? { ...action.params, remodexDesktopOwnerClientId: ownerClientId }
-          : action.params,
+          ? { ...action.params, remodexApprovalRoute: "desktopIpc", remodexDesktopOwnerClientId: ownerClientId }
+          : { ...action.params, remodexApprovalRoute: "desktopIpc" },
       }));
     }
   }
@@ -279,6 +279,11 @@ function createDesktopIpcActionFollower({
       return null;
     }
 
+    const approvalRoute = readString(message.remodexApprovalRoute);
+    if (approvalRoute && approvalRoute !== "desktopIpc") {
+      return null;
+    }
+
     const pendingRoute = pendingRoutesByRequestId.get(requestId);
     if (pendingRoute) {
       const ownerClientId = readString(message.remodexDesktopOwnerClientId);
@@ -290,7 +295,7 @@ function createDesktopIpcActionFollower({
 
     const method = readString(message.remodexRequestMethod);
     const threadId = readString(message.remodexThreadId);
-    if (!method || !threadId || !ACTION_METHODS.has(method) || !activeThreadIds.has(threadId)) {
+    if (!approvalRoute || !method || !threadId || !ACTION_METHODS.has(method) || !activeThreadIds.has(threadId)) {
       if (looksLikeDesktopActionResponse(message)) {
         console.warn(`${logPrefix} desktop action reply had no route for requestId=${requestId}`);
       }

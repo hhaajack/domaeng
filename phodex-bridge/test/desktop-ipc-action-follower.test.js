@@ -705,6 +705,7 @@ test("desktop IPC follower projects first add patch-only action updates without 
   assert.equal(baselineReads, 0);
   assert.equal(outbound[0].id, "req-patch");
   assert.equal(outbound[0].method, "item/tool/requestUserInput");
+  assert.equal(outbound[0].params.remodexApprovalRoute, "desktopIpc");
   assert.equal(outbound[0].params.remodexDesktopOwnerClientId, "desktop");
 });
 
@@ -1268,6 +1269,7 @@ test("desktop IPC follower forwards pending actions and routes iOS replies back 
 
   assert.equal(outbound[0].id, "req-live");
   assert.equal(outbound[0].method, "item/tool/requestUserInput");
+  assert.equal(outbound[0].params.remodexApprovalRoute, "desktopIpc");
   assert.equal(outbound[0].params.remodexDesktopOwnerClientId, "desktop");
 
   follower.observeInbound(JSON.stringify({
@@ -1352,6 +1354,7 @@ test("desktop IPC follower recovers approval routes from web metadata with the d
   assert.equal(follower.observeInbound(JSON.stringify({
     id: "req-command",
     result: { decision: "accept" },
+    remodexApprovalRoute: "desktopIpc",
     remodexRequestMethod: "item/commandExecution/requestApproval",
     remodexThreadId: "thread-live",
     remodexDesktopOwnerClientId: "desktop-owner",
@@ -1369,6 +1372,26 @@ test("desktop IPC follower recovers approval routes from web metadata with the d
   });
   await waitFor(() => outbound.some((message) => message.method === "serverRequest/resolved"
     && message.params?.requestId === "req-command"));
+});
+
+test("desktop IPC follower leaves bridge-owned approval replies on the app-server path", () => {
+  const outbound = [];
+  const follower = createDesktopIpcActionFollower({
+    sendApplicationResponse(message) {
+      outbound.push(JSON.parse(message));
+    },
+    requestTimeoutMs: 50,
+  });
+
+  assert.equal(follower.observeInbound(JSON.stringify({
+    id: "req-command",
+    result: { decision: "accept" },
+    remodexApprovalRoute: "bridgeRuntime",
+    remodexRequestMethod: "item/commandExecution/requestApproval",
+    remodexThreadId: "thread-live",
+  })), false);
+  assert.deepEqual(outbound, []);
+  follower.stopAll();
 });
 
 test("desktop IPC follower routes approval replies after its IPC socket reconnects", async (t) => {
