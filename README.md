@@ -9,11 +9,21 @@
 [![npm version](https://img.shields.io/npm/v/domaeng)](https://www.npmjs.com/package/domaeng)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
-Control [Codex](https://openai.com/index/codex/) from a paired browser. Domaeng is a local-first open-source bridge + web app + self-hostable relay that keeps the Codex runtime on your Mac and lets another device connect through a secure session.
+Control [Codex](https://openai.com/index/codex/) from any paired browser. Domaeng is a local-first open-source bridge + web app + self-hostable relay that keeps the Codex runtime on your Mac and lets another device connect through a secure session.
+
+## What Domaeng Is
+
+Domaeng turns your Mac into the host for Codex, then gives you a secure web remote that works from any modern browser: phone, tablet, laptop, desktop, or installed PWA.
+
+- **Mac-hosted runtime**: Codex, git commands, workspace reads/writes, and session history stay on your Mac
+- **Any-device web control**: the web app is the remote control surface, so you can steer Codex from iOS, Android, another laptop, or the same Mac
+- **Local-first transport**: the relay can run locally or be self-hosted; it forwards paired traffic and does not become the Codex runtime
+- **Trusted reconnect**: pair once with QR or pairing code, then reconnect later to the same trusted Mac when the bridge is reachable
 
 ## Key Features
 
 - End-to-end encrypted pairing and chats between your browser and Mac
+- Use the web app from any device that can reach your relay or private network
 - Fast mode for lower-latency turns
 - Plan mode for structured planning before execution
 - Subagents from the web app with the `/subagents` command
@@ -29,7 +39,7 @@ Control [Codex](https://openai.com/index/codex/) from a paired browser. Domaeng 
 - Live streaming in the browser while Codex runs on your Mac
 - Shared thread history with Codex on your Mac
 
-The repo stays local-first and self-host friendly: the web app and bridge do not require a public hosted endpoint, and the transport layer remains inspectable for anyone who wants to run their own setup.
+The repo stays local-first and self-host friendly: the Mac is the host, the web app is the remote, and the transport layer remains inspectable for anyone who wants to run their own setup.
 
 Some internal file names, protocol fields, and legacy state paths still use `remodex` or `phodex` names for upstream compatibility. `Domaeng` is the public distribution name for this source release.
 
@@ -43,7 +53,7 @@ If you want the public-repo distribution model explained clearly, read [SELF_HOS
 
 ## Web App
 
-Domaeng Web is the primary client for this source distribution. Build it with:
+Domaeng Web is the primary client for this source distribution. It is a browser-based remote control, so the same app can run on mobile, tablet, desktop browser, or as an installed PWA. Build it with:
 
 ```sh
 cd web
@@ -51,7 +61,7 @@ npm install
 npm run build
 ```
 
-The relay serves the built app from `/app/`. Pair by scanning the QR from the web app or by entering the pairing code printed by `domaeng up`.
+The relay serves the built app from `/app/`. Pair by scanning the QR from the web app or by entering the pairing code printed by `domaeng up`. The browser does not host Codex; it connects back to the Mac bridge that owns the runtime and workspace access.
 
 The old iOS client is archived outside this source tree. The remaining Xcode project is for the macOS menu bar companion only.
 
