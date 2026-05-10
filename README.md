@@ -57,19 +57,9 @@ The old iOS client is archived outside this source tree. The remaining Xcode pro
 
 ## Architecture
 
-```
-┌──────────────┐       Paired session   ┌───────────────┐       stdin/stdout       ┌─────────────┐
-│ Domaeng Web │ ◄────────────────────► │ domaeng (Mac) │ ◄──────────────────────► │ codex       │
-│ app         │    WebSocket bridge    │ bridge        │    JSON-RPC              │ app-server  │
-└──────────────┘                        └───────────────┘                          └─────────────┘
-                                               │                                         │
-                                               │  AppleScript route bounce                │ JSONL rollout
-                                               ▼                                         ▼
-                                        ┌─────────────┐                           ┌─────────────┐
-                                        │  Codex.app  │ ◄─── reads from ──────── │  ~/.codex/  │
-                                        │  (desktop)  │      disk on navigate     │  sessions   │
-                                        └─────────────┘                           └─────────────┘
-```
+<p align="center">
+  <img src="assets/architecture.svg" alt="Domaeng local-first architecture diagram" width="720" />
+</p>
 
 1. Run `domaeng up` on your Mac
 2. On macOS, Domaeng installs/starts a lightweight background bridge service and prints a QR for first-time pairing or recovery
