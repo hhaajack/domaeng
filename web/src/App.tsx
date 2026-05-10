@@ -339,7 +339,7 @@ function PairingScreen() {
 }
 
 const PREVIEW_THREAD_ID = "preview-web-ui-polish";
-const PREVIEW_ROOT = "/Users/clawbot/Downloads/Tools/remodex-android-port";
+const PREVIEW_ROOT = "/workspace/domaeng";
 
 function localPreviewModeEnabled(): boolean {
   if (!localPreviewModeAvailable()) {
@@ -417,7 +417,7 @@ function seedPreviewWorkspace() {
           role: "assistant",
           kind: "chat",
           threadId: PREVIEW_THREAD_ID,
-          text: "Bridge is paired over Local LAN. The active thread is scoped to `remodex-android-port`, and no hosted relay is configured.\n\nNext steps:\n\n- Keep the local daemon running.\n- Use the composer to start a new turn.\n- Open Settings when you need to change runtime preferences.",
+          text: "Bridge is paired over Local LAN. The active thread is scoped to `domaeng`, and no hosted relay is configured.\n\nNext steps:\n\n- Keep the local daemon running.\n- Use the composer to start a new turn.\n- Open Settings when you need to change runtime preferences.",
           createdAt: now - 5 * 60 * 1000
         },
         {
