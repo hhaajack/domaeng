@@ -184,6 +184,10 @@ domaeng/
 - **Menu bar**: SwiftUI/AppKit, async/await, MainActor isolation. Keep source changes in `CodexMobile/DomaengMenuBar/` unless build support or assets are required.
 - No linter or formatter is enforced — just match what's already there.
 
+### Attribution
+
+Domaeng is based on Remodex, originally created by Emanuele Di Pietro. Keep the Apache-2.0 license, NOTICE attribution, and Domaeng-only public branding intact when touching package or release files.
+
 ### Trust model
 
 - The first QR pairing is possession-based: it contains the relay URL and a live session ID.

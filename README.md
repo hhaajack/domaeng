@@ -133,7 +133,9 @@ The front page is intentionally short. Use these when you need the deeper knobs:
 
 ## Relationship To Remodex
 
-Domaeng is the current public project and package name for this local-first Codex remote-control work.
+Domaeng is based on [Remodex](https://github.com/Emanuele-web04/remodex), originally created by Emanuele Di Pietro.
+
+This repository keeps the original Apache-2.0 license and attribution while continuing the work under the Domaeng public name, package name, and app branding. The upstream Remodex README states that the Remodex name, marks, and branding are not licensed for forks or derivative projects; Domaeng uses its own name and branding for that reason.
 
 The codebase still contains some Remodex-era names, including internal file names, CLI entry files, protocol fields, and legacy state paths such as `~/.remodex`. Those names are kept intentionally so existing local installs, pairing state, and migration paths do not break.
 
@@ -145,4 +147,4 @@ I am not actively accepting contributions yet. If you still want to help, read [
 
 ## License
 
-Apache-2.0
+Apache-2.0. See [NOTICE](NOTICE) for attribution.

@@ -63,6 +63,8 @@ Managed push remains off unless you configure it explicitly.
 
 ## State and Compatibility
 
+Domaeng is based on Remodex, originally created by Emanuele Di Pietro. This package keeps the Apache-2.0 license and NOTICE attribution while using the Domaeng public package name and branding.
+
 Some internal files and state paths intentionally keep legacy `remodex` or `phodex` names so this package can stay compatible with existing bridge state and upstream Remodex comparisons. For example, bridge state is stored under the legacy-compatible `~/.remodex/` directory.
 
 Those internal names are not the public distribution name. The npm package, CLI command, app UI, web UI, and public docs use Domaeng.
@@ -77,4 +79,4 @@ npm test
 npm pack --dry-run
 ```
 
-The package tarball should contain only `bin/`, `src/`, `README.md`, and `package.json`. It should not contain generated build output, test fixtures, local relay sessions, pairing secrets, or private packaged defaults.
+The package tarball should contain only `bin/`, `src/`, `README.md`, `LICENSE`, `NOTICE`, and `package.json`. It should not contain generated build output, test fixtures, local relay sessions, pairing secrets, or private packaged defaults.
