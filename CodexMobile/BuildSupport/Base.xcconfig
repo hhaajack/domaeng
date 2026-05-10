@@ -1,11 +1,6 @@
 // Shared public defaults for open-source builds.
 // Real private endpoints belong in the ignored PrivateOverrides.xcconfig file.
 
-PHODEX_CHATGPT_CALLBACK_SCHEME = phodex
-PHODEX_DEFAULT_RELAY_URL =
-REMODEX_SUPPORTED_BRIDGE_VERSION = 1.5.1
-REVENUECAT_PUBLIC_API_KEY = appl_CgHnEgWVRFbTKruYphXzpXeGwIb
-REVENUECAT_ENTITLEMENT_NAME = Pro
-REVENUECAT_DEFAULT_OFFERING_ID = default
+DOMAENG_SUPPORTED_BRIDGE_VERSION = 1.5.1
 
 #include? "PrivateOverrides.xcconfig"

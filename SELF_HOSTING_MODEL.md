@@ -10,7 +10,7 @@ The public repository includes:
 
 - the bridge that runs on your Mac
 - the web app source code
-- the historical iOS project, kept as legacy source
+- the macOS menu bar companion source
 - the public relay code
 - local pairing and self-hosting documentation
 

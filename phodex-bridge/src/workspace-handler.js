@@ -159,7 +159,7 @@ async function workspaceReadImage(params) {
   if (stat.size > MAX_IMAGE_READ_BYTES && !maxPixelDimension) {
     throw workspaceError(
       "image_too_large",
-      "This image is too large to send to the phone. Open it on the Mac or move a smaller preview into the workspace."
+      "This image is too large to send to the browser. Open it on the Mac or move a smaller preview into the workspace."
     );
   }
 
@@ -284,13 +284,13 @@ async function readPreviewImageData(imagePath, maxPixelDimension, originalByteLe
   if (sawConversionFailure) {
     throw workspaceError(
       "image_preview_failed",
-      "This image could not be converted into a lightweight phone preview."
+      "This image could not be converted into a lightweight browser preview."
     );
   }
 
   throw workspaceError(
     "image_preview_too_large",
-    "This image preview is still too large to send to the phone."
+    "This image preview is still too large to send to the browser."
   );
 }
 

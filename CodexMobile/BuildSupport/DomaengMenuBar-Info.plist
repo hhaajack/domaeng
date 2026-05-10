@@ -21,7 +21,7 @@
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>DomaengSupportedBridgeVersion</key>
-	<string>$(REMODEX_SUPPORTED_BRIDGE_VERSION)</string>
+	<string>$(DOMAENG_SUPPORTED_BRIDGE_VERSION)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
 	<key>LSUIElement</key>

@@ -578,7 +578,7 @@ function formatRolloutLine(rawLine) {
   if (parsed.type === "event_msg") {
     const eventType = payload.type;
     if (eventType === "user_message") {
-      return `${timestamp} Phone: ${previewText(payload.message)}`;
+      return `${timestamp} Client: ${previewText(payload.message)}`;
     }
     if (eventType === "agent_message") {
       return `${timestamp} Codex: ${previewText(payload.message)}`;

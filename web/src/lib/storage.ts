@@ -7,7 +7,7 @@ import type {
 } from "../types";
 import { createPhoneIdentity } from "./secureTransport";
 
-interface RemodexDB extends DBSchema {
+interface DomaengDB extends DBSchema {
   kv: {
     key: string;
     value: unknown;
@@ -27,7 +27,7 @@ const KEYS = {
 let idbAvailable = true;
 
 async function db() {
-  return openDB<RemodexDB>(DB_NAME, DB_VERSION, {
+  return openDB<DomaengDB>(DB_NAME, DB_VERSION, {
     upgrade(database) {
       if (!database.objectStoreNames.contains("kv")) {
         database.createObjectStore("kv");

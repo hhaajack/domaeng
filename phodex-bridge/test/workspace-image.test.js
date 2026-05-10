@@ -270,7 +270,7 @@ test("workspace/readImage does not fall back to original bytes when preview conv
       path: imagePath,
       maxPixelDimension: 1600,
     }),
-    /lightweight phone preview/
+    /lightweight browser preview/
   );
 });
 

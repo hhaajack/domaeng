@@ -51,7 +51,7 @@ npm run build
 
 The relay serves the built app from `/app/`. Pair by scanning the QR from the web app or by entering the pairing code printed by `domaeng up`.
 
-This repository still contains the historical `CodexMobile/` Xcode project, but the current release path is the web app plus `domaeng` bridge. Treat the iOS code as legacy unless you explicitly choose to maintain it.
+The old iOS client is archived outside this source tree. The remaining Xcode project is for the macOS menu bar companion only.
 
 ## Architecture
 
@@ -79,7 +79,7 @@ This repository still contains the historical `CodexMobile/` Xcode project, but 
 
 ## Repository Structure
 
-This repo contains the local bridge, web client, self-hostable relay, and a legacy iOS target:
+This repo contains the local bridge, web client, self-hostable relay, and macOS menu bar companion:
 
 ```
 ├── phodex-bridge/                # Node.js bridge package used by `domaeng`
@@ -87,7 +87,7 @@ This repo contains the local bridge, web client, self-hostable relay, and a lega
 │   └── src/                      # Bridge runtime, git/workspace handlers, refresh helpers
 ├── web/                          # React + Vite web/PWA client served by the relay at /app/
 ├── relay/                        # Self-hostable WebSocket relay and optional push endpoints
-└── CodexMobile/                  # Legacy Xcode project, not the current release path
+└── CodexMobile/                  # macOS DomaengMenuBar Xcode project and shared app assets
 ```
 
 ## Prerequisites
@@ -96,7 +96,7 @@ This repo contains the local bridge, web client, self-hostable relay, and a lega
 - **[Codex CLI](https://github.com/openai/codex)** installed and in your PATH
 - **[Codex desktop app](https://openai.com/index/codex/)** (optional — for viewing threads on your Mac)
 - **macOS** (for desktop refresh features — the core bridge works on any OS)
-- **Xcode 16+** only if you choose to work on the legacy iOS project
+- **Xcode 16+** only if you choose to work on the macOS menu bar companion
 
 ## Install the Bridge
 
@@ -341,7 +341,7 @@ On the relay/VPS side, keep push disabled until you actually want it. The HTTP p
 - The pairing QR carries the connection URL, the session ID, and the bridge identity key used to bootstrap end-to-end encryption. After a successful first scan, the web app stores a trusted Mac record in origin-scoped storage and the bridge persists its trusted client identity locally on the Mac.
 - On macOS, the bridge can keep running as a lightweight `launchd` service, so the web app can resolve the Mac's current live relay session and reconnect without scanning a new QR every time.
 - The QR is still the recovery path when trust changes, the bridge identity rotates, or the relay cannot resolve the current live session.
-- The bridge state lives canonically in `~/.domaeng/device-state.json` with local-only permissions. On macOS the bridge also mirrors that state to Keychain as best-effort backup/migration data, and recent builds auto-repair unreadable local state on startup instead of requiring manual cleanup.
+- The bridge state lives canonically in the legacy-compatible `~/.remodex/device-state.json` path with local-only permissions. On macOS the bridge also mirrors that state to Keychain as best-effort backup/migration data, and recent builds auto-repair unreadable local state on startup instead of requiring manual cleanup.
 - The CLI no longer prints the connection URL in plain text below the QR.
 - Set `DOMAENG_RELAY` only when you want to self-host or test locally against your own setup.
 - Leave `DOMAENG_TRUST_PROXY` unset for direct/self-hosted installs. Turn it on only when a trusted reverse proxy such as Traefik, Nginx, or Caddy is forwarding the relay traffic.
@@ -425,9 +425,9 @@ This triggers a debounced deep-link bounce (`codex://settings` → `codex://thre
 - **Codex persistence**: The Codex process stays alive across transient session reconnects during the current bridge run
 - **Graceful shutdown**: SIGINT/SIGTERM cleanly close all connections
 
-## Legacy iOS Project
+## macOS Menu Bar Companion
 
-The `CodexMobile/` Xcode project remains in the repository for now, but it is not the current release target. Keep it from breaking shared bridge/web workflows, but do not treat iOS as the main supported client for this source distribution.
+The remaining `CodexMobile/` Xcode project builds `DomaengMenuBar.app`. The historical iOS client source is not part of the active source tree.
 
 ## Contributing
 

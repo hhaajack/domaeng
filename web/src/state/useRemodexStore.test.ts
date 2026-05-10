@@ -151,6 +151,87 @@ describe("useRemodexStore sendComposer", () => {
     expect(client.refreshDesktopThread).toHaveBeenCalledWith("thread-1");
   });
 
+  it("marks the selected thread running while turn start is still pending", async () => {
+    let resolveStartTurn: (value: { result: { turn: { id: string } } }) => void = () => {};
+    const startTurnPromise = new Promise<{ result: { turn: { id: string } } }>((resolve) => {
+      resolveStartTurn = resolve;
+    });
+    client.resumeThread = vi.fn().mockResolvedValue({
+      result: {
+        thread: {
+          id: "thread-1",
+          title: "Writable",
+          cwd: "/repo"
+        },
+        items: []
+      }
+    });
+    client.startTurn = vi.fn().mockReturnValue(startTurnPromise);
+    client.refreshDesktopThread = vi.fn().mockResolvedValue({ result: { success: true } });
+
+    useRemodexStore.setState({
+      threads: [{ id: "thread-1", title: "Writable", cwd: "/repo" }],
+      activeThreadId: "thread-1",
+      messagesByThread: { "thread-1": [] },
+      composerText: "show running immediately",
+      attachments: [],
+      runtimeSettings: {
+        accessMode: "onRequest",
+        planMode: false,
+        model: "gpt-5.5"
+      }
+    });
+
+    const sendPromise = useRemodexStore.getState().sendComposer();
+
+    await vi.waitFor(() => {
+      expect(useRemodexStore.getState().runningTurnByThread["thread-1"]).toBe("__running__");
+    });
+    expect(useRemodexStore.getState().threadRunStateByThread["thread-1"]).toBe("running");
+    expect(useRemodexStore.getState().composerText).toBe("");
+
+    resolveStartTurn({ result: { turn: { id: "turn-1" } } });
+    await sendPromise;
+
+    expect(useRemodexStore.getState().runningTurnByThread["thread-1"]).toBe("turn-1");
+    expect(useRemodexStore.getState().threadRunStateByThread["thread-1"]).toBe("running");
+  });
+
+  it("clears the optimistic running state when turn start fails", async () => {
+    client.resumeThread = vi.fn().mockResolvedValue({
+      result: {
+        thread: {
+          id: "thread-1",
+          title: "Writable",
+          cwd: "/repo"
+        },
+        items: []
+      }
+    });
+    client.startTurn = vi.fn().mockRejectedValue(new Error("turn start failed"));
+    client.refreshDesktopThread = vi.fn();
+
+    useRemodexStore.setState({
+      threads: [{ id: "thread-1", title: "Writable", cwd: "/repo" }],
+      activeThreadId: "thread-1",
+      messagesByThread: { "thread-1": [] },
+      composerText: "rollback running",
+      attachments: [],
+      runtimeSettings: {
+        accessMode: "onRequest",
+        planMode: false,
+        model: "gpt-5.5"
+      }
+    });
+
+    await useRemodexStore.getState().sendComposer();
+
+    expect(useRemodexStore.getState().runningTurnByThread["thread-1"]).toBeUndefined();
+    expect(useRemodexStore.getState().threadRunStateByThread["thread-1"]).toBeUndefined();
+    expect(useRemodexStore.getState().lastError).toBe("turn start failed");
+    expect(client.refreshDesktopThread).not.toHaveBeenCalled();
+  });
+
   it("does not steer when send discovers the thread is already running", async () => {
     client.resumeThread = vi.fn().mockResolvedValue({
       result: {
@@ -640,7 +721,7 @@ describe("useRemodexStore thread activity", () => {
 
     emitClientEvent({
       type: "error",
-      error: new Error("The bridge could not decrypt the iPhone secure payload.")
+      error: new Error("The bridge could not decrypt the Domaeng client secure payload.")
     });
 
     await vi.waitFor(() => {
@@ -665,7 +746,7 @@ describe("useRemodexStore thread activity", () => {
 
     emitClientEvent({
       type: "error",
-      error: new Error("The bridge could not decrypt the iPhone secure payload.")
+      error: new Error("The bridge could not decrypt the Domaeng client secure payload.")
     });
 
     await vi.waitFor(() => {

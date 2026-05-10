@@ -144,7 +144,7 @@ function createBridgeSecureTransport({
     if (protocolVersion !== SECURE_PROTOCOL_VERSION || incomingSessionId !== sessionId) {
       sendControlMessage(createSecureError({
         code: "update_required",
-        message: "The bridge and iPhone are not using the same secure transport version.",
+        message: "The bridge and Domaeng client are not using the same secure transport version.",
       }));
       return;
     }
@@ -152,7 +152,7 @@ function createBridgeSecureTransport({
     if (!phoneDeviceId || !phoneIdentityPublicKey || !phoneEphemeralPublicKey || !clientNonceBase64) {
       sendControlMessage(createSecureError({
         code: "invalid_client_hello",
-        message: "The iPhone handshake is missing required secure fields.",
+        message: "The Domaeng client handshake is missing required secure fields.",
       }));
       return;
     }
@@ -160,7 +160,7 @@ function createBridgeSecureTransport({
     if (handshakeMode !== HANDSHAKE_MODE_QR_BOOTSTRAP && handshakeMode !== HANDSHAKE_MODE_TRUSTED_RECONNECT) {
       sendControlMessage(createSecureError({
         code: "invalid_handshake_mode",
-        message: "The iPhone requested an unknown secure pairing mode.",
+        message: "The Domaeng client requested an unknown secure pairing mode.",
       }));
       return;
     }
@@ -178,7 +178,7 @@ function createBridgeSecureTransport({
       if (!trustedPhonePublicKey) {
         sendControlMessage(createSecureError({
           code: "phone_not_trusted",
-          message: "This iPhone is not trusted by the current bridge session. Scan a fresh QR code to pair again.",
+          message: "This device is not trusted by the current bridge session. Scan a fresh QR code to pair again.",
         }));
         return;
       }
@@ -195,7 +195,7 @@ function createBridgeSecureTransport({
     if (!clientNonce || clientNonce.length === 0) {
       sendControlMessage(createSecureError({
         code: "invalid_client_nonce",
-        message: "The iPhone secure nonce could not be decoded.",
+        message: "The Domaeng client secure nonce could not be decoded.",
       }));
       return;
     }
@@ -308,7 +308,7 @@ function createBridgeSecureTransport({
       pendingHandshake = null;
       sendControlMessage(createSecureError({
         code: "invalid_phone_signature",
-        message: "The iPhone secure signature could not be verified.",
+        message: "The Domaeng client secure signature could not be verified.",
       }));
       return;
     }
@@ -443,7 +443,7 @@ function createBridgeSecureTransport({
     if (!plaintextBuffer) {
       sendControlMessage(createSecureError({
         code: "decrypt_failed",
-        message: "The bridge could not decrypt the iPhone secure payload.",
+        message: "The bridge could not decrypt the Domaeng client secure payload.",
       }));
       return true;
     }

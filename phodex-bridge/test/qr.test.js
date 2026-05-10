@@ -41,6 +41,8 @@ test("printQR does not print the full pairing JSON unless debug output is enable
   });
 
   const output = logs.join("\n");
+  assert.match(output, /Scan this QR with Domaeng Web/);
+  assert.match(output, /paste this pairing code in Domaeng Web/);
   assert.match(output, /Session ID: session-/);
   assert.doesNotMatch(output, /session-sensitive-long-value/);
   assert.doesNotMatch(output, /Pairing JSON/);

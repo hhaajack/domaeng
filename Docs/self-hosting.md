@@ -243,7 +243,7 @@ The public repo should stay generic. Your actual deployment values belong in you
 
 Check:
 
-- the relay is reachable from the phone
+- the relay is reachable from the browser/device
 - your reverse proxy forwards WebSockets
 - the bridge is using the correct `DOMAENG_RELAY`
 - the public endpoint uses `wss://` if you are going over the internet

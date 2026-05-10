@@ -228,12 +228,14 @@ p {
   height: 48px;
   flex: 0 0 auto;
   border-radius: var(--radius-md);
-  background: #111111 url("/icons/domaeng-icon-192.png") center / cover no-repeat;
+  background: transparent url("/icons/domaeng-icon-192.png") center / cover no-repeat;
   color: transparent;
   font-size: 0;
   display: grid;
   place-items: center;
-  box-shadow: 0 12px 24px rgba(20, 24, 29, 0.18), var(--inner-highlight);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.72),
+    0 10px 24px rgba(91, 145, 126, 0.14);
   overflow: hidden;
 }
 
@@ -241,7 +243,9 @@ p {
   width: 24px;
   height: 24px;
   border-radius: var(--radius-xs);
-  box-shadow: 0 6px 14px rgba(20, 24, 29, 0.13), var(--inner-highlight);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.62),
+    0 6px 14px rgba(91, 145, 126, 0.12);
 }
 
 .brand-lockup {
@@ -271,11 +275,16 @@ p {
 }
 
 .pairing-actions,
-.relay-entry-options,
-.split-fields {
+.relay-entry-options {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+  margin: 18px 0;
+}
+
+.pairing-code-card {
+  display: grid;
+  gap: 12px;
   margin: 18px 0;
 }
 
@@ -299,38 +308,21 @@ p {
   font-weight: 700;
 }
 
-.advanced-pairing {
-  margin: 10px 0 14px;
-}
-
-.advanced-pairing summary {
-  min-height: 32px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.68);
-  color: var(--ink-soft);
-  display: inline-flex;
+.code-input-row {
+  display: flex;
   align-items: center;
-  padding: 0 12px;
-  font-weight: 650;
-  cursor: pointer;
-  box-shadow: var(--inner-highlight), 0 1px 2px rgba(20, 24, 29, 0.05);
-  -webkit-backdrop-filter: blur(14px) saturate(1.1);
-  backdrop-filter: blur(14px) saturate(1.1);
+  gap: 9px;
 }
 
-.advanced-pairing summary::-webkit-details-marker {
-  display: none;
+.code-input-row input {
+  min-width: 0;
 }
 
-.advanced-pairing summary::before {
-  content: "+";
-  margin-right: 7px;
-  font-weight: 720;
-}
-
-.advanced-pairing[open] summary::before {
-  content: "-";
+.scan-icon-button {
+  width: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
 }
 
 input,
@@ -1625,6 +1617,26 @@ textarea {
   font-weight: 650;
 }
 
+.composer-running-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 1px 6px 2px;
+  color: var(--green-strong);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.composer-running-status svg {
+  animation: composer-running-spin 1s linear infinite;
+}
+
+@keyframes composer-running-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .composer-glass {
   position: relative;
   width: min(920px, 100%);
@@ -1731,7 +1743,7 @@ textarea {
 }
 
 .composer-tool-button {
-  min-width: 68px;
+  min-width: 0;
 }
 
 .composer-bar select,
@@ -1755,10 +1767,40 @@ textarea {
   min-width: 0;
 }
 
+.runtime-control {
+  flex: 1 1 164px;
+  max-width: 190px;
+}
+
+.tools-control {
+  flex: 0 0 auto;
+}
+
+.access-control {
+  flex: 0 1 184px;
+  min-width: 0;
+}
+
+.composer-icon-tool {
+  width: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0;
+  border-radius: 999px;
+}
+
+.composer-icon-tool .button-label {
+  display: none;
+}
+
+.composer-file-input {
+  display: none;
+}
+
 .composer-bar .composer-choice-button {
   width: 100%;
   min-width: 86px;
-  max-width: 130px;
+  max-width: 160px;
   justify-content: space-between;
   gap: 4px;
   padding: 0 9px;
@@ -1774,6 +1816,38 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.composer-bar .composer-popover button span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.composer-bar .runtime-button-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.runtime-button-label strong {
+  font: inherit;
+  font-weight: 760;
+}
+
+.runtime-button-label small {
+  color: var(--muted);
+  font-size: 0.92em;
+  font-weight: 640;
+}
+
+.access-choice-button {
+  max-width: none;
+}
+
+.access-choice-button > span {
+  flex: 1 1 auto;
+  text-align: left;
 }
 
 .composer-bar .composer-choice-button svg {
@@ -1800,28 +1874,72 @@ textarea {
   backdrop-filter: blur(28px) saturate(1.25);
 }
 
-.composer-bar .model-control .composer-popover {
-  width: min(206px, calc(100vw - 28px));
+.composer-bar .runtime-control .composer-popover {
+  left: 50%;
+  right: auto;
+  width: min(318px, calc(100vw - 42px));
+  transform: translateX(-50%);
 }
 
-.composer-bar .reasoning-control .composer-popover {
+.composer-bar .access-control .composer-popover {
   right: 0;
   left: auto;
-  width: 126px;
+  width: min(264px, calc(100vw - 42px));
+}
+
+.composer-bar .tools-control .composer-popover {
+  width: min(206px, calc(100vw - 42px));
+}
+
+.runtime-popover-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px;
+}
+
+.runtime-popover-section,
+.runtime-speed-section {
   min-width: 0;
+}
+
+.runtime-popover-section {
+  display: flex;
+  max-height: 162px;
+  flex-direction: column;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.runtime-speed-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.composer-popover-label {
+  padding: 3px 10px 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.composer-popover-separator {
+  height: 1px;
+  margin: 7px 8px 6px;
+  background: rgba(20, 24, 29, 0.1);
 }
 
 .composer-bar .composer-popover button {
   width: 100%;
   min-width: 0;
-  min-height: 34px;
+  min-height: 31px;
   justify-content: space-between;
   padding: 0 8px;
   border-color: transparent;
   border-radius: var(--radius-xs);
   background: transparent;
   box-shadow: none;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 520;
 }
 
@@ -2140,10 +2258,6 @@ textarea {
     margin-bottom: 10px;
   }
 
-  .pairing-actions,
-  .split-fields {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (min-width: 1440px) {
@@ -2294,42 +2408,32 @@ textarea {
 
   .composer-bar {
     display: grid;
-    grid-template-columns: 32px 32px minmax(54px, 1fr) minmax(58px, 0.9fr) 32px 32px 32px;
-    grid-template-areas: "attach plan model reasoning access queue send";
+    grid-template-columns: 36px minmax(96px, 0.9fr) minmax(112px, 1.1fr) 46px;
+    grid-template-areas: "tools runtime access send";
     gap: 5px;
     align-items: center;
     padding: 0 3px 3px;
   }
 
-  .icon-upload {
-    grid-area: attach;
+  .tools-control {
+    grid-area: tools;
   }
 
-  .plan-button {
-    grid-area: plan;
+  .runtime-control {
+    grid-area: runtime;
+    max-width: none;
   }
 
-  .model-control {
-    grid-area: model;
-  }
-
-  .reasoning-control {
-    grid-area: reasoning;
-  }
-
-  .queue-button {
-    grid-area: queue;
-  }
-
-  .access-button {
+  .access-control {
     grid-area: access;
+    max-width: none;
   }
 
   .composer-bar button.primary,
   .composer-bar button.danger {
     grid-area: send;
-    width: 32px;
-    min-width: 32px;
+    width: 46px;
+    min-width: 46px;
   }
 
   .composer-tool-button {
@@ -2356,12 +2460,11 @@ textarea {
     bottom: calc(100% + 9px);
   }
 
-  .composer-bar .model-control .composer-popover {
-    width: min(188px, calc(100vw - 18px));
-  }
-
-  .composer-bar .reasoning-control .composer-popover {
-    width: 118px;
+  .composer-bar .runtime-control .composer-popover {
+    left: 0;
+    transform: none;
+    width: min(318px, calc(100vw - 42px));
+    bottom: calc(100% + 12px);
   }
 
   .composer-bar select {
@@ -2417,8 +2520,8 @@ textarea {
   }
 
   .composer-bar {
-    grid-template-columns: 32px 32px minmax(54px, 1fr) minmax(58px, 0.85fr) 32px 32px 32px;
-    grid-template-areas: "attach plan model reasoning access queue send";
+    grid-template-columns: 34px minmax(90px, 0.86fr) minmax(106px, 1.14fr) 42px;
+    grid-template-areas: "tools runtime access send";
     gap: 4px;
     padding: 0 2px 2px;
   }
@@ -2576,8 +2679,9 @@ textarea {
 .brand-mark {
   border-radius: 15px;
   box-shadow:
-    inset 0 1px 1px rgba(255, 255, 255, 0.28),
-    0 18px 34px rgba(14, 20, 22, 0.28);
+    inset 0 1px 1px rgba(255, 255, 255, 0.66),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.24),
+    0 12px 28px rgba(91, 145, 126, 0.16);
 }
 
 .brand-mark.small {
@@ -2619,9 +2723,7 @@ textarea {
 }
 
 .relay-entry-options,
-.pairing-actions,
-.split-fields,
-.advanced-pairing,
+.pairing-code-card,
 .sidebar-usage,
 .thread-actions-menu,
 .context-usage-popover,
@@ -2645,7 +2747,7 @@ textarea {
 }
 
 .relay-entry-options button {
-  justify-content: flex-start;
+  justify-content: center;
   min-height: 44px;
   border-radius: 24px;
   box-shadow: none;
@@ -2655,7 +2757,7 @@ textarea {
   min-width: 0;
   display: grid;
   gap: 1px;
-  text-align: left;
+  text-align: center;
 }
 
 .relay-entry-text strong,
@@ -2673,64 +2775,38 @@ textarea {
 }
 
 .pairing-actions {
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   margin: 0;
-  padding: 8px;
-  border-radius: 30px;
 }
 
 .pairing-actions button {
-  min-height: 50px;
+  min-height: 46px;
   font-size: 15px;
+  white-space: nowrap;
 }
 
 .pairing-actions button.primary {
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 760;
 }
 
-.advanced-pairing,
-.split-fields {
+.pairing-code-card {
   margin: 0;
   padding: 16px;
   border-radius: 28px;
 }
 
-.advanced-pairing summary {
-  width: 100%;
-  min-height: 28px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-  box-shadow: none;
-  font-size: 17px;
-  justify-content: space-between;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-
-.advanced-pairing summary::before {
-  content: "Advanced";
+.pairing-code-card .field {
   margin: 0;
-  color: var(--ink);
-  font-size: 17px;
-  font-weight: 760;
 }
 
-.advanced-pairing summary {
-  font-size: 0;
+.pairing-code-card .pairing-actions {
+  margin: 4px 0 0;
 }
 
-.advanced-pairing summary::after {
-  content: "⌄";
-  font-size: 16px;
-  color: var(--muted);
-}
-
-.advanced-pairing[open] summary::after {
-  transform: rotate(180deg);
+.scan-icon-button {
+  border-radius: 16px;
 }
 
 .field span {
@@ -3073,8 +3149,7 @@ textarea {
     border-radius: 30px;
   }
 
-  .advanced-pairing,
-  .split-fields {
+  .pairing-code-card {
     border-radius: 26px;
   }
 
@@ -3146,15 +3221,13 @@ textarea {
   }
 
   .composer-bar {
-    grid-template-columns: 38px 38px minmax(72px, 1.1fr) minmax(70px, 1fr) 38px 38px 46px;
+    grid-template-columns: 38px minmax(104px, 0.9fr) minmax(124px, 1.1fr) 46px;
+    grid-template-areas: "tools runtime access send";
     gap: 6px;
     padding: 2px 0 0;
   }
 
-  .icon-upload,
-  .access-button,
-  .queue-button,
-  .plan-button {
+  .tools-button {
     width: 38px;
     min-width: 38px;
     min-height: 38px;
@@ -3177,14 +3250,11 @@ textarea {
 
 @media (max-width: 390px) {
   .composer-bar {
-    grid-template-columns: 34px 34px minmax(62px, 1fr) minmax(58px, 0.92fr) 34px 34px 42px;
+    grid-template-columns: 34px minmax(96px, 0.9fr) minmax(108px, 1.1fr) 42px;
     gap: 5px;
   }
 
-  .icon-upload,
-  .access-button,
-  .queue-button,
-  .plan-button {
+  .tools-button {
     width: 34px;
     min-width: 34px;
     min-height: 34px;
@@ -3309,8 +3379,8 @@ textarea {
 
   .brand-mark {
     box-shadow:
-      inset 0 1px 1px rgba(255, 255, 255, 0.2),
-      0 18px 38px rgba(0, 0, 0, 0.42);
+      inset 0 1px 1px rgba(255, 255, 255, 0.26),
+      0 12px 28px rgba(92, 150, 130, 0.18);
   }
 
   .brand-row p,
@@ -3325,9 +3395,7 @@ textarea {
   }
 
   .relay-entry-options,
-  .pairing-actions,
-  .split-fields,
-  .advanced-pairing,
+  .pairing-code-card,
   .sidebar-usage,
   .thread-actions-menu,
   .context-usage-popover,
@@ -3449,6 +3517,15 @@ textarea {
     background: rgba(88, 180, 117, 0.22);
     border-color: rgba(174, 247, 200, 0.18);
     color: var(--green-strong);
+  }
+
+  .runtime-button-label small,
+  .composer-popover-label {
+    color: rgba(218, 231, 224, 0.66);
+  }
+
+  .composer-popover-separator {
+    background: rgba(255, 255, 255, 0.11);
   }
 
   .composer-suggestion-popover {

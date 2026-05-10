@@ -9,7 +9,8 @@
   },
   "files": [
     "bin/",
-    "src/"
+    "src/",
+    "README.md"
   ],
   "scripts": {
     "start": "node ./bin/remodex.js up",
@@ -26,6 +27,9 @@
   ],
   "author": "Domaeng contributors",
   "license": "Apache-2.0",
+  "engines": {
+    "node": ">=18"
+  },
   "type": "commonjs",
   "dependencies": {
     "qrcode-terminal": "^0.12.0",

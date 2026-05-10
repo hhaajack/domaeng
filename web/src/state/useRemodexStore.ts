@@ -276,18 +276,22 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
     assertCanStartNewTurn(targetThreadId, allowSteer);
     onTargetReady?.(targetThreadId);
     try {
-      await sendTurnInput(targetThreadId, text, attachments, runtimeSettings, skillMentions, mentionMentions, allowSteer);
+      const result = await sendTurnInput(targetThreadId, text, attachments, runtimeSettings, skillMentions, mentionMentions, allowSteer, true);
+      markLocalTurnAccepted(targetThreadId, result);
       forgetLocallyStartedThread(targetThreadId);
       void refreshDesktopThreadBestEffort(targetThreadId);
     } catch (error) {
       if (!isThreadNotFoundError(error) || targetThreadId !== threadId) {
+        clearLocalTurnStart(targetThreadId);
         throw error;
       }
       removeLatestLocalUserMessage(targetThreadId, text, attachments);
+      clearLocalTurnStart(targetThreadId);
       targetThreadId = await createContinuationThread(threadId, runtimeSettings);
       assertCanStartNewTurn(targetThreadId, allowSteer);
       onTargetReady?.(targetThreadId);
-      await sendTurnInput(targetThreadId, text, attachments, runtimeSettings, skillMentions, mentionMentions, allowSteer);
+      const result = await sendTurnInput(targetThreadId, text, attachments, runtimeSettings, skillMentions, mentionMentions, allowSteer, true);
+      markLocalTurnAccepted(targetThreadId, result);
       forgetLocallyStartedThread(targetThreadId);
       void refreshDesktopThreadBestEffort(targetThreadId);
     }
@@ -310,9 +314,12 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
     runtimeSettings: RuntimeSettings,
     skillMentions: ComposerSkillMention[] = [],
     mentionMentions: ComposerMention[] = [],
-    allowSteer = false
-  ): Promise<void> {
-    const activeTurnId = await resolveSteerTurnId(threadId);
+    allowSteer = false,
+    ignoreLocalPendingMarker = false
+  ): Promise<JSONValue | undefined> {
+    const activeTurnId = ignoreLocalPendingMarker && !allowSteer
+      ? undefined
+      : await resolveSteerTurnId(threadId);
     if (activeTurnId) {
       if (!allowSteer) {
         throw codedStoreError(
@@ -320,7 +327,7 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
           "Codex is still working on this thread. Queue this draft or wait for the current turn to finish."
         );
       }
-      await client.steerTurn({
+      const response = await client.steerTurn({
         threadId,
         expectedTurnId: activeTurnId,
         text,
@@ -329,16 +336,38 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
         skillMentions,
         mentionMentions
       });
-      return;
+      return response.result;
     }
 
-    await client.startTurn({
+    const response = await client.startTurn({
       threadId,
       text,
       attachments,
       settings: runtimeSettings,
       skillMentions,
       mentionMentions
+    });
+    return response.result;
+  }
+
+  function markLocalTurnAccepted(threadId: string, result: JSONValue | undefined): void {
+    const turnId = resolveTurnId(objectValue(result));
+    if (!turnId) {
+      return;
+    }
+    set((state) => markStoreThreadRunning(state, threadId, turnId));
+  }
+
+  function clearLocalTurnStart(threadId: string): void {
+    set((state) => {
+      if (state.runningTurnByThread[threadId] !== "__running__") {
+        return state;
+      }
+      return {
+        ...state,
+        runningTurnByThread: removeThreadKey(state.runningTurnByThread, threadId),
+        threadRunStateByThread: clearThreadTerminalState(state.threadRunStateByThread, threadId)
+      };
     });
   }
 
@@ -643,7 +672,10 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
       try {
         await startTurnOnWritableThread(activeThreadId, effectiveText, attachments, runtimeSettings, skillMentions, mentionMentions, (targetThreadId) => {
           set((state) => ({
-            ...applyTimelinePatch(state, appendLocalUserMessage(state, targetThreadId, effectiveText, attachments)),
+            ...markStoreThreadRunning(
+              applyTimelinePatch(state, appendLocalUserMessage(state, targetThreadId, effectiveText, attachments)),
+              targetThreadId
+            ),
             composerText: "",
             composerSkillMentions: [],
             composerMentionMentions: [],
@@ -702,7 +734,10 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
           draft.mentionMentions ?? [],
           (targetThreadId) => {
           set((state) => ({
-            ...applyTimelinePatch(state, appendLocalUserMessage(state, targetThreadId, draft.text, [])),
+            ...markStoreThreadRunning(
+              applyTimelinePatch(state, appendLocalUserMessage(state, targetThreadId, draft.text, [])),
+              targetThreadId
+            ),
             queuedDraftsByThread: {
               ...state.queuedDraftsByThread,
               [threadId]: (state.queuedDraftsByThread[threadId] ?? []).filter((_, entryIndex) => entryIndex !== index)
@@ -1095,6 +1130,24 @@ function reconcileThreadRunStateWithRunningTurns(
   }
 
   return next;
+}
+
+function markStoreThreadRunning<T extends RemodexStore>(
+  state: T,
+  threadId: string,
+  turnId = "__running__"
+): T {
+  return {
+    ...state,
+    runningTurnByThread: {
+      ...state.runningTurnByThread,
+      [threadId]: turnId
+    },
+    threadRunStateByThread: {
+      ...state.threadRunStateByThread,
+      [threadId]: "running"
+    }
+  };
 }
 
 function isSecureChannelLostError(message: string): boolean {

@@ -13,6 +13,7 @@ import {
   FolderOpen,
   GitBranch,
   GitCommitHorizontal,
+  Hand,
   Image as ImageIcon,
   Link,
   ListChecks,
@@ -22,10 +23,10 @@ import {
   Pause,
   Pencil,
   Plus,
+  QrCode,
   RefreshCw,
   Search,
   Send,
-  Shield,
   Settings,
   ShieldCheck,
   Upload,
@@ -222,7 +223,6 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { message?: strin
 }
 
 function PairingScreen() {
-  const [pairingText, setPairingText] = useState("");
   const [pairingCode, setPairingCode] = useState("");
   const [relayEntryMode, setRelayEntryMode] = useState(() => defaultRelayEntryModeFromLocation());
   const [relayURL, setRelayURL] = useState(() => defaultRelayURLFromLocation());
@@ -289,7 +289,6 @@ function PairingScreen() {
               disabled={busy || !entry.relayURL}
               onClick={() => chooseRelayEntry(entry.mode)}
             >
-              {entry.mode === "tailscale" ? <ShieldCheck size={18} /> : <GitBranch size={18} />}
               <span className="relay-entry-text">
                 <strong>{entry.label}</strong>
                 <small>{entry.relayURL || "Unavailable"}</small>
@@ -298,43 +297,31 @@ function PairingScreen() {
           ))}
         </div>
 
-        <div className="pairing-actions">
-          <button className="primary" disabled={busy} onClick={() => setScannerOpen(true)}>
-            <Camera size={18} /> Scan
-          </button>
-          <button disabled={busy} onClick={() => run(reconnectTrusted)}>
-            <ShieldCheck size={18} /> Reconnect
-          </button>
-        </div>
-
-        <details className="advanced-pairing">
-          <summary>Paste QR payload</summary>
-          <label className="field">
-            <span>QR payload</span>
-            <textarea
-              value={pairingText}
-              onChange={(event) => setPairingText(event.target.value)}
-              spellCheck={false}
-            />
-          </label>
-          <button className="primary wide" disabled={busy || !pairingText.trim()} onClick={() => run(() => connectFromPairingText(pairingText))}>
-            <BadgeCheck size={18} /> Pair
-          </button>
-        </details>
-
-        <div className="split-fields">
+        <div className="pairing-code-card">
           <label className="field">
             <span>Code</span>
-            <input value={pairingCode} onChange={(event) => setPairingCode(event.target.value.toUpperCase())} />
+            <div className="code-input-row">
+              <input value={pairingCode} onChange={(event) => setPairingCode(event.target.value.toUpperCase())} />
+              <button className="scan-icon-button" type="button" disabled={busy} onClick={() => setScannerOpen(true)} aria-label="Scan QR code" title="Scan QR code">
+                <QrCode size={20} />
+              </button>
+            </div>
           </label>
+
           <label className="field">
             <span>Relay URL</span>
             <input value={relayURL} onChange={(event) => setRelayURL(event.target.value)} placeholder="wss://host/relay" />
           </label>
+
+          <div className="pairing-actions">
+            <button className="primary" disabled={busy || !pairingCode.trim()} onClick={() => run(connectCode)}>
+              <BadgeCheck size={18} /> Connect code
+            </button>
+            <button disabled={busy} onClick={() => run(reconnectTrusted)}>
+              <ShieldCheck size={18} /> Reconnect
+            </button>
+          </div>
         </div>
-        <button disabled={busy || !pairingCode.trim()} onClick={() => run(connectCode)}>
-          Connect code
-        </button>
         {previewAvailable ? (
           <button className="preview-link" disabled={busy} onClick={openPreviewWorkspace}>
             <ListChecks size={18} /> Preview workspace
@@ -345,7 +332,6 @@ function PairingScreen() {
       </div>
       {scannerOpen ? <QRScanner onClose={() => setScannerOpen(false)} onPayload={(value) => {
         setScannerOpen(false);
-        setPairingText(value);
         void run(() => connectFromPairingText(value));
       }} /> : null}
     </section>
@@ -1551,14 +1537,16 @@ function Composer() {
   const lastError = useRemodexStore((state) => state.lastError);
   const queuedDrafts = useRemodexStore((state) => activeThreadId ? state.queuedDraftsByThread[activeThreadId] ?? EMPTY_DRAFTS : EMPTY_DRAFTS);
   const sendQueuedDraft = useRemodexStore((state) => state.sendQueuedDraft);
-  const [openChoiceMenu, setOpenChoiceMenu] = useState<"model" | "reasoning" | null>(null);
+  const [openChoiceMenu, setOpenChoiceMenu] = useState<"tools" | "runtime" | "access" | null>(null);
   const [mentionState, setMentionState] = useState<ComposerMentionState | null>(null);
   const [remoteSuggestions, setRemoteSuggestions] = useState<ComposerSuggestion[]>([]);
   const choiceMenuRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const selectedModel = availableModels.find((model) => model.id === runtimeSettings.model || model.model === runtimeSettings.model);
   const autoReview = runtimeSettings.autoReview === true;
-  const accessTitle = autoReview ? "Auto review" : "Default permissions";
+  const accessTitle = autoReview ? "Auto-review" : "Default permissions";
+  const accessIcon = autoReview ? <ShieldCheck size={16} /> : <Hand size={16} />;
   const mentionSuggestions = mentionState ? filteredComposerSuggestions(mentionState, remoteSuggestions) : [];
   const reasoningOptions = selectedModel?.supportedReasoningEfforts?.length
     ? selectedModel.supportedReasoningEfforts
@@ -1579,6 +1567,29 @@ function Composer() {
     : runtimeSettings.reasoningEffort
       ? compactTitleForEffort(runtimeSettings.reasoningEffort)
       : "Auto";
+  const runtimeButtonLabel = `${modelButtonLabel} ${reasoningButtonLabel}`;
+  const speedOptions = [
+    { id: "default", label: "Default", value: undefined },
+    { id: "fast", label: "Fast", value: "fast" }
+  ];
+  const selectedSpeedId = runtimeSettings.serviceTier?.trim() === "fast" ? "fast" : "default";
+  const hasComposerDraft = Boolean(text.trim()) || attachments.length > 0;
+
+  function handlePrimaryComposerAction() {
+    if (running) {
+      if (hasComposerDraft) {
+        queueDraft();
+        return;
+      }
+      void stopActiveTurn();
+      return;
+    }
+    previewMode ? sendPreviewComposer() : void sendComposer();
+  }
+
+  const primaryComposerTitle = running
+    ? hasComposerDraft ? "Queue draft" : "Stop"
+    : "Send";
 
   useEffect(() => {
     if (!openChoiceMenu) {
@@ -1757,6 +1768,12 @@ function Composer() {
             ))}
           </div>
         ) : null}
+        {running ? (
+          <div className="composer-running-status" role="status" aria-live="polite">
+            <RefreshCw size={13} aria-hidden="true" />
+            <span>{hasComposerDraft ? "Running - draft ready to queue" : "Running"}</span>
+          </div>
+        ) : null}
         <textarea
           ref={textareaRef}
           value={text}
@@ -1773,124 +1790,206 @@ function Composer() {
           onKeyDown={handleComposerKeyDown}
         />
         <div className="composer-bar" ref={choiceMenuRef}>
-          <label className="icon-upload" title="Attach image" aria-label="Attach image">
-            <ImageIcon size={18} />
-            <input type="file" accept="image/*" multiple onChange={(event) => event.target.files && void addFiles(event.target.files)} />
-          </label>
-          <button
-            className={`composer-tool-button plan-button ${runtimeSettings.planMode ? "selected" : ""}`}
-            onClick={() => void setRuntimeSettings({ planMode: !runtimeSettings.planMode })}
-            title="Plan mode"
-          >
-            <ListChecks size={16} />
-            <span className="button-label">Plan</span>
-          </button>
-          <div className="composer-choice-wrap model-control">
+          <div className="composer-choice-wrap tools-control">
             <button
               type="button"
-              className="composer-choice-button"
-              disabled={!availableModels.length}
-              title={modelsError || "Model"}
-              aria-label="Model"
+              className={`composer-tool-button composer-icon-tool tools-button ${runtimeSettings.planMode || attachments.length ? "selected" : ""}`}
+              title="Add attachment"
+              aria-label="Add attachment"
               aria-haspopup="menu"
-              aria-expanded={openChoiceMenu === "model"}
-              onClick={() => setOpenChoiceMenu(openChoiceMenu === "model" ? null : "model")}
+              aria-expanded={openChoiceMenu === "tools"}
+              onClick={() => setOpenChoiceMenu(openChoiceMenu === "tools" ? null : "tools")}
             >
-              <span>{modelButtonLabel}</span>
-              <ChevronDown size={14} />
+              <Plus size={18} />
             </button>
-            {openChoiceMenu === "model" && availableModels.length ? (
-              <div className="composer-popover model-popover" role="menu">
-                {availableModels.map((model) => {
-                  const selected = model.id === runtimeSettings.model || model.model === runtimeSettings.model;
-                  return (
-                    <button
-                      key={model.id}
-                      type="button"
-                      className={selected ? "selected" : ""}
-                      role="menuitemradio"
-                      aria-checked={selected}
-                      onClick={() => {
-                        void setRuntimeSettings({ model: model.id });
-                        setOpenChoiceMenu(null);
-                      }}
-                    >
-                      <span>{modelTitle(model)}</span>
-                      {selected ? <Check size={14} /> : null}
-                    </button>
-                  );
-                })}
-              </div>
-            ) : null}
-          </div>
-          <div className="composer-choice-wrap reasoning-control">
-            <button
-              type="button"
-              className="composer-choice-button"
-              title="Reasoning"
-              aria-label="Reasoning"
-              aria-haspopup="menu"
-              aria-expanded={openChoiceMenu === "reasoning"}
-              onClick={() => setOpenChoiceMenu(openChoiceMenu === "reasoning" ? null : "reasoning")}
-            >
-              <span>{reasoningButtonLabel}</span>
-              <ChevronDown size={14} />
-            </button>
-            {openChoiceMenu === "reasoning" ? (
-              <div className="composer-popover reasoning-popover" role="menu">
+            <input
+              ref={fileInputRef}
+              className="composer-file-input"
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={(event) => event.target.files && void addFiles(event.target.files)}
+            />
+            {openChoiceMenu === "tools" ? (
+              <div className="composer-popover tools-popover" role="menu">
                 <button
                   type="button"
-                  className={!runtimeSettings.reasoningEffort ? "selected" : ""}
-                  role="menuitemradio"
-                  aria-checked={!runtimeSettings.reasoningEffort}
+                  role="menuitem"
                   onClick={() => {
-                    void setRuntimeSettings({ reasoningEffort: undefined });
+                    fileInputRef.current?.click();
                     setOpenChoiceMenu(null);
                   }}
                 >
-                  <span>Auto</span>
-                  {!runtimeSettings.reasoningEffort ? <Check size={14} /> : null}
+                  <span><ImageIcon size={16} /> Attach image</span>
                 </button>
-                {reasoningOptions.map((option) => {
-                  const selected = option.reasoningEffort === runtimeSettings.reasoningEffort;
-                  return (
+                <button
+                  type="button"
+                  className={runtimeSettings.planMode ? "selected" : ""}
+                  role="menuitemcheckbox"
+                  aria-checked={runtimeSettings.planMode}
+                  onClick={() => {
+                    void setRuntimeSettings({ planMode: !runtimeSettings.planMode });
+                  }}
+                >
+                  <span><ListChecks size={16} /> Plan mode</span>
+                  {runtimeSettings.planMode ? <Check size={14} /> : null}
+                </button>
+              </div>
+            ) : null}
+          </div>
+          <div className="composer-choice-wrap runtime-control">
+            <button
+              type="button"
+              className="composer-choice-button runtime-choice-button"
+              disabled={!availableModels.length && Boolean(modelsError)}
+              title={modelsError || runtimeButtonLabel}
+              aria-label="Model and intelligence"
+              aria-haspopup="menu"
+              aria-expanded={openChoiceMenu === "runtime"}
+              onClick={() => setOpenChoiceMenu(openChoiceMenu === "runtime" ? null : "runtime")}
+            >
+              <span className="runtime-button-label">
+                <strong>{modelButtonLabel}</strong>
+                <small>{reasoningButtonLabel}</small>
+              </span>
+              <ChevronDown size={14} />
+            </button>
+            {openChoiceMenu === "runtime" ? (
+              <div className="composer-popover runtime-popover" role="menu">
+                <div className="runtime-popover-grid">
+                  <section className="runtime-popover-section">
+                    <div className="composer-popover-label">Model</div>
+                    {availableModels.map((model) => {
+                      const selected = model.id === runtimeSettings.model || model.model === runtimeSettings.model;
+                      return (
+                        <button
+                          key={model.id}
+                          type="button"
+                          className={selected ? "selected" : ""}
+                          role="menuitemradio"
+                          aria-checked={selected}
+                          onClick={() => {
+                            void setRuntimeSettings({ model: model.id });
+                          }}
+                        >
+                          <span>{modelTitle(model)}</span>
+                          {selected ? <Check size={14} /> : null}
+                        </button>
+                      );
+                    })}
+                  </section>
+                  <section className="runtime-popover-section">
+                    <div className="composer-popover-label">Intelligence</div>
                     <button
-                      key={option.id}
                       type="button"
-                      className={selected ? "selected" : ""}
+                      className={!runtimeSettings.reasoningEffort ? "selected" : ""}
                       role="menuitemradio"
-                      aria-checked={selected}
+                      aria-checked={!runtimeSettings.reasoningEffort}
                       onClick={() => {
-                        void setRuntimeSettings({ reasoningEffort: option.reasoningEffort });
-                        setOpenChoiceMenu(null);
+                        void setRuntimeSettings({ reasoningEffort: undefined });
                       }}
                     >
-                      <span>{compactTitleForEffort(option.reasoningEffort, option.title)}</span>
-                      {selected ? <Check size={14} /> : null}
+                      <span>Auto</span>
+                      {!runtimeSettings.reasoningEffort ? <Check size={14} /> : null}
                     </button>
-                  );
-                })}
+                    {reasoningOptions.map((option) => {
+                      const selected = option.reasoningEffort === runtimeSettings.reasoningEffort;
+                      return (
+                        <button
+                          key={option.id}
+                          type="button"
+                          className={selected ? "selected" : ""}
+                          role="menuitemradio"
+                          aria-checked={selected}
+                          onClick={() => {
+                            void setRuntimeSettings({ reasoningEffort: option.reasoningEffort });
+                          }}
+                        >
+                          <span>{compactTitleForEffort(option.reasoningEffort, option.title)}</span>
+                          {selected ? <Check size={14} /> : null}
+                        </button>
+                      );
+                    })}
+                  </section>
+                </div>
+                <div className="composer-popover-separator" />
+                <section className="runtime-speed-section">
+                  <div className="composer-popover-label">Speed</div>
+                  <div className="runtime-speed-options">
+                    {speedOptions.map((option) => {
+                      const selected = selectedSpeedId === option.id;
+                      return (
+                        <button
+                          key={option.id}
+                          type="button"
+                          className={selected ? "selected" : ""}
+                          role="menuitemradio"
+                          aria-checked={selected}
+                          onClick={() => {
+                            void setRuntimeSettings({ serviceTier: option.value });
+                          }}
+                        >
+                          <span>{option.label}</span>
+                          {selected ? <Check size={14} /> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              </div>
+            ) : null}
+          </div>
+          <div className="composer-choice-wrap access-control">
+            <button
+              type="button"
+              className={`composer-choice-button access-choice-button ${autoReview ? "selected" : ""}`}
+              title={`Permissions: ${accessTitle}`}
+              aria-label={`Change permissions: ${accessTitle}`}
+              aria-haspopup="menu"
+              aria-expanded={openChoiceMenu === "access"}
+              onClick={() => setOpenChoiceMenu(openChoiceMenu === "access" ? null : "access")}
+            >
+              {accessIcon}
+              <span>{accessTitle}</span>
+              <ChevronDown size={14} />
+            </button>
+            {openChoiceMenu === "access" ? (
+              <div className="composer-popover access-popover" role="menu">
+                <button
+                  type="button"
+                  className={!autoReview ? "selected" : ""}
+                  role="menuitemradio"
+                  aria-checked={!autoReview}
+                  onClick={() => {
+                    void setRuntimeSettings({ autoReview: false, accessMode: "onRequest" });
+                  }}
+                >
+                  <span><Hand size={16} /> Default permissions</span>
+                  {!autoReview ? <Check size={14} /> : null}
+                </button>
+                <button
+                  type="button"
+                  className={autoReview ? "selected" : ""}
+                  role="menuitemradio"
+                  aria-checked={autoReview}
+                  onClick={() => {
+                    void setRuntimeSettings({ autoReview: true, accessMode: "onRequest" });
+                  }}
+                >
+                  <span><ShieldCheck size={16} /> Auto-review</span>
+                  {autoReview ? <Check size={14} /> : null}
+                </button>
               </div>
             ) : null}
           </div>
           <button
-            className={`composer-tool-button access-button ${autoReview ? "selected" : ""}`}
-            onClick={() => void setRuntimeSettings({ autoReview: !autoReview, accessMode: "onRequest" })}
-            title={`Permissions: ${accessTitle}`}
-            aria-label={`Change permissions: ${accessTitle}`}
+            className={`${running && !hasComposerDraft ? "danger" : "primary"} icon-button send-button`}
+            title={primaryComposerTitle}
+            aria-label={primaryComposerTitle}
+            onClick={handlePrimaryComposerAction}
           >
-            {autoReview ? <ShieldCheck size={16} /> : <Shield size={16} />}
-            <span className="button-label">{autoReview ? "Auto" : "Default"}</span>
+            {running ? (hasComposerDraft ? <ListPlus size={18} /> : <Pause size={18} />) : <Send size={18} />}
           </button>
-          <button className="composer-tool-button queue-button" onClick={queueDraft} title="Queue draft">
-            <ListPlus size={16} />
-            <span className="button-label">Queue</span>
-          </button>
-          {running ? (
-            <button className="danger icon-button" title="Stop" aria-label="Stop" onClick={() => void stopActiveTurn()}><Pause size={18} /></button>
-          ) : (
-            <button className="primary icon-button send-button" title="Send" aria-label="Send" onClick={() => previewMode ? sendPreviewComposer() : void sendComposer()}><Send size={18} /></button>
-          )}
         </div>
       </div>
     </footer>

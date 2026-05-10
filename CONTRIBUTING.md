@@ -40,7 +40,7 @@ Opening a PR does not create an obligation on my side. I may close it. I may ign
 - **[Codex CLI](https://github.com/openai/codex)** installed and working
 - **[Codex desktop app](https://openai.com/index/codex/)** (optional — for viewing threads on Mac)
 - **macOS** (required for desktop refresh; core bridge works on any OS)
-- **Xcode 16+** only if you choose to work on the legacy iOS project
+- **Xcode 16+** only if you choose to work on the macOS menu bar companion
 
 ### Bridge setup
 
@@ -87,18 +87,17 @@ That runs `domaeng up`, which:
 
 Open the web app served by the relay, then scan the QR code or enter the pairing code to trust that Mac.
 
-### Legacy iOS project
+### macOS menu bar companion
 
 ```sh
 cd CodexMobile
 open CodexMobile.xcodeproj
 ```
 
-1. Select your team in **Signing & Capabilities** (you'll need an Apple Developer account)
-2. Pick a target device (physical iPhone or simulator)
-3. Build and run (Cmd+R)
+1. Select the `DomaengMenuBar` scheme
+2. Build and run (Cmd+R)
 
-The current release path is the web app plus the local bridge. The historical `CodexMobile/` project remains in the tree for now, but treat it as legacy unless you explicitly decide to maintain it.
+The historical iOS client is archived outside the active source tree. Keep menu bar changes scoped to `CodexMobile/DomaengMenuBar/` and its build support.
 
 ### Testing a full local session
 
@@ -134,37 +133,22 @@ domaeng/
 │       ├── bridge.js               # Core relay + message forwarding
 │       ├── codex-transport.js      # Spawn vs WebSocket abstraction
 │       ├── codex-desktop-refresher.js  # Debounced Codex.app refresh
-│       ├── git-handler.js          # Git command execution from phone
+│       ├── git-handler.js          # Git command execution from the paired client
 │       ├── workspace-handler.js    # Workspace/cwd management
 │       ├── session-state.js        # Thread persistence
 │       ├── rollout-watch.js        # Thread event log tailing
 │       └── qr.js                   # QR code generation
 │
-├── CodexMobile/            # Legacy Xcode project root
-│   ├── CodexMobile/        # App source target
-│   │   ├── Services/       # Core services
-│   │   │   ├── CodexService.swift              # Main service coordinator
-│   │   │   ├── CodexService+Connection.swift   # WebSocket connection
-│   │   │   ├── CodexService+Incoming.swift     # Message handling
-│   │   │   ├── CodexService+Messages.swift     # Message composition
-│   │   │   ├── CodexService+History.swift      # Thread history
-│   │   │   ├── CodexService+ThreadsTurns.swift # Thread/turn management
-│   │   │   ├── GitActionsService.swift         # Git operations
-│   │   │   └── AppEnvironment.swift            # Runtime config
-│   │   ├── Views/          # SwiftUI views
-│   │   │   ├── Turn/       # Message timeline + composer
-│   │   │   ├── Sidebar/    # Project/thread navigation
-│   │   │   └── Home/       # Home + onboarding
-│   │   └── Models/         # Data models
-│   ├── CodexMobileTests/   # Unit tests
-│   ├── CodexMobileUITests/ # UI tests
-│   └── BuildSupport/       # Build support files
+├── CodexMobile/            # macOS DomaengMenuBar Xcode project
+│   ├── DomaengMenuBar/     # menu bar app source
+│   ├── BuildSupport/       # menu bar build settings and Info.plist
+│   └── CodexMobile/        # shared app assets retained for the menu bar target
 ```
 
 ### Code style
 
 - **Bridge**: CommonJS, no transpilation, no TypeScript. Keep it simple.
-- **Legacy iOS**: SwiftUI, async/await, MainActor isolation. Follow existing patterns only if you intentionally work in `CodexMobile/`.
+- **Menu bar**: SwiftUI/AppKit, async/await, MainActor isolation. Keep source changes in `CodexMobile/DomaengMenuBar/` unless build support or assets are required.
 - No linter or formatter is enforced — just match what's already there.
 
 ### Trust model

@@ -1,17 +1,21 @@
-name: Bridge Check
+name: Checks
 
 on:
   push:
     paths:
       - ".github/workflows/bridge-check.yml"
       - "phodex-bridge/**"
+      - "web/**"
+      - "relay/**"
   pull_request:
     paths:
       - ".github/workflows/bridge-check.yml"
       - "phodex-bridge/**"
+      - "web/**"
+      - "relay/**"
 
 jobs:
-  bridge-check:
+  bridge:
     runs-on: ubuntu-latest
 
     steps:
@@ -29,7 +33,54 @@ jobs:
         working-directory: phodex-bridge
         run: npm ci
 
+      - name: Run bridge tests
+        working-directory: phodex-bridge
+        run: npm test
+
       - name: Verify bridge entrypoints load
         working-directory: phodex-bridge
-        run: |
-          node -e "const mod = require('./src'); const names = ['startBridge', 'openLastActiveThread', 'watchThreadRollout']; for (const name of names) { if (typeof mod[name] !== 'function') { throw new Error('Missing export: ' + name); } }"
+        run: node -e "const mod = require('./src'); const names = ['startBridge', 'openLastActiveThread', 'watchThreadRollout']; for (const name of names) { if (typeof mod[name] !== 'function') { throw new Error('Missing export: ' + name); } }"
+
+  web:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Run web tests
+        working-directory: web
+        run: npm test
+
+  relay:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: relay/package-lock.json
+
+      - name: Install relay dependencies
+        working-directory: relay
+        run: npm ci
+
+      - name: Run relay tests
+        working-directory: relay
+        run: npm test

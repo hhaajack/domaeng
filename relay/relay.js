@@ -8,6 +8,7 @@ const { WebSocket } = require("ws");
 
 const CLEANUP_DELAY_MS = 60_000;
 const HEARTBEAT_INTERVAL_MS = 30_000;
+const HEARTBEAT_MISS_LIMIT = 3;
 const CLOSE_CODE_SESSION_UNAVAILABLE = 4002;
 const CLOSE_CODE_IPHONE_REPLACED = 4003;
 const CLOSE_CODE_MAC_ABSENCE_BUFFER_FULL = 4004;
@@ -61,12 +62,22 @@ function setupRelay(
   {
     setTimeoutFn = setTimeout,
     clearTimeoutFn = clearTimeout,
+    setIntervalFn = setInterval,
+    clearIntervalFn = clearInterval,
     macAbsenceGraceMs = MAC_ABSENCE_GRACE_MS,
+    heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS,
+    heartbeatMissLimit = HEARTBEAT_MISS_LIMIT,
   } = {}
 ) {
-  const heartbeat = setInterval(() => {
+  const heartbeat = setIntervalFn(() => {
     for (const ws of wss.clients) {
       if (ws._relayAlive === false) {
+        ws._relayMissedHeartbeats = (ws._relayMissedHeartbeats || 0) + 1;
+      } else {
+        ws._relayMissedHeartbeats = 0;
+      }
+
+      if (ws._relayMissedHeartbeats >= heartbeatMissLimit) {
         relayMetrics.heartbeatTerminations += 1;
         console.warn(
           `[relay] heartbeat terminated ${ws._relayRole || "unknown"} `
@@ -78,10 +89,10 @@ function setupRelay(
       ws._relayAlive = false;
       ws.ping();
     }
-  }, HEARTBEAT_INTERVAL_MS);
+  }, heartbeatIntervalMs);
   heartbeat.unref?.();
 
-  wss.on("close", () => clearInterval(heartbeat));
+  wss.on("close", () => clearIntervalFn(heartbeat));
 
   wss.on("connection", (ws, req) => {
     const urlPath = req.url || "";
@@ -98,8 +109,10 @@ function setupRelay(
     }
 
     ws._relayAlive = true;
+    ws._relayMissedHeartbeats = 0;
     ws.on("pong", () => {
       ws._relayAlive = true;
+      ws._relayMissedHeartbeats = 0;
     });
 
     // Only the Mac host is allowed to create a fresh session room.
@@ -169,6 +182,8 @@ function setupRelay(
     }
 
     ws.on("message", (data) => {
+      ws._relayAlive = true;
+      ws._relayMissedHeartbeats = 0;
       const msg = typeof data === "string" ? data : data.toString("utf-8");
       if (role === "mac" && applyMacRegistrationMessage(session, sessionId, msg)) {
         return;
@@ -379,7 +394,7 @@ function resolveTrustedMacSession({
     normalizedPhoneDeviceId,
     normalizedPhoneIdentityPublicKey
   )) {
-    throw createRelayError(403, "phone_not_trusted", "This iPhone is not trusted for the requested Mac.");
+    throw createRelayError(403, "phone_not_trusted", "This device is not trusted for the requested Mac.");
   }
 
   const transcriptBytes = buildTrustedSessionResolveBytes({

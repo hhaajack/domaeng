@@ -47,10 +47,10 @@ function printQR(pairingSessionOrPayload, options = {}) {
   const sessionIdShort = sessionId.length > 12 ? `${sessionId.slice(0, 8)}…` : sessionId;
   const env = options.env || process.env;
 
-  console.log("\nScan this QR with the iPhone:\n");
+  console.log("\nScan this QR with Domaeng Web:\n");
   qrcode.generate(payload, { small: true });
   if (pairingCode) {
-    console.log("Or paste this pairing code in the iPhone app:\n");
+    console.log("Or paste this pairing code in Domaeng Web:\n");
     console.log(pairingCode);
   }
   console.log(`\nSession ID: ${sessionIdShort || "(none)"}`);

@@ -92,6 +92,9 @@ struct BridgeMenuBarContentView: View {
                 }
             }
 
+            CompactActionButton("Quit App", style: .secondary) {
+                NSApp.terminate(nil)
+            }
         }
     }
 
@@ -299,6 +302,9 @@ struct BridgeControlCenterWindow: View {
                 }
                 CompactActionButton("Refresh", style: .secondary, isDisabled: store.isRefreshing) {
                     Task { await store.refresh(showSpinner: true) }
+                }
+                CompactActionButton("Quit App", style: .secondary) {
+                    NSApp.terminate(nil)
                 }
             }
 

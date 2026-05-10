@@ -2,8 +2,9 @@
 // Purpose: Defines the machine-readable bridge snapshot plus menu-bar-specific CLI/compatibility models.
 // Layer: Companion app model
 // Exports: bridge snapshot, runtime status, pairing payload, CLI availability, and compatibility helpers
-// Depends on: Foundation
+// Depends on: Darwin, Foundation
 
+import Darwin
 import Foundation
 
 struct BridgeSnapshot: Codable, Equatable {
@@ -220,6 +221,10 @@ extension BridgeSnapshot {
     }()
 
     private static var localLANHostName: String {
+        if let address = firstUsableIPv4Address() {
+            return address
+        }
+
         let hostName = ProcessInfo.processInfo.hostName
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !hostName.isEmpty else {
@@ -234,6 +239,67 @@ extension BridgeSnapshot {
         }
 
         return normalized.contains(".") ? normalized : "\(normalized).local"
+    }
+
+    private static func firstUsableIPv4Address() -> String? {
+        var interfaces: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&interfaces) == 0, let interfaces else {
+            return nil
+        }
+        defer { freeifaddrs(interfaces) }
+
+        var fallbackAddress: String?
+        var cursor: UnsafeMutablePointer<ifaddrs>? = interfaces
+        while let entry = cursor {
+            defer { cursor = entry.pointee.ifa_next }
+
+            let flags = Int32(entry.pointee.ifa_flags)
+            let isUp = (flags & IFF_UP) != 0
+            let isRunning = (flags & IFF_RUNNING) != 0
+            let isLoopback = (flags & IFF_LOOPBACK) != 0
+            guard isUp, isRunning, !isLoopback,
+                  let address = entry.pointee.ifa_addr,
+                  address.pointee.sa_family == UInt8(AF_INET) else {
+                continue
+            }
+
+            var hostBuffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            let result = getnameinfo(
+                address,
+                socklen_t(address.pointee.sa_len),
+                &hostBuffer,
+                socklen_t(hostBuffer.count),
+                nil,
+                0,
+                NI_NUMERICHOST
+            )
+            guard result == 0 else {
+                continue
+            }
+
+            let addressString = String(cString: hostBuffer)
+            if isPrivateIPv4Address(addressString) {
+                return addressString
+            }
+            fallbackAddress = fallbackAddress ?? addressString
+        }
+
+        return fallbackAddress
+    }
+
+    private static func isPrivateIPv4Address(_ address: String) -> Bool {
+        let octets = address.split(separator: ".").compactMap { Int($0) }
+        guard octets.count == 4 else {
+            return false
+        }
+
+        if octets[0] == 10 {
+            return true
+        }
+        if octets[0] == 192, octets[1] == 168 {
+            return true
+        }
+        return octets[0] == 172 && (16...31).contains(octets[1])
     }
 }
 
