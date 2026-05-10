@@ -131,9 +131,13 @@ The front page is intentionally short. Use these when you need the deeper knobs:
 - Mobile app: no separate download; use the browser or installed PWA
 - macOS menu bar companion: source-build only for now; no signed `.app`, `.dmg`, or `.zip` GitHub Release yet
 
-## Naming Note
+## Relationship To Remodex
 
-Some internal file names, protocol fields, and legacy state paths still use `remodex` or `phodex` names for compatibility. `Domaeng` is the public project and package name.
+Domaeng is the current public project and package name for this local-first Codex remote-control work.
+
+The codebase still contains some Remodex-era names, including internal file names, CLI entry files, protocol fields, and legacy state paths such as `~/.remodex`. Those names are kept intentionally so existing local installs, pairing state, and migration paths do not break.
+
+For users, the thing to install and run is `domaeng`. You do not need to install a separate Remodex package.
 
 ## Contributing
 

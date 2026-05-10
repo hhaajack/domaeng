@@ -126,9 +126,13 @@ cd domaeng
 - 移动端 App：没有单独下载包，使用浏览器或 PWA
 - macOS 菜单栏 companion：目前只能从源码构建，还没有签名的 `.app`、`.dmg` 或 `.zip` GitHub Release
 
-## 命名说明
+## 和 Remodex 的关系
 
-部分内部文件名、协议字段和历史状态路径仍然保留 `remodex` 或 `phodex`，这是为了兼容旧状态和上游命名。对外项目名和 npm 包名是 `Domaeng` / `domaeng`。
+Domaeng 是这个 local-first Codex 远控项目当前对外使用的项目名和 npm 包名。
+
+代码里仍然会看到一些 Remodex 时期留下来的名字，例如内部文件名、CLI 入口文件、协议字段，以及 `~/.remodex` 这样的历史状态路径。这些名字是为了兼容已有本地安装、配对状态和迁移路径而保留的，不代表用户需要另外安装 Remodex。
+
+对普通用户来说，需要安装和运行的是 `domaeng`。
 
 ## License
 
