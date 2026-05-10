@@ -13,6 +13,22 @@ Domaeng 是一个 local-first 的 Codex 远控工具：你的 Mac 是 host，Cod
 - **本地优先连接**：relay 可以本地运行，也可以自托管；它只是传输层，不接管 Codex runtime
 - **一次配对，后续重连**：通过 QR 或配对码信任这台 Mac，之后 bridge 可达时 Web App 可以自动重连
 
+## 下载 / 安装
+
+目前 GitHub 项目页还没有提供已签名的 Release build，例如 `.app`、`.dmg` 或 `.zip`。当前推荐的用户安装路径是：
+
+```sh
+npm install -g domaeng@latest
+domaeng up
+```
+
+这一步安装在负责 host Codex 的 Mac 上。随后 Domaeng 会在 `/app/` 提供 Web App；任意能访问你的 relay 或私有网络的设备，都可以用浏览器打开这个地址，再通过 QR 或配对码完成配对。
+
+- Mac host 端安装 `domaeng` bridge CLI
+- 手机、平板、另一台电脑使用浏览器或 PWA，不需要单独下载移动 App
+- macOS 菜单栏 companion 目前在源码里，可以本地构建，但还没有作为签名包发布到 GitHub Releases
+- 如果要从源码完整构建，可以继续看下面的本地构建说明
+
 它包含四个主要部分：
 
 - `phodex-bridge/`: 本地 Node.js bridge，负责连接 Codex、relay、git/workspace 操作

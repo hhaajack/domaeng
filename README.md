@@ -20,6 +20,22 @@ Domaeng turns your Mac into the host for Codex, then gives you a secure web remo
 - **Local-first transport**: the relay can run locally or be self-hosted; it forwards paired traffic and does not become the Codex runtime
 - **Trusted reconnect**: pair once with QR or pairing code, then reconnect later to the same trusted Mac when the bridge is reachable
 
+## Download / Install
+
+There is not a signed GitHub Release build yet. The current user install path is:
+
+```sh
+npm install -g domaeng@latest
+domaeng up
+```
+
+Install that on the Mac that will host Codex. Domaeng then serves the web app at `/app/`; open that URL from any device that can reach your relay or private network, then pair by QR code or pairing code.
+
+- The Mac host installs the `domaeng` bridge CLI
+- The phone/tablet/laptop side uses the browser or installed PWA; there is no separate mobile app download
+- The macOS menu bar companion is available in source form today, but this repo does not yet publish a signed `.app`, `.dmg`, or `.zip` in GitHub Releases
+- Developers who want to build everything locally can use the source build instructions below
+
 ## Key Features
 
 - End-to-end encrypted pairing and chats between your browser and Mac
