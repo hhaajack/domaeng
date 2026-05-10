@@ -1546,6 +1546,7 @@ function Composer() {
   const selectedModel = availableModels.find((model) => model.id === runtimeSettings.model || model.model === runtimeSettings.model);
   const autoReview = runtimeSettings.autoReview === true;
   const accessTitle = autoReview ? "Auto-review" : "Default permissions";
+  const accessButtonLabel = autoReview ? "Auto-review" : "Default";
   const accessIcon = autoReview ? <ShieldCheck size={16} /> : <Hand size={16} />;
   const mentionSuggestions = mentionState ? filteredComposerSuggestions(mentionState, remoteSuggestions) : [];
   const reasoningOptions = selectedModel?.supportedReasoningEfforts?.length
@@ -1950,7 +1951,7 @@ function Composer() {
               onClick={() => setOpenChoiceMenu(openChoiceMenu === "access" ? null : "access")}
             >
               {accessIcon}
-              <span>{accessTitle}</span>
+              <span>{accessButtonLabel}</span>
               <ChevronDown size={14} />
             </button>
             {openChoiceMenu === "access" ? (
