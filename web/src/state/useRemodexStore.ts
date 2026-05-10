@@ -1214,6 +1214,9 @@ function applyThreadActivityUpdate<T extends RemodexStore>(
   if (!outcome) {
     return state;
   }
+  if (shouldIgnoreTerminalNotificationForRunningState(state, method, threadId, paramsObject)) {
+    return state;
+  }
 
   const nextRunState = state.activeThreadId === threadId
     ? clearThreadTerminalState(state.threadRunStateByThread, threadId)
@@ -1244,6 +1247,23 @@ function applyThreadActivityUpdate<T extends RemodexStore>(
     threadRunStateByThread: nextRunState,
     inAppNotifications: notificationUpdate?.notifications ?? state.inAppNotifications
   };
+}
+
+function shouldIgnoreTerminalNotificationForRunningState(
+  state: RemodexStore,
+  method: string,
+  threadId: string,
+  params: Record<string, unknown>
+): boolean {
+  if (method !== "turn/completed" && method !== "turn/failed") {
+    return false;
+  }
+  const terminalTurnId = resolveTurnId(params);
+  const runningTurnId = state.runningTurnByThread[threadId];
+  if (terminalTurnId) {
+    return Boolean(runningTurnId && runningTurnId !== "__running__" && runningTurnId !== terminalTurnId);
+  }
+  return !runningTurnId || runningTurnId !== "__running__";
 }
 
 function removeThreadKey<TValue>(

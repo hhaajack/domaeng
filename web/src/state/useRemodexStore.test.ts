@@ -589,6 +589,125 @@ describe("useRemodexStore thread activity", () => {
     expect(useRemodexStore.getState().runningTurnByThread["thread-active"]).toBeUndefined();
   });
 
+  it("keeps running state when stale thread reads omit a web-started turn", async () => {
+    client.readThread = vi.fn().mockResolvedValue({
+      result: {
+        thread: {
+          id: "thread-active",
+          title: "Active",
+          turns: []
+        }
+      }
+    });
+    useRemodexStore.setState({
+      threads: [{ id: "thread-active", title: "Active" }],
+      activeThreadId: "thread-active",
+      messagesByThread: {
+        "thread-active": [{
+          id: "pending-web",
+          role: "user",
+          kind: "chat",
+          threadId: "thread-active",
+          text: "web prompt",
+          createdAt: Date.now(),
+          metadata: { remodexLocalPending: true }
+        }]
+      },
+      runningTurnByThread: { "thread-active": "__running__" },
+      threadRunStateByThread: { "thread-active": "running" }
+    });
+
+    await useRemodexStore.getState().openThread("thread-active");
+
+    expect(useRemodexStore.getState().runningTurnByThread["thread-active"]).toBe("__running__");
+    expect(useRemodexStore.getState().threadRunStateByThread["thread-active"]).toBe("running");
+  });
+
+  it("keeps running state when stale thread reads omit a desktop-started turn", async () => {
+    client.readThread = vi.fn().mockResolvedValue({
+      result: {
+        thread: {
+          id: "thread-active",
+          title: "Active",
+          turns: []
+        }
+      }
+    });
+    useRemodexStore.setState({
+      threads: [{ id: "thread-active", title: "Active" }],
+      activeThreadId: "thread-active"
+    });
+
+    emitClientEvent({
+      type: "notification",
+      method: "thread/status/changed",
+      params: {
+        threadId: "thread-active",
+        status: "active"
+      }
+    });
+    emitClientEvent({
+      type: "notification",
+      method: "codex/event/user_message",
+      params: {
+        threadId: "thread-active",
+        turnId: "desktop-turn",
+        message: "desktop prompt"
+      }
+    });
+    emitClientEvent({
+      type: "notification",
+      method: "turn/started",
+      params: {
+        threadId: "thread-active",
+        turnId: "desktop-turn"
+      }
+    });
+
+    await useRemodexStore.getState().openThread("thread-active");
+
+    expect(useRemodexStore.getState().runningTurnByThread["thread-active"]).toBe("desktop-turn");
+    expect(useRemodexStore.getState().threadRunStateByThread["thread-active"]).toBe("running");
+  });
+
+  it("ignores turn-less terminal events that arrive after a concrete running turn", () => {
+    useRemodexStore.setState({
+      threads: [{ id: "thread-active", title: "Active" }],
+      activeThreadId: "thread-active"
+    });
+
+    emitClientEvent({
+      type: "notification",
+      method: "turn/started",
+      params: {
+        threadId: "thread-active",
+        turnId: "turn-new"
+      }
+    });
+    emitClientEvent({
+      type: "notification",
+      method: "turn/completed",
+      params: {
+        threadId: "thread-active"
+      }
+    });
+
+    expect(useRemodexStore.getState().runningTurnByThread["thread-active"]).toBe("turn-new");
+    expect(useRemodexStore.getState().threadRunStateByThread["thread-active"]).toBe("running");
+
+    emitClientEvent({
+      type: "notification",
+      method: "turn/completed",
+      params: {
+        threadId: "thread-active",
+        turnId: "turn-new"
+      }
+    });
+
+    expect(useRemodexStore.getState().runningTurnByThread["thread-active"]).toBeUndefined();
+    expect(useRemodexStore.getState().threadRunStateByThread["thread-active"]).toBeUndefined();
+  });
+
   it("marks inactive completions and approval requests as attention states", () => {
     useRemodexStore.setState({
       threads: [

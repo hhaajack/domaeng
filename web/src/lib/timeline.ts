@@ -120,10 +120,21 @@ export function decodeThreadRead(state: TimelineState, result: JSONValue | undef
       }
     }
   }
+  const existingMessages = state.messagesByThread[thread.id] ?? [];
+  const mergedMessages = mergeDecodedThreadMessages(existingMessages, messages);
   const runningTurnId = runningTurnIdFromThreadObject(threadObject, turns);
+  const existingRunningTurnId = state.runningTurnByThread[thread.id];
   const runningTurnByThread = { ...state.runningTurnByThread };
   if (runningTurnId) {
     runningTurnByThread[thread.id] = runningTurnId;
+  } else if (shouldPreserveExistingRunningTurn({
+    existingRunningTurnId,
+    existingMessages,
+    decodedMessages: messages,
+    threadObject,
+    turns
+  })) {
+    runningTurnByThread[thread.id] = existingRunningTurnId;
   } else {
     delete runningTurnByThread[thread.id];
   }
@@ -133,7 +144,7 @@ export function decodeThreadRead(state: TimelineState, result: JSONValue | undef
     threads: sortThreads(upsertThread(state.threads, thread)),
     messagesByThread: {
       ...state.messagesByThread,
-      [thread.id]: mergePendingLocalUserMessages(state.messagesByThread[thread.id] ?? [], messages)
+      [thread.id]: mergedMessages
     },
     runningTurnByThread
   };
@@ -201,16 +212,43 @@ function markTurnCompleted(state: TimelineState, object: JSONObject): TimelineSt
   if (!threadId) {
     return state;
   }
+  const turnId = resolveTurnId(object);
+  const runningTurnId = state.runningTurnByThread[threadId];
+  if (shouldIgnoreTerminalTurnForRunningState(runningTurnId, turnId)) {
+    return state;
+  }
   const next = { ...state.runningTurnByThread };
-  delete next[threadId];
+  if (shouldClearRunningTurn(runningTurnId, turnId)) {
+    delete next[threadId];
+  }
   return {
     ...state,
     runningTurnByThread: next,
     messagesByThread: {
       ...state.messagesByThread,
-      [threadId]: finalizeMessagesForCompletedTurn(state.messagesByThread[threadId] ?? [], resolveTurnId(object))
+      [threadId]: finalizeMessagesForCompletedTurn(state.messagesByThread[threadId] ?? [], turnId)
     }
   };
+}
+
+function shouldIgnoreTerminalTurnForRunningState(
+  runningTurnId: string | undefined,
+  terminalTurnId: string | undefined
+): boolean {
+  if (terminalTurnId) {
+    return Boolean(runningTurnId && runningTurnId !== "__running__" && runningTurnId !== terminalTurnId);
+  }
+  return !runningTurnId || runningTurnId !== "__running__";
+}
+
+function shouldClearRunningTurn(
+  runningTurnId: string | undefined,
+  terminalTurnId: string | undefined
+): boolean {
+  if (!runningTurnId) {
+    return false;
+  }
+  return runningTurnId === "__running__" || runningTurnId === terminalTurnId;
 }
 
 function appendCompletedItem(state: TimelineState, object: JSONObject): TimelineState {
@@ -530,6 +568,50 @@ function latestTurnIdFromTurns(turns: JSONValue[]): string | undefined {
   return undefined;
 }
 
+function shouldPreserveExistingRunningTurn({
+  existingRunningTurnId,
+  existingMessages,
+  decodedMessages,
+  threadObject,
+  turns
+}: {
+  existingRunningTurnId: string | undefined;
+  existingMessages: TimelineMessage[];
+  decodedMessages: TimelineMessage[];
+  threadObject: JSONObject;
+  turns: JSONValue[];
+}): boolean {
+  if (!existingRunningTurnId || isTerminalStatusObject(threadObject)) {
+    return false;
+  }
+
+  if (existingRunningTurnId !== "__running__" && turnHasTerminalStatus(turns, existingRunningTurnId)) {
+    return false;
+  }
+
+  return existingMessages.some((entry) => {
+    if (decodedMessages.some((candidate) => decodedMessageRepresentsExisting(candidate, entry))) {
+      return false;
+    }
+    if (entry.streaming || isPendingLocalUserMessage(entry)) {
+      return true;
+    }
+    return Boolean(
+      entry.turnId
+        && existingRunningTurnId !== "__running__"
+        && entry.turnId === existingRunningTurnId
+    );
+  });
+}
+
+function turnHasTerminalStatus(turns: JSONValue[], turnId: string): boolean {
+  return turns.some((turnValue) => {
+    const turn = asObject(turnValue);
+    const candidateTurnId = readString(turn.id) || readString(turn.turnId) || readString(turn.turn_id);
+    return candidateTurnId === turnId && isTerminalStatusObject(turn);
+  });
+}
+
 function isRunningTurn(turn: JSONObject): boolean {
   return isRunningStatusObject(turn);
 }
@@ -553,6 +635,25 @@ function isRunningStatusObject(object: JSONObject): boolean {
   return objectStatus ? isRunningStatusToken(objectStatus) : false;
 }
 
+function isTerminalStatusObject(object: JSONObject): boolean {
+  const directStatus = readStatusToken(object.status)
+    || readStatusToken(object.turnStatus)
+    || readStatusToken(object.turn_status)
+    || readStatusToken(object.state)
+    || readStatusToken(object.phase);
+  if (directStatus) {
+    return isTerminalStatusToken(directStatus);
+  }
+
+  const statusObject = asObject(object.status);
+  const objectStatus = readStatusToken(statusObject.type)
+    || readStatusToken(statusObject.statusType)
+    || readStatusToken(statusObject.status_type)
+    || readStatusToken(statusObject.state)
+    || readStatusToken(statusObject.phase);
+  return objectStatus ? isTerminalStatusToken(objectStatus) : false;
+}
+
 function readStatusToken(value: JSONValue | undefined): string | undefined {
   const stringValue = readString(value);
   return stringValue ? stringValue.replace(/[^a-z0-9]/gi, "").toLowerCase() : undefined;
@@ -560,6 +661,10 @@ function readStatusToken(value: JSONValue | undefined): string | undefined {
 
 function isRunningStatusToken(value: string): boolean {
   return ["active", "running", "processing", "inprogress", "started", "pending"].includes(value);
+}
+
+function isTerminalStatusToken(value: string): boolean {
+  return ["cancelled", "canceled", "complete", "completed", "done", "failed", "failure", "idle", "interrupted", "stopped"].includes(value);
 }
 
 function upsertThread(threads: CodexThread[], next: CodexThread): CodexThread[] {
@@ -840,23 +945,68 @@ function shouldReplaceItemId(entry: TimelineMessage, nextItemId: string | undefi
   return entry.itemId === `${entry.kind}-${entry.turnId ?? "open"}`;
 }
 
-function mergePendingLocalUserMessages(
+function mergeDecodedThreadMessages(
   existing: TimelineMessage[],
   decoded: TimelineMessage[]
 ): TimelineMessage[] {
-  const pending = existing.filter(isPendingLocalUserMessage);
-  if (pending.length === 0) {
+  if (existing.length === 0) {
     return decoded;
   }
 
-  const preserved = pending.filter((entry) => {
-    return !decoded.some((candidate) => decodedUserMessageRepresentsLocal(candidate, entry));
-  });
+  const preserved = existing.filter((entry) => shouldPreserveExistingMessage(entry, decoded));
   if (preserved.length === 0) {
     return decoded;
   }
 
   return [...decoded, ...preserved].sort((left, right) => left.createdAt - right.createdAt);
+}
+
+function shouldPreserveExistingMessage(
+  existing: TimelineMessage,
+  decoded: TimelineMessage[]
+): boolean {
+  if (decoded.some((candidate) => decodedMessageRepresentsExisting(candidate, existing))) {
+    return false;
+  }
+
+  if (isPendingLocalUserMessage(existing)) {
+    return true;
+  }
+
+  if (existing.streaming) {
+    return true;
+  }
+
+  return existing.kind !== "error";
+}
+
+function decodedMessageRepresentsExisting(
+  decoded: TimelineMessage,
+  existing: TimelineMessage
+): boolean {
+  if (decoded.role !== existing.role || decoded.kind !== existing.kind) {
+    return false;
+  }
+
+  if (decoded.itemId && existing.itemId && decoded.itemId === existing.itemId) {
+    return true;
+  }
+
+  if (existing.role === "user" && decodedUserMessageRepresentsLocal(decoded, existing)) {
+    return true;
+  }
+
+  if (decoded.turnId && existing.turnId && decoded.turnId === existing.turnId && textsOverlap(decoded.text, existing.text)) {
+    return true;
+  }
+
+  return normalizeMessageText(decoded.text) === normalizeMessageText(existing.text)
+    && attachmentSignature(decoded.attachments) === attachmentSignature(existing.attachments)
+    && (
+      !decoded.turnId
+      || !existing.turnId
+      || decoded.turnId === existing.turnId
+    );
 }
 
 function isPendingLocalUserMessage(message: TimelineMessage): boolean {
