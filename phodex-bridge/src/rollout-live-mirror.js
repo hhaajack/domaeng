@@ -16,6 +16,11 @@ const { resolveCodexGeneratedImagesRoot } = require("./codex-home");
 const DEFAULT_POLL_INTERVAL_MS = 700;
 const DEFAULT_LOOKUP_TIMEOUT_MS = 5_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
+const DEFAULT_DISCOVERY_INTERVAL_MS = 1_000;
+const DEFAULT_DISCOVERY_LOOKBACK_MS = 15 * 60 * 1_000;
+const DEFAULT_DISCOVERY_CANDIDATE_LIMIT = 12;
+const DEFAULT_DISCOVERY_HEAD_SCAN_BYTES = 64 * 1_024;
+const DEFAULT_DISCOVERY_TAIL_SCAN_BYTES = 512 * 1_024;
 const DESKTOP_RESUME_METHODS = new Set(["thread/read", "thread/resume"]);
 
 // Observes desktop-authored rollout files and replays the currently active run as
@@ -30,8 +35,19 @@ function createRolloutLiveMirrorController({
   pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
   lookupTimeoutMs = DEFAULT_LOOKUP_TIMEOUT_MS,
   idleTimeoutMs = DEFAULT_IDLE_TIMEOUT_MS,
+  autoDiscoverActiveRollouts = false,
+  discoveryIntervalMs = DEFAULT_DISCOVERY_INTERVAL_MS,
+  discoveryLookbackMs = DEFAULT_DISCOVERY_LOOKBACK_MS,
+  discoveryCandidateLimit = DEFAULT_DISCOVERY_CANDIDATE_LIMIT,
 } = {}) {
   const mirrorsByThreadId = new Map();
+  let discoveryIntervalId = null;
+
+  if (autoDiscoverActiveRollouts) {
+    discoveryIntervalId = setIntervalFn(discoverActiveDesktopRollouts, discoveryIntervalMs);
+    discoveryIntervalId.unref?.();
+    discoverActiveDesktopRollouts();
+  }
 
   function observeInbound(rawMessage) {
     const request = safeParseJSON(rawMessage);
@@ -45,6 +61,28 @@ function createRolloutLiveMirrorController({
       return;
     }
 
+    startMirrorForThread(threadId);
+  }
+
+  function discoverActiveDesktopRollouts() {
+    const candidates = collectRecentRolloutFilesForDiscovery(resolveSessionsRoot(), {
+      fsModule,
+      now,
+      lookbackMs: discoveryLookbackMs,
+      candidateLimit: discoveryCandidateLimit,
+    });
+
+    for (const candidate of candidates) {
+      const summary = readActiveDesktopRolloutSummary(candidate.filePath, { fsModule });
+      if (!summary.active || !summary.threadId || mirrorsByThreadId.has(summary.threadId)) {
+        continue;
+      }
+
+      startMirrorForThread(summary.threadId);
+    }
+  }
+
+  function startMirrorForThread(threadId) {
     const existingMirror = mirrorsByThreadId.get(threadId);
     if (existingMirror) {
       existingMirror.bump();
@@ -73,6 +111,10 @@ function createRolloutLiveMirrorController({
   }
 
   function stopAll() {
+    if (discoveryIntervalId) {
+      clearIntervalFn(discoveryIntervalId);
+      discoveryIntervalId = null;
+    }
     for (const mirror of mirrorsByThreadId.values()) {
       mirror.stop();
     }
@@ -80,6 +122,7 @@ function createRolloutLiveMirrorController({
   }
 
   return {
+    discoverActiveDesktopRollouts,
     observeInbound,
     stopAll,
   };
@@ -627,6 +670,131 @@ function createMirrorState(threadId) {
     hasThinking: false,
     commandCalls: new Map(),
   };
+}
+
+function collectRecentRolloutFilesForDiscovery(root, {
+  fsModule = fs,
+  now = () => Date.now(),
+  lookbackMs = DEFAULT_DISCOVERY_LOOKBACK_MS,
+  candidateLimit = DEFAULT_DISCOVERY_CANDIDATE_LIMIT,
+} = {}) {
+  if (!root || !fsModule.existsSync(root)) {
+    return [];
+  }
+
+  const modifiedAfterMs = now() - lookbackMs;
+  const stack = [root];
+  const candidates = [];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    let entries;
+    try {
+      entries = fsModule.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+        continue;
+      }
+
+      if (!entry.isFile() || !entry.name.startsWith("rollout-") || !entry.name.endsWith(".jsonl")) {
+        continue;
+      }
+
+      let stat;
+      try {
+        stat = fsModule.statSync(fullPath);
+      } catch {
+        continue;
+      }
+
+      if (stat.mtimeMs < modifiedAfterMs) {
+        continue;
+      }
+
+      candidates.push({
+        filePath: fullPath,
+        mtimeMs: stat.mtimeMs,
+      });
+    }
+  }
+
+  return candidates
+    .sort((left, right) => right.mtimeMs - left.mtimeMs)
+    .slice(0, candidateLimit);
+}
+
+function readActiveDesktopRolloutSummary(rolloutPath, { fsModule = fs } = {}) {
+  let stat;
+  try {
+    stat = fsModule.statSync(rolloutPath);
+  } catch {
+    return { active: false, threadId: "" };
+  }
+
+  const head = readFileSlice(
+    rolloutPath,
+    0,
+    Math.min(stat.size, DEFAULT_DISCOVERY_HEAD_SCAN_BYTES),
+    fsModule
+  );
+  const tailStart = Math.max(0, stat.size - DEFAULT_DISCOVERY_TAIL_SCAN_BYTES);
+  const tail = readFileSlice(rolloutPath, tailStart, stat.size, fsModule);
+  const combined = tailStart > 0 ? `${head}\n${tail}` : head;
+  const state = createMirrorState(threadIdFromRolloutPath(rolloutPath));
+  let activeTurnId = "";
+
+  for (const rawLine of combined.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+
+    const parsed = safeParseJSON(line);
+    if (!parsed) {
+      continue;
+    }
+
+    if (parsed.type === "session_meta") {
+      populateSessionMetaState(state, parsed.payload);
+      state.threadId = readString(parsed.payload?.id)
+        || readString(parsed.payload?.threadId)
+        || readString(parsed.payload?.thread_id)
+        || state.threadId;
+      continue;
+    }
+
+    const taskEventType = parsed?.type === "event_msg"
+      ? readString(parsed?.payload?.type)
+      : "";
+    if (taskEventType === "task_started") {
+      activeTurnId = readString(parsed?.payload?.turn_id)
+        || readString(parsed?.payload?.turnId)
+        || activeTurnId
+        || "__running__";
+      continue;
+    }
+
+    if (taskEventType === "task_complete") {
+      activeTurnId = "";
+    }
+  }
+
+  return {
+    active: Boolean(activeTurnId) && isDesktopRolloutOrigin(state.sessionMeta),
+    threadId: state.threadId,
+  };
+}
+
+function threadIdFromRolloutPath(rolloutPath) {
+  const basename = path.basename(readString(rolloutPath));
+  const match = basename.match(/^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(.+)\.jsonl$/);
+  return match?.[1] || "";
 }
 
 function populateSessionMetaState(state, payload) {
