@@ -43,13 +43,13 @@ Keep the actual hostname in your own local config. Do not commit personal tailne
 
 ## With The Menu Bar Companion
 
-The macOS menu bar companion has a Connection section that can help with this flow:
+The macOS menu bar control has a Connection section that can help with this flow:
 
 - `Tailscale Web` shows the Web App URL derived from the detected or saved Tailscale address.
 - `Tailscale Relay` shows the matching relay URL.
 - `Use Tailscale Relay` switches the bridge to that relay path.
 - `Save Tailscale Address` lets you paste a stable Tailscale host when auto-detection is not enough.
-- `Auto Detect` clears the manual host and lets the companion inspect the local machine again.
+- `Auto Detect` clears the manual host and lets the control inspect the local machine again.
 
 After switching relay paths, use the displayed QR or pairing code to trust the Mac from the Web App.
 

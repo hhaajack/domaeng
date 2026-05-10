@@ -1,14 +1,14 @@
-# macOS Menu Bar Companion
+# Menu Bar Control
 
-The macOS menu bar companion is the small Domaeng control center that lives in the macOS status/menu bar.
+The menu bar control is the small Domaeng control center that lives in the macOS status/menu bar.
 
 It is optional. You can use Domaeng entirely from the CLI and Web App.
 
-Current packaging status: the public repo does not publish a signed `.app`, `.dmg`, or `.zip` release yet. The menu bar companion is source-build only for now.
+Current packaging status: the public repo does not publish a signed `.app`, `.dmg`, or `.zip` release yet. For now, the friendliest path is to ask Codex to set it up from this local checkout instead of following manual Xcode build steps.
 
 ## What It Does
 
-The companion wraps the existing local `domaeng` CLI. It can:
+The menu bar control wraps the existing local `domaeng` CLI. It can:
 
 - start and stop the macOS bridge service
 - show daemon and bridge connection status
@@ -20,59 +20,35 @@ The companion wraps the existing local `domaeng` CLI. It can:
 
 It does not replace Codex, and it does not run a hosted service. The bridge and Codex runtime still run locally on your Mac.
 
-## Requirements
+## Recommended Setup Prompt
 
-- macOS
-- the global `domaeng` CLI installed and visible to the app shell environment
-- Xcode 16+ if you are building the companion from source
+Open Codex in this repository and paste this prompt:
 
-Install the CLI first:
+```text
+Set up the Domaeng macOS menu bar control from this local repository.
 
-```sh
-npm install -g domaeng@latest
+Please keep the project local-first and do not introduce hosted-service assumptions or hardcoded relay domains.
+
+Before changing or running anything, inspect the current README, Docs/menu-bar.md, package scripts, and CONTRIBUTING.md so you use the repo's current setup flow.
+
+Do not run Xcode tests. Do not change unrelated files. Do not commit or print QR payloads, pairing codes, live relay session IDs, private hostnames, or raw `domaeng status --json` output.
+
+If needed, install or update the local `domaeng` CLI, build the Web App assets, build only the `DomaengMenuBar` macOS app target, install it locally, copy the matching Web App assets into the app bundle, open the app, and verify that Start, Stop, Refresh, pairing, and relay switching behave as expected.
+
+If any step needs permission because it writes outside the repo, asks for network access, or touches `/Applications`, explain the command and ask me first.
 ```
 
-## Build And Run From Xcode
+That prompt keeps the build details in Codex's hands while still telling it the important safety rules.
 
-From the repo root:
+Advanced source-build notes for maintainers live in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
-```sh
-cd CodexMobile
-open CodexMobile.xcodeproj
-```
+## How To Use It
 
-Then:
-
-1. Select the `DomaengMenuBar` scheme.
-2. Build and run with Cmd+R.
-3. Open the Domaeng icon from the macOS status/menu bar.
-4. Use Start to start the local relay and bridge service.
-
-The historical iOS client is not the active path in this source tree. The active companion source lives in `CodexMobile/DomaengMenuBar/`.
-
-## Command-Line Source Build
-
-From the repo root:
-
-```sh
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-xcodebuild -project CodexMobile/CodexMobile.xcodeproj \
-  -scheme DomaengMenuBar \
-  -configuration Debug \
-  -destination 'platform=macOS' \
-  -derivedDataPath .build/xcode-derived \
-  CODE_SIGNING_ALLOWED=NO build
-```
-
-If you want the companion to serve the bundled Web App assets, build the web client first:
-
-```sh
-cd web
-npm install
-npm run build
-```
-
-For day-to-day user installs, prefer the npm CLI path until a signed app release exists.
+1. Open the Domaeng icon in the macOS status/menu bar.
+2. Click `Start` to start the local relay and bridge.
+3. Open the Web App URL shown by the control, or scan the pairing QR/code.
+4. Use `Refresh` when the status looks stale.
+5. Use `Stop` when you want the bridge service off.
 
 ## Popover Controls
 
@@ -85,7 +61,7 @@ The compact status/menu bar popover shows:
 - `Stop`: stops the bridge service.
 - `Refresh`: reloads status from the CLI.
 - `Control Center`: opens the full window.
-- `Quit App`: quits only the companion app, not necessarily the bridge service.
+- `Quit App`: quits only the menu bar app, not necessarily the bridge service.
 
 ## Control Center
 
@@ -132,6 +108,6 @@ Trusted devices are browsers that completed the first pairing handshake for the 
 
 ### Logs
 
-The companion can open the local Domaeng state/log folder and the stdout/stderr logs used by the background service.
+The menu bar control can open the local Domaeng state/log folder and the stdout/stderr logs used by the background service.
 
 Avoid posting raw logs publicly if they include live pairing details, private hostnames, or local paths you do not want to disclose.

@@ -69,7 +69,7 @@ For regular cross-device use, prefer a stable private network such as Tailscale 
 ## When To Read The Other Guides
 
 - If another device cannot reach the Mac, read [Tailscale setup](tailscale.md).
-- If you want a macOS status/menu bar control, read [Menu bar companion](menu-bar.md).
+- If you want a macOS status/menu bar control, read [Menu bar control](menu-bar.md).
 - If you want to understand each button, read [Operations guide](operations.md).
 - If you want to run your own relay or reverse proxy, read [Self-hosting Domaeng](self-hosting.md).
 - If you need commands, environment variables, or security notes, read [Advanced reference](reference.md).
@@ -95,7 +95,7 @@ domaeng stop
 domaeng up
 ```
 
-### The menu bar companion says the CLI is missing
+### The menu bar control says the CLI is missing
 
 Install the global bridge CLI first:
 
@@ -103,7 +103,7 @@ Install the global bridge CLI first:
 npm install -g domaeng@latest
 ```
 
-Then use the companion's Retry action.
+Then use the control's Retry action.
 
 ### You need to report a bug
 
