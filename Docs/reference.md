@@ -2,6 +2,14 @@
 
 This page keeps the details out of the front-page README. Start with [README.md](../README.md) if you only want the normal install path.
 
+## Related Guides
+
+- [Getting started](getting-started.md): first install, first pairing, and first successful run.
+- [Tailscale setup](tailscale.md): private cross-device access without hardcoded hosted-service assumptions.
+- [Menu bar companion](menu-bar.md): macOS status/menu bar controls and source-build notes.
+- [Operations guide](operations.md): user-facing explanations of common actions.
+- [Self-hosting Domaeng](self-hosting.md): local LAN, private relay, reverse proxy, and troubleshooting.
+
 ## Commands
 
 | Command | What it does |

@@ -35,6 +35,8 @@ The relay does not run Codex and does not get your plaintext application payload
 
 This is the easiest way to try the public repo, but on a separate device it should be treated as a best-effort local test path. The recommended self-host setup for regular use is Tailscale or another stable private network path to your relay.
 
+If you are new to Domaeng and only need a private cross-device path, start with [Tailscale setup](tailscale.md) before operating an internet-facing VPS relay.
+
 ### What you need
 
 - a Mac with Codex CLI installed
