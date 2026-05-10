@@ -1,8 +1,10 @@
 <p align="center">
-  <img src="assets/domaeng-og.png" alt="Domaeng" />
+  <img src="assets/domaeng-banner.png" alt="Domaeng web app preview banner" />
 </p>
 
 # Domaeng
+
+[中文说明](README.zh-CN.md)
 
 [![npm version](https://img.shields.io/npm/v/domaeng)](https://www.npmjs.com/package/domaeng)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
