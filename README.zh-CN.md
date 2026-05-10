@@ -47,6 +47,19 @@ domaeng up
 
 `Codex.app` 是可选的。Domaeng 可以和它共享本地线程历史，但 Web App 是直接控制 bridge。
 
+## 选择你的使用路径
+
+你不需要一上来读完整套文档。先按自己的场景选入口：
+
+| 目标 | 从这里开始 |
+| --- | --- |
+| 第一次安装并跑通 | [新手入门](Docs/zh-CN/getting-started.md) |
+| 手机或平板不在 Mac 同一个 Wi-Fi | [Tailscale 使用说明](Docs/zh-CN/tailscale.md) |
+| 从 macOS 状态栏/菜单栏控制 bridge | [菜单栏控制](Docs/zh-CN/menu-bar.md) |
+| 看懂每个按钮和操作的含义 | [操作功能说明](Docs/zh-CN/operations.md) |
+| 自己运行 relay 或反向代理 | [Self-hosting guide](Docs/self-hosting.md) |
+| 查看所有命令和环境变量 | [Advanced reference](Docs/reference.md) |
+
 ## 能做什么
 
 - 从 Web App 发起、调整、停止、恢复 Codex run
@@ -82,6 +95,8 @@ domaeng up
 
 使用 bridge 打印出来的 URL 和 QR。这是大多数用户最简单的路径。
 
+第一次使用时，可以按 [新手入门](Docs/zh-CN/getting-started.md) 一步一步走。
+
 ### 从源码运行
 
 ```sh
@@ -92,7 +107,7 @@ cd domaeng
 
 这个脚本会启动本地 relay，把 bridge 指向它，并打印 Web App 配对 QR。
 
-跨设备使用时，Tailscale 或其他稳定私有网络通常比普通 LAN 更顺。
+跨设备使用时，Tailscale 或其他稳定私有网络通常比普通 LAN 更顺。详见 [Tailscale 使用说明](Docs/zh-CN/tailscale.md)。
 
 ### 自托管 relay
 
@@ -108,13 +123,17 @@ cd domaeng
 | `phodex-bridge/` | `domaeng` CLI 背后的 Node.js bridge package |
 | `web/` | React + Vite Web/PWA client，由 relay 在 `/app/` 提供 |
 | `relay/` | 可自托管 WebSocket relay 和可选 push endpoints |
-| `CodexMobile/` | macOS 菜单栏 companion 源码和共享资源 |
-| `Docs/` | 自托管和高级参考文档 |
+| `CodexMobile/` | macOS 菜单栏控制源码和共享资源 |
+| `Docs/` | 新手指南、操作说明、自托管说明和高级参考文档 |
 
 ## 更多细节
 
 首页故意保持简短。需要深入配置时看这里：
 
+- [新手入门](Docs/zh-CN/getting-started.md)：第一次安装、第一次配对、第一次成功控制 Codex
+- [Tailscale 使用说明](Docs/zh-CN/tailscale.md)：用私有网络做跨设备访问，不引入硬编码托管服务假设
+- [菜单栏控制](Docs/zh-CN/menu-bar.md)：macOS 状态栏/菜单栏控制，以及可直接交给 Codex 的设置 prompt
+- [操作功能说明](Docs/zh-CN/operations.md)：Web App、bridge、配对、信任设备和 git 操作分别做什么
 - [Advanced reference](Docs/reference.md)：命令、环境变量、安全说明、集成、源码构建
 - [Self-hosting guide](Docs/self-hosting.md)：本地 LAN、VPS relay、反向代理、排障
 - [Self-hosting model](SELF_HOSTING_MODEL.md)：为什么公开源码保持 local-first 和通用配置
@@ -124,7 +143,7 @@ cd domaeng
 - `domaeng` bridge CLI：通过 `npm install -g domaeng@latest` 安装
 - Web App：由 bridge / relay 在 `/app/` 提供
 - 移动端 App：没有单独下载包，使用浏览器或 PWA
-- macOS 菜单栏 companion：目前只能从源码构建，还没有签名的 `.app`、`.dmg` 或 `.zip` GitHub Release
+- macOS 菜单栏控制：还没有签名的 `.app`、`.dmg` 或 `.zip` GitHub Release；按 [菜单栏控制](Docs/zh-CN/menu-bar.md) 里的 Codex prompt 设置
 
 ## 和 Remodex 的关系
 
