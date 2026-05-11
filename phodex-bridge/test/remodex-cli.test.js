@@ -61,7 +61,7 @@ test("domaeng restart reuses the macOS service start flow", async () => {
   ]);
 });
 
-test("domaeng up shows a startup indicator while waiting for the pairing QR", async () => {
+test("domaeng up shows a startup indicator while waiting for the pairing code", async () => {
   const calls = [];
   const messages = [];
 
@@ -95,7 +95,7 @@ test("domaeng up shows a startup indicator while waiting for the pairing QR", as
   });
 
   assert.deepEqual(messages, [
-    "[domaeng] Starting bridge and pairing QR...",
+    "[domaeng] Starting bridge and pairing code...",
     [
       "",
       "[domaeng] Domaeng is running in the background. You can close this Terminal window.",
@@ -118,7 +118,7 @@ test("domaeng up shows a startup indicator while waiting for the pairing QR", as
   ]);
   assert.deepEqual(calls, [
     ["start-service", { waitForPairing: true }],
-    ["print-qr", { pairingSession: { pairingPayload: { sessionId: "session-up" } } }],
+    ["print-qr", { pairingSession: { pairingPayload: { sessionId: "session-up" } }, showQRCode: false }],
   ]);
 });
 

@@ -86,12 +86,13 @@ async function main({
 
   if (command === "up") {
     if (platform === "darwin") {
-      consoleImpl.log("[domaeng] Starting bridge and pairing QR...");
+      consoleImpl.log("[domaeng] Starting bridge and pairing code...");
       const result = await deps.startMacOSBridgeService({
         waitForPairing: true,
       });
       deps.printMacOSBridgePairingQr({
         pairingSession: result.pairingSession,
+        showQRCode: false,
       });
       printUpManagementHelp({
         config: result.config,

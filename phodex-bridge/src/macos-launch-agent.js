@@ -265,14 +265,19 @@ function printMacOSBridgeServiceStatus(options = {}) {
   console.log(`[domaeng] Stderr log: ${status.stderrLogPath}`);
 }
 
-function printMacOSBridgePairingQr({ pairingSession = null, env = process.env, fsImpl = fs } = {}) {
+function printMacOSBridgePairingQr({
+  pairingSession = null,
+  env = process.env,
+  fsImpl = fs,
+  showQRCode = true,
+} = {}) {
   const nextPairingSession = pairingSession || readPairingSession({ env, fsImpl });
   const pairingPayload = nextPairingSession?.pairingPayload;
   if (!pairingPayload) {
     throw new Error("The macOS bridge service did not publish a pairing payload yet.");
   }
 
-  printQR(nextPairingSession);
+  printQR(nextPairingSession, { env, showQRCode });
 }
 
 // Persists a launch agent that always runs the Node CLI entrypoint in service mode.

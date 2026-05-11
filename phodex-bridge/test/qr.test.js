@@ -48,6 +48,29 @@ test("printQR does not print the full pairing JSON unless debug output is enable
   assert.doesNotMatch(output, /Pairing JSON/);
 });
 
+test("printQR can print a code-only first-run pairing prompt", () => {
+  const logs = captureConsoleLog(() => {
+    printQR({
+      pairingPayload: {
+        relay: "ws://127.0.0.1:9000/relay",
+        sessionId: "session-sensitive-long-value",
+        macDeviceId: "mac-123",
+        expiresAt: 1_900_000_000_000,
+      },
+      pairingCode: "ABCDEFGHJK",
+    }, {
+      env: {},
+      showQRCode: false,
+    });
+  });
+
+  const output = logs.join("\n");
+  assert.doesNotMatch(output, /Scan this QR with Domaeng Web/);
+  assert.match(output, /Paste this pairing code in Domaeng Web/);
+  assert.match(output, /ABCDEFGHJK/);
+  assert.doesNotMatch(output, /session-sensitive-long-value/);
+});
+
 test("printQR can print the pairing JSON for explicit debug workflows", () => {
   const logs = captureConsoleLog(() => {
     printQR({

@@ -237,6 +237,7 @@ function PairingScreen() {
   const setScannerOpen = useRemodexStore((state) => state.setScannerOpen);
   const relayEntries = relayEntryOptionsFromCurrentLocation();
   const previewAvailable = localPreviewModeAvailable();
+  const scannerAvailable = canUseCameraScanner();
 
   async function run(action: () => Promise<void>) {
     setLocalError("");
@@ -302,9 +303,11 @@ function PairingScreen() {
             <span>Code</span>
             <div className="code-input-row">
               <input value={pairingCode} onChange={(event) => setPairingCode(event.target.value.toUpperCase())} />
-              <button className="scan-icon-button" type="button" disabled={busy} onClick={() => setScannerOpen(true)} aria-label="Scan QR code" title="Scan QR code">
-                <QrCode size={20} />
-              </button>
+              {scannerAvailable ? (
+                <button className="scan-icon-button" type="button" disabled={busy} onClick={() => setScannerOpen(true)} aria-label="Scan QR code" title="Scan QR code">
+                  <QrCode size={20} />
+                </button>
+              ) : null}
             </div>
           </label>
 
@@ -330,7 +333,7 @@ function PairingScreen() {
 
         {localError || lastError ? <p className="error-text">{localError || lastError}</p> : null}
       </div>
-      {scannerOpen ? <QRScanner onClose={() => setScannerOpen(false)} onPayload={(value) => {
+      {scannerOpen && scannerAvailable ? <QRScanner onClose={() => setScannerOpen(false)} onPayload={(value) => {
         setScannerOpen(false);
         void run(() => connectFromPairingText(value));
       }} /> : null}
@@ -2509,6 +2512,10 @@ function threadIdFromCurrentURL(): string {
 }
 
 function canUseCameraScanner(): boolean {
+  if (typeof window === "undefined" || typeof navigator === "undefined") {
+    return false;
+  }
+
   return Boolean(
     window.isSecureContext
       && navigator.mediaDevices
