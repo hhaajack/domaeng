@@ -66,7 +66,7 @@ struct BridgeTrustedDevice: Codable, Equatable, Identifiable {
 
 enum BridgeClientCompatibility {
     static let supportedBridgeVersionInfoKey = "DomaengSupportedBridgeVersion"
-    static let fallbackSupportedBridgeVersion = "1.5.1"
+    static let fallbackSupportedBridgeVersion = "1.5.2"
 
     static var supportedBridgeVersion: String {
         if let configuredVersion = (Bundle.main.object(
