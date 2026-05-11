@@ -4,8 +4,8 @@
   "description": "Local bridge between Codex and the Domaeng web app. Run `domaeng up` to start.",
   "main": "src/index.js",
   "bin": {
-    "domaeng": "./bin/remodex.js",
-    "domaeng-jsonl-diagnose": "./bin/remodex-jsonl-diagnose.js"
+    "domaeng": "bin/remodex.js",
+    "domaeng-jsonl-diagnose": "bin/remodex-jsonl-diagnose.js"
   },
   "files": [
     "bin/",
