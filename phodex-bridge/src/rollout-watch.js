@@ -20,6 +20,9 @@ const DEFAULT_CONTEXT_READ_SCAN_BYTES = 512 * 1024;
 const DEFAULT_CONTEXT_READ_CANDIDATE_LIMIT = 128;
 const DEFAULT_RECENT_ROLLOUT_CANDIDATE_LIMIT = 24;
 const DEFAULT_RECENT_ROLLOUT_LOOKBACK_MS = 15 * 60 * 1000;
+const DEFAULT_RATE_LIMIT_READ_SCAN_BYTES = 512 * 1024;
+const DEFAULT_RATE_LIMIT_READ_CANDIDATE_LIMIT = 128;
+const DEFAULT_RATE_LIMIT_READ_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Polls one rollout file until it materializes and then reports size growth.
 function createThreadRolloutActivityWatcher({
@@ -634,6 +637,45 @@ function readRolloutUsageChunk({
   };
 }
 
+function readRolloutRateLimitsChunk({
+  filePath,
+  start,
+  endExclusive,
+  carry = "",
+  fsModule = fs,
+  skipLeadingPartial = false,
+} = {}) {
+  if (!filePath || endExclusive <= start) {
+    return { partialLine: carry, rateLimits: null };
+  }
+
+  const chunk = readFileSlice(filePath, start, endExclusive, fsModule);
+  if (!chunk) {
+    return { partialLine: carry, rateLimits: null };
+  }
+
+  const combined = `${carry}${chunk}`;
+  const lines = combined.split("\n");
+  const partialLine = lines.pop() || "";
+
+  if (skipLeadingPartial && lines.length > 0) {
+    lines.shift();
+  }
+
+  let latestRateLimits = null;
+  for (const line of lines) {
+    const rateLimits = extractRateLimitsFromRolloutLine(line);
+    if (rateLimits) {
+      latestRateLimits = rateLimits;
+    }
+  }
+
+  return {
+    partialLine,
+    rateLimits: latestRateLimits,
+  };
+}
+
 function readFileSlice(filePath, start, endExclusive, fsModule = fs) {
   const length = Math.max(0, endExclusive - start);
   if (length === 0) {
@@ -675,6 +717,31 @@ function extractContextUsageFromRolloutLine(rawLine) {
   return contextUsageFromTokenCountPayload(payload);
 }
 
+function extractRateLimitsFromRolloutLine(rawLine) {
+  const trimmed = rawLine.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+
+  if (parsed?.type !== "event_msg") {
+    return null;
+  }
+
+  const payload = parsed.payload;
+  if (!payload || typeof payload !== "object" || payload.type !== "token_count") {
+    return null;
+  }
+
+  return rateLimitsFromTokenCountPayload(payload);
+}
+
 function contextUsageFromTokenCountPayload(payload) {
   const info = payload?.info;
   if (!info || typeof info !== "object") {
@@ -705,6 +772,51 @@ function contextUsageFromTokenCountPayload(payload) {
     tokensUsed: Math.min(tokensUsed, tokenLimit),
     tokenLimit,
   };
+}
+
+function rateLimitsFromTokenCountPayload(payload) {
+  const snapshot = payload?.rate_limits || payload?.rateLimits;
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    return null;
+  }
+
+  if (!containsRateLimitSnapshotData(snapshot)) {
+    return null;
+  }
+
+  const limitId = firstNonEmptyString([
+    snapshot.limitId,
+    snapshot.limit_id,
+    snapshot.id,
+  ]) || "codex";
+
+  return {
+    rateLimits: snapshot,
+    rateLimitsByLimitId: {
+      [limitId]: snapshot,
+    },
+  };
+}
+
+function containsRateLimitSnapshotData(snapshot) {
+  return Boolean(
+    snapshot.primary
+      || snapshot.primary_window
+      || snapshot.secondary
+      || snapshot.secondary_window
+      || snapshot.credits
+      || snapshot.plan_type
+      || snapshot.planType
+  );
+}
+
+function firstNonEmptyString(values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return "";
 }
 
 function readPositiveInteger(value) {
@@ -789,6 +901,84 @@ function readLatestContextWindowUsage({
     : null;
 }
 
+function readLatestRateLimitsFromRollouts({
+  fsModule = fs,
+  scanBytes = DEFAULT_RATE_LIMIT_READ_SCAN_BYTES,
+  candidateLimit = DEFAULT_RATE_LIMIT_READ_CANDIDATE_LIMIT,
+  lookbackMs = DEFAULT_RATE_LIMIT_READ_LOOKBACK_MS,
+  now = () => Date.now(),
+} = {}) {
+  const rolloutRoot = resolveSessionsRoot();
+  const currentTime = now();
+  const candidates = collectRecentRolloutFiles(rolloutRoot, {
+    fsModule,
+    candidateLimit,
+    modifiedAfterMs: lookbackMs > 0 ? currentTime - lookbackMs : 0,
+  });
+
+  for (const candidate of candidates) {
+    const stat = fsModule.statSync(candidate.filePath);
+    const boundedStart = Math.max(0, stat.size - Math.min(stat.size, scanBytes));
+    let result = readRolloutRateLimitsChunk({
+      filePath: candidate.filePath,
+      start: boundedStart,
+      endExclusive: stat.size,
+      fsModule,
+      skipLeadingPartial: boundedStart > 0,
+    });
+
+    if (!result.rateLimits && boundedStart > 0) {
+      result = readRolloutRateLimitsChunk({
+        filePath: candidate.filePath,
+        start: 0,
+        endExclusive: stat.size,
+        fsModule,
+      });
+    }
+
+    if (result.rateLimits && rateLimitsAreStillCurrent(result.rateLimits, currentTime)) {
+      return {
+        rolloutPath: candidate.filePath,
+        ...result.rateLimits,
+      };
+    }
+  }
+
+  return null;
+}
+
+function rateLimitsAreStillCurrent(rateLimitsResponse, nowMs) {
+  const snapshots = Object.values(rateLimitsResponse?.rateLimitsByLimitId || {});
+  if (rateLimitsResponse?.rateLimits) {
+    snapshots.push(rateLimitsResponse.rateLimits);
+  }
+
+  const resetTimes = snapshots.flatMap((snapshot) => [
+    readWindowResetTimestampMs(snapshot?.primary ?? snapshot?.primary_window),
+    readWindowResetTimestampMs(snapshot?.secondary ?? snapshot?.secondary_window),
+  ]).filter((value) => value != null);
+
+  if (!resetTimes.length) {
+    return true;
+  }
+
+  return resetTimes.some((resetTime) => resetTime > nowMs);
+}
+
+function readWindowResetTimestampMs(window) {
+  return readResetTimestampMs(
+    window?.resetsAt ?? window?.resets_at ?? window?.resetAt ?? window?.reset_at
+  );
+}
+
+function readResetTimestampMs(value) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+
+  return value > 10_000_000_000 ? value : value * 1_000;
+}
+
 function formatTimestamp(value) {
   if (!value || typeof value !== "string") {
     return "[time?]";
@@ -827,7 +1017,9 @@ module.exports = {
   watchThreadRollout,
   createThreadRolloutActivityWatcher,
   contextUsageFromTokenCountPayload,
+  rateLimitsFromTokenCountPayload,
   readLatestContextWindowUsage,
+  readLatestRateLimitsFromRollouts,
   resolveSessionsRoot,
   findRolloutFileForThread,
   findRecentRolloutFileForContextRead,

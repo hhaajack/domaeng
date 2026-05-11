@@ -15,6 +15,8 @@ const {
   contextUsageFromTokenCountPayload,
   createThreadRolloutActivityWatcher,
   readLatestContextWindowUsage,
+  readLatestRateLimitsFromRollouts,
+  rateLimitsFromTokenCountPayload,
 } = require("../src/rollout-watch");
 
 test("contextUsageFromTokenCountPayload prefers last_token_usage totals", () => {
@@ -34,6 +36,102 @@ test("contextUsageFromTokenCountPayload prefers last_token_usage totals", () => 
     tokensUsed: 200_930,
     tokenLimit: 258_400,
   });
+});
+
+test("rateLimitsFromTokenCountPayload exposes rollout rate limit snapshots by limit id", () => {
+  const rateLimits = rateLimitsFromTokenCountPayload({
+    rate_limits: {
+      limit_id: "codex",
+      primary: {
+        used_percent: 25,
+        window_minutes: 300,
+        resets_at: 1_777_000_000,
+      },
+      secondary: {
+        used_percent: 10,
+        window_minutes: 10_080,
+        resets_at: 1_778_000_000,
+      },
+      plan_type: "plus",
+    },
+  });
+
+  assert.deepEqual(rateLimits, {
+    rateLimits: {
+      limit_id: "codex",
+      primary: {
+        used_percent: 25,
+        window_minutes: 300,
+        resets_at: 1_777_000_000,
+      },
+      secondary: {
+        used_percent: 10,
+        window_minutes: 10_080,
+        resets_at: 1_778_000_000,
+      },
+      plan_type: "plus",
+    },
+    rateLimitsByLimitId: {
+      codex: {
+        limit_id: "codex",
+        primary: {
+          used_percent: 25,
+          window_minutes: 300,
+          resets_at: 1_777_000_000,
+        },
+        secondary: {
+          used_percent: 10,
+          window_minutes: 10_080,
+          resets_at: 1_778_000_000,
+        },
+        plan_type: "plus",
+      },
+    },
+  });
+});
+
+test("readLatestRateLimitsFromRollouts skips expired snapshots and returns a current local fallback", (t) => {
+  const { homeDir, threadDir } = makeTemporarySessionsHome();
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = homeDir;
+  t.after(() => {
+    restoreCodexHome(previousCodexHome);
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  const nowMs = Date.parse("2026-03-05T13:30:00.000Z");
+  const freshPath = path.join(threadDir, "rollout-2026-03-05T13-20-00-thread-fresh.jsonl");
+  const expiredPath = path.join(threadDir, "rollout-2026-03-05T13-25-00-thread-expired.jsonl");
+
+  writeRolloutFile(freshPath, {
+    rateLimits: {
+      limit_id: "codex",
+      primary: {
+        used_percent: 42,
+        window_minutes: 300,
+        resets_at: Math.floor((nowMs + 60_000) / 1_000),
+      },
+    },
+  });
+  writeRolloutFile(expiredPath, {
+    rateLimits: {
+      limit_id: "codex",
+      primary: {
+        used_percent: 99,
+        window_minutes: 300,
+        resets_at: Math.floor((nowMs - 60_000) / 1_000),
+      },
+    },
+  });
+  setFileMTime(freshPath, nowMs - 2_000);
+  setFileMTime(expiredPath, nowMs - 1_000);
+
+  const result = readLatestRateLimitsFromRollouts({
+    now: () => nowMs,
+  });
+
+  assert.equal(result.rolloutPath, freshPath);
+  assert.equal(result.rateLimits.primary.used_percent, 42);
 });
 
 test("watcher falls back to the thread-scoped rollout when turn id is unavailable", async (t) => {
@@ -276,7 +374,12 @@ function makeTemporarySessionsHome() {
   return { homeDir, threadDir };
 }
 
-function writeRolloutFile(filePath, { turnId, tokensUsed, tokenLimit }) {
+function writeRolloutFile(filePath, {
+  turnId = "turn-test",
+  tokensUsed = 0,
+  tokenLimit = 1_000,
+  rateLimits = null,
+}) {
   const lines = [
     JSON.stringify({
       timestamp: "2026-03-05T13:23:27.971Z",
@@ -298,6 +401,7 @@ function writeRolloutFile(filePath, { turnId, tokensUsed, tokenLimit }) {
           },
           model_context_window: tokenLimit,
         },
+        ...(rateLimits ? { rate_limits: rateLimits } : {}),
       },
     }),
     "",

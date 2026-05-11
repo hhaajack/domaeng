@@ -42,6 +42,10 @@ const { createVoiceHandler, resolveVoiceAuth } = require("./voice-handler");
 const {
   composeSanitizedAuthStatusFromSettledResults,
 } = require("./account-status");
+const {
+  handleAccountRateLimitsRequest,
+  handleChatgptAuthTokensRefreshRequest,
+} = require("./account-rate-limits-handler");
 const { createBridgePackageVersionStatusReader } = require("./package-version-status");
 const { createPushNotificationServiceClient } = require("./push-notification-service-client");
 const { createPushNotificationTracker } = require("./push-notification-tracker");
@@ -615,6 +619,9 @@ function startBridge({
     if (handleBridgeManagedCodexResponse(message)) {
       return;
     }
+    if (handleChatgptAuthTokensRefreshRequest(message, (response) => codex.send(response))) {
+      return;
+    }
     updatePendingAuthLoginFromCodexMessage(message);
     trackCodexHandshakeState(message);
     desktopRefresher.handleOutbound(message);
@@ -680,6 +687,11 @@ function startBridge({
       return;
     }
     if (handleBridgeManagedAccountRequest(rawMessage, sendApplicationResponse)) {
+      return;
+    }
+    if (handleAccountRateLimitsRequest(rawMessage, sendApplicationResponse, {
+      readLiveRateLimits: () => sendCodexRequest("account/rateLimits/read", undefined),
+    })) {
       return;
     }
     if (voiceHandler.handleVoiceRequest(rawMessage, sendApplicationResponse)) {
