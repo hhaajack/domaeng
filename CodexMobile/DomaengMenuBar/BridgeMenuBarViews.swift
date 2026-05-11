@@ -396,9 +396,7 @@ struct BridgeControlCenterWindow: View {
                         store.saveTailscaleHostOverride(tailscaleHostDraft)
                     }
                     CompactActionButton("Auto Detect", style: .secondary) {
-                        tailscaleHostDraft = ""
-                        store.clearTailscaleHostOverride()
-                        Task { await store.refresh(showSpinner: true) }
+                        store.autoDetectTailscaleHost()
                     }
                 }
             }

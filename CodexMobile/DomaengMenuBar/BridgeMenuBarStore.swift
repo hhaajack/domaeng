@@ -106,6 +106,43 @@ final class BridgeMenuBarStore: ObservableObject {
         saveTailscaleHostOverride("")
     }
 
+    func autoDetectTailscaleHost() {
+        guard !isPerformingAction else {
+            return
+        }
+
+        isPerformingAction = true
+        transientMessage = ""
+        errorMessage = ""
+
+        Task {
+            defer {
+                self.isPerformingAction = false
+            }
+
+            do {
+                try await self.requireCLIAvailability()
+                let detectedHost = await self.service.detectTailscaleDNSName(allowPreferenceLookup: true)
+                let normalizedHost = Self.normalizeTailscaleHost(detectedHost ?? "")
+                self.tailscaleHostOverride = normalizedHost
+                if normalizedHost.isEmpty {
+                    UserDefaults.standard.removeObject(forKey: Self.tailscaleHostOverrideKey)
+                    self.transientMessage = "No Tailscale address detected. Paste it manually if needed."
+                } else {
+                    UserDefaults.standard.set(normalizedHost, forKey: Self.tailscaleHostOverrideKey)
+                    self.transientMessage = "Tailscale address detected."
+                }
+                _ = try await self.performRefresh(
+                    showSpinner: false,
+                    clearSnapshotOnFailure: false,
+                    forceCLIRefresh: false
+                )
+            } catch {
+                self.errorMessage = error.localizedDescription
+            }
+        }
+    }
+
     private func applyRelayOverride(_ value: String, successMessage: String) {
         let normalizedRelay = value.trimmingCharacters(in: .whitespacesAndNewlines)
         let expectedRelay = normalizedRelay.isEmpty ? nil : normalizedRelay

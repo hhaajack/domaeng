@@ -269,6 +269,10 @@ final class BridgeControlService {
         )
     }
 
+    func detectTailscaleDNSName(allowPreferenceLookup: Bool = false) async -> String? {
+        await tailscaleDNSName(allowPreferenceLookup: allowPreferenceLookup)
+    }
+
     private func parseVersion(_ output: String) -> String? {
         guard !output.isEmpty else {
             return nil
@@ -351,8 +355,9 @@ final class BridgeControlService {
         )
     }
 
-    private func tailscaleDNSName() async -> String? {
-        if let cachedTailscaleDNSName,
+    private func tailscaleDNSName(allowPreferenceLookup: Bool = false) async -> String? {
+        if !allowPreferenceLookup,
+           let cachedTailscaleDNSName,
            Date().timeIntervalSince(cachedTailscaleDNSName.checkedAt) < cliCacheTTL {
             return nonEmptyTrimmed(cachedTailscaleDNSName.value)
         }
@@ -360,10 +365,12 @@ final class BridgeControlService {
         let detectedDNSName: String?
         if let cliDNSName = await tailscaleDNSNameFromCLI() {
             detectedDNSName = cliDNSName
-        } else if let defaultsDNSName = await tailscaleDNSNameFromDefaults() {
+        } else if allowPreferenceLookup, let defaultsDNSName = await tailscaleDNSNameFromDefaults() {
             detectedDNSName = defaultsDNSName
-        } else {
+        } else if allowPreferenceLookup {
             detectedDNSName = tailscaleDNSNameFromCachedProfile()
+        } else {
+            detectedDNSName = nil
         }
 
         if let dnsName = detectedDNSName {
