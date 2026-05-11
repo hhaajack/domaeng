@@ -20,6 +20,7 @@ const DEFAULT_CUSTOM_REFRESH_FAILURE_THRESHOLD = 3;
 const DEFAULT_COMPLETION_REFRESH_MODE = "remount";
 const DEFAULT_RELAUNCH_WAIT_MS = 300;
 const DEFAULT_APP_BOOT_WAIT_MS = 1_200;
+const DEFAULT_LOCAL_RELAY_URL = "ws://127.0.0.1:9000/relay";
 const DESKTOP_REFRESH_TIMEOUT_MS = 20_000;
 const REFRESH_SCRIPT_PATH = path.join(__dirname, "scripts", "codex-refresh.applescript");
 const NEW_THREAD_DEEP_LINK = "codex://threads/new";
@@ -553,10 +554,13 @@ function readBridgeConfig({
   const daemonConfig = readDaemonConfig({ env, fsImpl }) || {};
   const privateDefaults = readPrivatePackageDefaults({ runtimeRoot, fsImpl });
   const sourceCheckout = isSourceCheckout(runtimeRoot, fsImpl);
+  const bundledLocalRelayUrl = !sourceCheckout && hasBundledLocalRelay({ runtimeRoot, fsImpl })
+    ? DEFAULT_LOCAL_RELAY_URL
+    : "";
   const persistedRelayUrl = readString(daemonConfig.relayUrl) || "";
   const defaultRelayUrl = sourceCheckout
     ? ""
-    : privateDefaults.relayUrl;
+    : (privateDefaults.relayUrl || bundledLocalRelayUrl);
   const explicitRelayUrl = readFirstDefinedEnv(
     ["DOMAENG_RELAY", "REMODEX_RELAY", "PHODEX_RELAY"],
     "",
@@ -692,6 +696,10 @@ function pushServiceUrlFromRelayUrl(value) {
   } catch {
     return "";
   }
+}
+
+function hasBundledLocalRelay({ runtimeRoot, fsImpl }) {
+  return fsImpl.existsSync(path.join(runtimeRoot, "bundled", "relay", "server.js"));
 }
 
 // Keeps repo checkouts local-first while published npm installs can stay ready-to-run.

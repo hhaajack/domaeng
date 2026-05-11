@@ -24,6 +24,7 @@ build/
 *.cer
 CodexMobile/BuildSupport/PrivateOverrides.xcconfig
 phodex-bridge/src/private-defaults.json
+phodex-bridge/bundled/
 security_best_practices_report.md
 
 # Build artifacts

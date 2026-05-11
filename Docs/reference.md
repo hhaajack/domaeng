@@ -6,7 +6,7 @@ This page keeps the details out of the front-page README. Start with [README.md]
 
 - [Getting started](getting-started.md): first install, first pairing, and first successful run.
 - [Tailscale setup](tailscale.md): private cross-device access without hardcoded hosted-service assumptions.
-- [Menu bar control](menu-bar.md): macOS status/menu bar controls and a Codex setup prompt.
+- [Menu bar control](menu-bar.md): optional macOS status/menu bar controls, unsigned app notes, and source setup prompt.
 - [Operations guide](operations.md): user-facing explanations of common actions.
 - [Self-hosting Domaeng](self-hosting.md): local LAN, private relay, reverse proxy, and troubleshooting.
 
@@ -22,12 +22,15 @@ This page keeps the details out of the front-page README. Start with [README.md]
 | `domaeng reset-pairing` | Clear local pairing state when you intentionally want to trust a new client. |
 | `domaeng resume` | Reopen the most recently active thread in `Codex.app`. |
 | `domaeng watch [threadId]` | Watch local rollout updates for a thread. |
+| `domaeng menubar status` | Check whether the optional macOS menu bar app is bundled or installed. |
+| `domaeng menubar install` | Install the optional unsigned `DomaengMenuBar.app` to `~/Applications`. |
+| `domaeng menubar open` | Open the optional menu bar app. |
 
 ## Environment Variables
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `DOMAENG_RELAY` | Empty in source checkouts | Relay URL used for QR bootstrap, trusted-session resolve, and client/Mac routing. Set this for local testing or self-hosting. |
+| `DOMAENG_RELAY` | Local bundled relay in npm installs, empty in source checkouts | Relay URL used for QR bootstrap, trusted-session resolve, and client/Mac routing. Set this for Tailscale or self-hosting. |
 | `DOMAENG_CODEX_ENDPOINT` | Empty | Connect to an existing Codex WebSocket instead of spawning a local `codex app-server`. |
 | `DOMAENG_SHARED_CODEX_RUNTIME` | `true` on macOS | Start the bridge-owned Codex runtime as a localhost WebSocket app-server. |
 | `DOMAENG_SHARED_CODEX_RUNTIME_PORT` | `0` | Localhost port for the shared Codex runtime. `0` chooses a free port. |
@@ -85,4 +88,4 @@ If npm reports a user-cache ownership error, retry with a temporary cache:
 npm --cache /private/tmp/domaeng-npm-cache install -g ./phodex-bridge
 ```
 
-The macOS menu bar control source lives in `CodexMobile/`. The public repo does not publish a signed `.app`, `.dmg`, or `.zip` release yet; user-facing setup guidance lives in [Menu bar control](menu-bar.md), while maintainer build details live in [CONTRIBUTING.md](../CONTRIBUTING.md).
+The macOS menu bar control source lives in `CodexMobile/`. npm builds can include an optional `DomaengMenuBar.app`, but it is unsigned/adhoc-signed and not notarized. User-facing setup guidance lives in [Menu bar control](menu-bar.md), while maintainer build details live in [CONTRIBUTING.md](../CONTRIBUTING.md).

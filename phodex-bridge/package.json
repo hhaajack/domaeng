@@ -1,6 +1,6 @@
 {
   "name": "domaeng",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "Local bridge between Codex and the Domaeng web app. Run `domaeng up` to start.",
   "main": "src/index.js",
   "bin": {
@@ -9,6 +9,7 @@
   },
   "files": [
     "bin/",
+    "bundled/",
     "src/",
     "README.md",
     "LICENSE",
@@ -18,8 +19,8 @@
     "start": "node ./bin/remodex.js up",
     "test": "node --test ./test/*.test.js",
     "postinstall": "node ./src/bootstrap-codex-cli.js",
-    "prepack": "node ./scripts/prepare-private-defaults.js",
-    "postpack": "node ./scripts/cleanup-private-defaults.js"
+    "prepack": "node ./scripts/prepare-private-defaults.js && node ./scripts/prepare-bundled-assets.js",
+    "postpack": "node ./scripts/cleanup-private-defaults.js && node ./scripts/cleanup-bundled-assets.js"
   },
   "keywords": [
     "domaeng",
@@ -35,6 +36,7 @@
   "type": "commonjs",
   "dependencies": {
     "qrcode-terminal": "^0.12.0",
+    "web-push": "^3.6.7",
     "ws": "^8.19.0"
   }
 }

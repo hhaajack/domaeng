@@ -154,6 +154,11 @@ function resolveRelayServerModule({
     return override;
   }
 
+  const bundledRelayModule = path.join(runtimeRoot, "bundled", "relay", "server.js");
+  if (fsImpl.existsSync(bundledRelayModule)) {
+    return bundledRelayModule;
+  }
+
   const repoRoot = path.resolve(runtimeRoot, "..");
   const sourceRelayModule = path.join(repoRoot, "relay", "server.js");
   if (fsImpl.existsSync(sourceRelayModule)) {
@@ -171,6 +176,11 @@ function resolveWebAppDir({
   const override = normalizeNonEmptyString(env.DOMAENG_WEB_APP_DIR || env.REMODEX_WEB_APP_DIR);
   if (override) {
     return override;
+  }
+
+  const bundledWebDist = path.join(runtimeRoot, "bundled", "web");
+  if (fsImpl.existsSync(bundledWebDist)) {
+    return bundledWebDist;
   }
 
   const repoWebDist = path.join(path.resolve(runtimeRoot, ".."), "web", "dist");

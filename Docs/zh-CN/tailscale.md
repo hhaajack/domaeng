@@ -55,7 +55,7 @@ macOS 菜单栏控制的 Connection 区域可以辅助这个流程：
 
 ## 搭配 CLI
 
-如果直接使用已安装的 CLI，把 bridge 指向可达的 relay URL：
+如果你使用 npm 安装好的 CLI，把 bridge 指向可达的 relay URL：
 
 ```sh
 DOMAENG_RELAY="wss://your-mac.your-tailnet.ts.net/relay" domaeng up

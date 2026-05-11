@@ -4,7 +4,36 @@ The menu bar control is the small Domaeng control center that lives in the macOS
 
 It is optional. You can use Domaeng entirely from the CLI and Web App.
 
-Current packaging status: the public repo does not publish a signed `.app`, `.dmg`, or `.zip` release yet. For now, the friendliest path is to ask Codex to set it up from this local checkout instead of following manual Xcode build steps.
+Packaging status: the npm package can include an optional `DomaengMenuBar.app`, but it is unsigned/adhoc-signed and not notarized. macOS may block it the first time you open it. That is expected for now.
+
+If you do not want a menu bar control, skip this page. `domaeng up` is enough for the normal CLI + Web App path.
+
+## Install From npm
+
+First install the normal CLI:
+
+```sh
+npm install -g domaeng@latest
+```
+
+Then check whether this npm build contains the optional app:
+
+```sh
+domaeng menubar status
+```
+
+If it reports a bundled app, install and open it:
+
+```sh
+domaeng menubar install
+domaeng menubar open
+```
+
+By default this copies the app to `~/Applications/DomaengMenuBar.app`.
+
+Because the app is unsigned/adhoc-signed, macOS can show a warning such as "cannot be opened because the developer cannot be verified." If that happens, open **System Settings -> Privacy & Security**, allow the blocked app, then open it again. You can also Control-click the app in Finder and choose **Open**.
+
+This warning is about Apple signing/notarization only. It does not mean the app uses a hosted Domaeng service. The bridge, relay, and Codex runtime still run locally unless you explicitly configure your own remote relay.
 
 ## What It Does
 
@@ -20,9 +49,9 @@ The menu bar control wraps the existing local `domaeng` CLI. It can:
 
 It does not replace Codex, and it does not run a hosted service. The bridge and Codex runtime still run locally on your Mac.
 
-## Recommended Setup Prompt
+## Source Setup Prompt
 
-Open Codex in this repository and paste this prompt:
+If the npm build does not include the app yet, or you are developing from a source checkout, open Codex in this repository and paste this prompt:
 
 ```text
 Set up the Domaeng macOS menu bar control from this local repository.

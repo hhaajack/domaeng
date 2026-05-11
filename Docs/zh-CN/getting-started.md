@@ -7,12 +7,13 @@ Domaeng 是 local-first：
 - Codex 运行在你的 Mac 上。
 - git 和 workspace 操作也在你的 Mac 上执行。
 - 浏览器只是遥控器。
-- relay 只负责配对、重连和加密控制流量的传输。
+- 本地 relay 只负责配对、重连和加密控制流量的传输。
 
 ## 你需要什么
 
 - 一台负责运行 Codex 和 Domaeng 的 Mac。
 - Node.js 18 或更新版本。
+- shell 里能使用 npm。
 - Codex CLI 已安装，并且在 shell 的 `PATH` 里。
 - 一个能访问 relay 或私有网络的浏览器。
 
@@ -20,14 +21,14 @@ Domaeng 是 local-first：
 
 ## 最短路径
 
-在负责运行 Codex 的 Mac 上安装 bridge CLI：
+先在负责运行 Codex 的 Mac 上安装 bridge CLI：
 
 ```sh
 npm install -g domaeng@latest
 domaeng up
 ```
 
-`domaeng up` 会启动本地 bridge 流程，并在需要配对时打印 Web App URL、QR 或配对码。
+`domaeng up` 会启动本地 relay 和 bridge service，并打印 Web App URL、QR 或配对码。
 
 打开打印出来的 Web App URL，通常是 `/app/` 路径，然后扫码或输入配对码。
 
@@ -52,17 +53,28 @@ domaeng up
 
 这些都正常，就说明基础路径跑通了。
 
-## 从源码运行
+## 可选：已有 relay 时直接用 CLI
 
-如果你是 clone 仓库而不是安装 npm 包：
+如果你已经有可访问的 relay、Tailscale endpoint 或反向代理，可以直接使用 npm 安装好的 CLI：
+
+```sh
+DOMAENG_RELAY="wss://your-relay.example.com/relay" domaeng up
+```
+
+在 macOS 上，`domaeng up` 会走 launchd-backed bridge 路径。
+
+## 可选：源码 CLI
+
+如果你在 checkout 里开发，并且想使用源码版本的 `domaeng` 命令：
 
 ```sh
 git clone https://github.com/hhaajack/domaeng.git
 cd domaeng
-./run-local-domaeng.sh
+npm install -g ./phodex-bridge
+domaeng up
 ```
 
-这个 launcher 会启动本地 relay，把 bridge 指向它，并打印配对信息。
+第一次尝试时，源码 launcher 仍然更顺，因为它会把本地 relay 和前台 bridge 一起启动。
 
 如果经常跨设备使用，建议优先用 Tailscale 这类稳定私有网络，而不是只依赖普通 LAN。详见 [Tailscale 使用说明](tailscale.md)。
 
@@ -82,7 +94,7 @@ cd domaeng
 
 ### QR 或配对码没有出现、过期了
 
-运行：
+如果你安装了本地 CLI，可以运行：
 
 ```sh
 domaeng renew-pairing
@@ -97,10 +109,17 @@ domaeng up
 
 ### 菜单栏控制提示 CLI missing
 
-先安装全局 CLI：
+先安装 bridge CLI：
 
 ```sh
 npm install -g domaeng@latest
+```
+
+如果你在 checkout 里开发，也可以安装本地源码版本：
+
+```sh
+cd domaeng
+npm install -g ./phodex-bridge
 ```
 
 然后在菜单栏控制里点 Retry。

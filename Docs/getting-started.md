@@ -7,12 +7,13 @@ Domaeng is local-first:
 - Codex runs on your Mac.
 - Git and workspace actions run on your Mac.
 - Your browser is the remote control.
-- The relay only moves pairing, reconnect, and encrypted control traffic.
+- The local relay only moves pairing, reconnect, and encrypted control traffic.
 
 ## What You Need
 
 - A Mac that will host Codex and Domaeng.
 - Node.js 18 or newer.
+- npm available in your shell.
 - Codex CLI installed and available in your shell `PATH`.
 - A browser on the same Mac or on a device that can reach your relay/private network.
 
@@ -27,7 +28,7 @@ npm install -g domaeng@latest
 domaeng up
 ```
 
-`domaeng up` starts the local bridge flow and prints the Web App URL plus QR or pairing information when pairing is needed.
+`domaeng up` starts the local relay and bridge service, then prints the Web App URL plus QR or pairing information.
 
 Open the printed Web App URL, usually the `/app/` route, then scan the QR code or enter the pairing code.
 
@@ -52,17 +53,28 @@ You should see:
 
 If you can do those things, the basic setup is working.
 
-## Run From Source
+## Optional Existing-Relay CLI
 
-If you cloned the repository instead of installing the npm package:
+If you already have a reachable relay, Tailscale endpoint, or reverse proxy, you can use the npm-installed CLI directly:
+
+```sh
+DOMAENG_RELAY="wss://your-relay.example.com/relay" domaeng up
+```
+
+On macOS, `domaeng up` uses the launchd-backed bridge path.
+
+## Optional Source CLI
+
+If you are developing from a checkout and want the source version of the `domaeng` command:
 
 ```sh
 git clone https://github.com/hhaajack/domaeng.git
 cd domaeng
-./run-local-domaeng.sh
+npm install -g ./phodex-bridge
+domaeng up
 ```
 
-The launcher starts a local relay, points the bridge at it, and prints pairing details.
+For a first try, the source launcher is still the smoother route because it starts the local relay and foreground bridge together.
 
 For regular cross-device use, prefer a stable private network such as Tailscale over plain best-effort LAN discovery. See [Tailscale setup](tailscale.md).
 
@@ -82,7 +94,7 @@ Make sure the URL is reachable from that device. A URL that works on the Mac is 
 
 ### Pairing details are missing or expired
 
-Run:
+If you installed the local CLI, run:
 
 ```sh
 domaeng renew-pairing
@@ -97,10 +109,17 @@ domaeng up
 
 ### The menu bar control says the CLI is missing
 
-Install the global bridge CLI first:
+Install the bridge CLI first:
 
 ```sh
 npm install -g domaeng@latest
+```
+
+If you are developing from a checkout, install the local source version instead:
+
+```sh
+cd domaeng
+npm install -g ./phodex-bridge
 ```
 
 Then use the control's Retry action.

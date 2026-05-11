@@ -12,7 +12,7 @@ This document intentionally avoids any private hosted-service details. If you ar
 The public source tree is local-first and self-host friendly:
 
 - there is no public production relay baked into the GitHub source
-- local pairing should work out of the box with `./run-local-domaeng.sh`
+- local pairing should work out of the box with `npm install -g domaeng@latest` and `domaeng up`
 - internet-facing manual bridge setups should pass their own relay URL explicitly with `DOMAENG_RELAY`; source-checkout launcher setups can pass it with `./run-local-domaeng.sh --relay-url`
 - the first QR scan bootstraps trust, then later reconnects can reuse the same trusted Mac through that relay
 - the built-in background daemon for trusted reconnect is currently macOS-only
@@ -45,6 +45,21 @@ If you are new to Domaeng and only need a private cross-device path, start with 
 
 ### Start everything locally
 
+For a normal local run, use the npm package:
+
+```sh
+npm install -g domaeng@latest
+domaeng up
+```
+
+What this does:
+
+- starts the bundled local relay on your machine
+- starts the Domaeng bridge
+- prints the Web App URL and a pairing QR/code for first-time trust bootstrap or recovery
+
+If you are developing from a source checkout, use the repository launcher instead.
+
 From the repo root:
 
 ```sh
@@ -55,9 +70,9 @@ cd domaeng
 
 What this does:
 
-- starts a local relay on your machine
-- starts the Domaeng bridge
-- prints a pairing QR code for first-time trust bootstrap or recovery
+- starts the source-checkout local relay on your machine
+- starts the source-checkout Domaeng bridge
+- prints the Web App URL and a pairing QR/code for first-time trust bootstrap or recovery
 
 Then:
 
@@ -200,7 +215,7 @@ After the first successful scan:
 
 Today, that background-service path is built in for macOS. If you self-host against a non-macOS bridge, pairing and relay routing still work, but you must manage persistence/background service behavior yourself.
 
-If you install the bridge from npm and do not use the local launcher, make sure you export `DOMAENG_RELAY` before running `domaeng up`.
+If you use the npm-installed CLI without setting `DOMAENG_RELAY`, Domaeng uses the bundled local relay. If you want a VPS, Tailscale, tunnel, or reverse-proxied relay instead, export `DOMAENG_RELAY` before running `domaeng up`.
 
 ## Push Notifications
 
