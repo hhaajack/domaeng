@@ -200,7 +200,7 @@ After the first successful scan:
 
 Today, that background-service path is built in for macOS. If you self-host against a non-macOS bridge, pairing and relay routing still work, but you must manage persistence/background service behavior yourself.
 
-If you install the bridge from npm and do not use the local launcher, make sure you export `DOMAENG_RELAY` before running `domaeng up`.
+If you install the local bridge CLI from this checkout and do not use the local launcher, make sure you export `DOMAENG_RELAY` before running `domaeng up`.
 
 ## Push Notifications
 

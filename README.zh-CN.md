@@ -25,14 +25,22 @@ Domaeng 让你从任意配对浏览器控制 [Codex](https://openai.com/index/co
 
 ## 安装
 
-目前 GitHub 项目页还没有提供签名好的 Release build，例如 `.app`、`.dmg` 或 `.zip`。当前用户安装路径是 npm bridge CLI：
+先在负责 host Codex 的 Mac 上安装 bridge CLI：
 
 ```sh
 npm install -g domaeng@latest
-domaeng up
+domaeng --version
 ```
 
-这一步装在负责 host Codex 的 Mac 上。`domaeng up` 会启动 bridge，并打印 Web App 的 URL / QR 配对信息。
+CLI 需要一个 relay URL 才能让浏览器配对。第一次本地跑通时，最适合新手的路径仍然是仓库里的 launcher，因为它会把本地 relay 和 bridge 一起启动：
+
+```sh
+git clone https://github.com/hhaajack/domaeng.git
+cd domaeng
+./run-local-domaeng.sh
+```
+
+这一步在负责 host Codex 的 Mac 上运行。launcher 会在需要时安装本地 package 依赖，并打印 Web App 的 URL / QR 配对信息。
 
 在另一台设备上，打开 relay 提供的 `/app/` Web App，然后扫码或输入配对码。
 
@@ -42,6 +50,7 @@ domaeng up
 
 - 一台负责运行 Codex 和 Domaeng bridge 的 Mac
 - Node.js 18+
+- shell 里能使用 npm、git 和 curl
 - Codex CLI 已安装，并且在 `PATH` 里
 - 任意能访问你的 relay 或私有网络的设备浏览器
 
@@ -77,7 +86,7 @@ domaeng up
   <img src="assets/architecture.zh-CN.svg" alt="Domaeng 本地优先架构图" width="720" />
 </p>
 
-1. 在负责 host Codex 的 Mac 上运行 `domaeng up`。
+1. 在负责 host Codex 的 Mac 上运行 `./run-local-domaeng.sh`，或者在设置了 `DOMAENG_RELAY` 的情况下运行 `domaeng up`。
 2. 从任意设备打开 relay 提供的 Web App。
 3. 用 QR 或配对码完成一次配对。
 4. 浏览器把加密指令发给 Mac bridge。
@@ -88,16 +97,13 @@ domaeng up
 
 ### 普通用户
 
+安装 CLI：
+
 ```sh
 npm install -g domaeng@latest
-domaeng up
 ```
 
-使用 bridge 打印出来的 URL 和 QR。这是大多数用户最简单的路径。
-
-第一次使用时，可以按 [新手入门](Docs/zh-CN/getting-started.md) 一步一步走。
-
-### 从源码运行
+第一次用本地 relay 跑通：
 
 ```sh
 git clone https://github.com/hhaajack/domaeng.git
@@ -105,7 +111,28 @@ cd domaeng
 ./run-local-domaeng.sh
 ```
 
-这个脚本会启动本地 relay，把 bridge 指向它，并打印 Web App 配对 QR。
+使用 launcher 打印出来的 URL 和 QR。对第一次使用的人来说，这仍然最顺，因为它会替你提供本地 relay。
+
+第一次使用时，可以按 [新手入门](Docs/zh-CN/getting-started.md) 一步一步走。
+
+### 已有 relay
+
+```sh
+DOMAENG_RELAY="wss://your-relay.example.com/relay" domaeng up
+```
+
+如果你已经有可访问的 relay、Tailscale endpoint 或反向代理，用这条路径。
+
+### 源码 CLI
+
+```sh
+git clone https://github.com/hhaajack/domaeng.git
+cd domaeng
+npm install -g ./phodex-bridge
+domaeng up
+```
+
+如果你在 checkout 里开发，并且明确想使用源码版本的 `domaeng` 命令，可以用这条路径。
 
 跨设备使用时，Tailscale 或其他稳定私有网络通常比普通 LAN 更顺。详见 [Tailscale 使用说明](Docs/zh-CN/tailscale.md)。
 
@@ -140,7 +167,9 @@ cd domaeng
 
 ## 当前打包状态
 
-- `domaeng` bridge CLI：通过 `npm install -g domaeng@latest` 安装
+- 公开 npm 包：可以通过 `npm install -g domaeng@latest` 安装
+- 源码 launcher：可以通过 `./run-local-domaeng.sh` 使用，适合 all-in-one 本地 relay 路径
+- 本地源码 bridge CLI：可以在 checkout 里通过 `npm install -g ./phodex-bridge` 安装
 - Web App：由 bridge / relay 在 `/app/` 提供
 - 移动端 App：没有单独下载包，使用浏览器或 PWA
 - macOS 菜单栏控制：还没有签名的 `.app`、`.dmg` 或 `.zip` GitHub Release；按 [菜单栏控制](Docs/zh-CN/menu-bar.md) 里的 Codex prompt 设置

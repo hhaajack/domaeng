@@ -55,7 +55,7 @@ After switching relay paths, use the displayed QR or pairing code to trust the M
 
 ## With The CLI
 
-If you run the installed CLI directly, point the bridge at the reachable relay URL:
+If you install the local CLI from this checkout and run it directly, point the bridge at the reachable relay URL:
 
 ```sh
 DOMAENG_RELAY="wss://your-mac.your-tailnet.ts.net/relay" domaeng up

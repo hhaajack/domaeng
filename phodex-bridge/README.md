@@ -6,17 +6,33 @@ Domaeng is local-first: the Codex runtime, credentials, repo access, and bridge 
 
 ## Install
 
+Install the bridge CLI on the Mac that runs Codex:
+
 ```sh
 npm install -g domaeng@latest
 ```
 
-Then start the bridge:
+If you already have a reachable relay, Tailscale endpoint, or reverse proxy, start the bridge with that relay URL:
 
 ```sh
-domaeng up
+DOMAENG_RELAY="wss://your-relay.example.com/relay" domaeng up
 ```
 
 On macOS, `domaeng up` installs or restarts the launchd-backed background bridge service, then waits for and prints a pairing QR/code. On other operating systems, run the bridge in the foreground or wrap it with your own service manager.
+
+For the first all-in-one local run, use the repository launcher instead. It starts a local relay and the bridge together:
+
+```sh
+git clone https://github.com/hhaajack/domaeng.git
+cd domaeng
+./run-local-domaeng.sh
+```
+
+If you are developing from a source checkout and want the local source CLI, install it from the repository root:
+
+```sh
+npm install -g ./phodex-bridge
+```
 
 ## Pairing
 
