@@ -93,7 +93,11 @@ async function main({
       deps.printMacOSBridgePairingQr({
         pairingSession: result.pairingSession,
       });
-      printUpManagementHelp({ consoleImpl });
+      printUpManagementHelp({
+        config: result.config,
+        localRelay: result.localRelay,
+        consoleImpl,
+      });
       return;
     }
 
@@ -398,10 +402,22 @@ function runMenuBarCommand({ action, deps }) {
   throw new Error("Usage: domaeng menubar <status|install|open>");
 }
 
-function printUpManagementHelp({ consoleImpl = console } = {}) {
+function printUpManagementHelp({
+  config = {},
+  localRelay = null,
+  consoleImpl = console,
+} = {}) {
+  const relayUrl = readNonEmptyString(config?.relayUrl) || "unknown";
+  const webAppUrl = webAppUrlFromRelayUrl(relayUrl) || "unknown";
+  const localRelayStatus = localRelayStatusLine(localRelay);
   consoleImpl.log([
     "",
     "[domaeng] Domaeng is running in the background. You can close this Terminal window.",
+    "",
+    "Relay:",
+    `  Active relay: ${relayUrl}`,
+    `  Web app: ${webAppUrl}`,
+    `  Local relay: ${localRelayStatus}`,
     "",
     "Manage:",
     "  domaeng status",
@@ -413,6 +429,44 @@ function printUpManagementHelp({ consoleImpl = console } = {}) {
     "  domaeng menubar install",
     "  domaeng menubar open",
   ].join("\n"));
+}
+
+function localRelayStatusLine(localRelay) {
+  if (!localRelay?.managed) {
+    return `not managed${localRelay?.reason ? ` (${localRelay.reason})` : ""}`;
+  }
+
+  const state = localRelay.started ? "started" : (localRelay.alreadyRunning ? "already running" : "managed");
+  return `${state} on port ${localRelay.port || "unknown"}`;
+}
+
+function webAppUrlFromRelayUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    if (url.protocol === "ws:") {
+      url.protocol = "http:";
+    } else if (url.protocol === "wss:") {
+      url.protocol = "https:";
+    } else if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return "";
+    }
+
+    const parts = url.pathname.split("/").filter(Boolean);
+    if (parts.at(-1) === "relay") {
+      parts.pop();
+    }
+    parts.push("app");
+    url.pathname = `/${parts.join("/")}/`;
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function readNonEmptyString(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : "";
 }
 
 function menuBarActionMessage(action, result = {}) {

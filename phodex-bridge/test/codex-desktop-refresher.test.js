@@ -333,6 +333,53 @@ test("readBridgeConfig defaults packaged installs with bundled relay to localhos
   }
 });
 
+test("readBridgeConfig lets bundled local relay outrank stale persisted package relays", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "domaeng-bundled-package-"));
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "domaeng-state-"));
+  try {
+    fs.mkdirSync(path.join(tempRoot, "src"), { recursive: true });
+    fs.mkdirSync(path.join(tempRoot, "bundled", "relay"), { recursive: true });
+    fs.writeFileSync(path.join(tempRoot, "bundled", "relay", "server.js"), "module.exports = {};");
+    fs.writeFileSync(
+      path.join(tempRoot, "src", "private-defaults.json"),
+      JSON.stringify({
+        relayUrl: "wss://packaged.example/relay",
+        pushServiceUrl: "https://packaged.example",
+      }),
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(stateDir, "daemon-config.json"),
+      JSON.stringify({ relayUrl: "wss://relay.example/relay" }),
+      "utf8"
+    );
+
+    const config = readBridgeConfig({
+      env: {
+        REMODEX_DEVICE_STATE_DIR: stateDir,
+      },
+      runtimeRoot: tempRoot,
+      fsImpl: fs,
+    });
+    const explicitConfig = readBridgeConfig({
+      env: {
+        REMODEX_DEVICE_STATE_DIR: stateDir,
+        DOMAENG_RELAY: "wss://self-host.example/relay",
+      },
+      runtimeRoot: tempRoot,
+      fsImpl: fs,
+    });
+
+    assert.equal(config.relayUrl, "ws://127.0.0.1:9000/relay");
+    assert.equal(config.pushServiceUrl, "http://127.0.0.1:9000");
+    assert.equal(explicitConfig.relayUrl, "wss://self-host.example/relay");
+    assert.equal(explicitConfig.pushServiceUrl, "https://self-host.example");
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("readBridgeConfig preserves reverse-proxy subpaths when deriving push URLs", () => {
   const config = readBridgeConfig({
     env: {

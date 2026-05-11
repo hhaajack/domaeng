@@ -84,6 +84,8 @@ test("domaeng up shows a startup indicator while waiting for the pairing QR", as
         calls.push(["start-service", options]);
         return {
           pairingSession: { pairingPayload: { sessionId: "session-up" } },
+          config: { relayUrl: "ws://127.0.0.1:9000/relay" },
+          localRelay: { managed: true, started: true, port: 9000 },
         };
       },
       printMacOSBridgePairingQr(options) {
@@ -97,6 +99,11 @@ test("domaeng up shows a startup indicator while waiting for the pairing QR", as
     [
       "",
       "[domaeng] Domaeng is running in the background. You can close this Terminal window.",
+      "",
+      "Relay:",
+      "  Active relay: ws://127.0.0.1:9000/relay",
+      "  Web app: http://127.0.0.1:9000/app/",
+      "  Local relay: started on port 9000",
       "",
       "Manage:",
       "  domaeng status",

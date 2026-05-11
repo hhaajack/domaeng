@@ -85,7 +85,7 @@ async function startMacOSBridgeService({
   assertRelayConfigured(config);
   const startedAt = Date.now();
 
-  await startLocalRelayService({
+  const localRelay = await startLocalRelayService({
     config,
     env,
     platform,
@@ -119,6 +119,8 @@ async function startMacOSBridgeService({
     return {
       plistPath,
       pairingSession: null,
+      config,
+      localRelay,
     };
   }
 
@@ -132,6 +134,8 @@ async function startMacOSBridgeService({
   return {
     plistPath,
     pairingSession,
+    config,
+    localRelay,
   };
 }
 
