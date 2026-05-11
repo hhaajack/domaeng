@@ -162,6 +162,16 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
           }));
           break;
         }
+        if (isAccountIdentityUpdate(event.method)) {
+          set({
+            rateLimitBuckets: [],
+            isLoadingRateLimits: false,
+            rateLimitsError: undefined,
+            rateLimitsLoadedAt: undefined
+          });
+          void get().refreshRateLimits();
+          break;
+        }
         if (event.method === "serverRequest/resolved") {
           const requestId = resolvedServerRequestId(event.params);
           if (requestId) {
@@ -1960,6 +1970,11 @@ function readTimestamp(value: unknown): string | number | undefined {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isAccountIdentityUpdate(method: string): boolean {
+  return method === "account/updated"
+    || method === "account/login/completed";
 }
 
 function codedStoreError(code: string, message: string): Error & { code: string } {

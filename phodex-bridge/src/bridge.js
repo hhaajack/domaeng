@@ -690,7 +690,9 @@ function startBridge({
       return;
     }
     if (handleAccountRateLimitsRequest(rawMessage, sendApplicationResponse, {
+      refreshLiveAccount: refreshCodexAccountBeforeRateLimitRead,
       readLiveRateLimits: () => sendCodexRequest("account/rateLimits/read", undefined),
+      allowFallback: false,
     })) {
       return;
     }
@@ -981,6 +983,13 @@ function startBridge({
       account: payload.account && typeof payload.account === "object" ? payload.account : null,
       requiresOpenaiAuth: Boolean(payload.requiresOpenaiAuth),
     };
+  }
+
+  async function refreshCodexAccountBeforeRateLimitRead() {
+    await sendCodexRequest("getAuthStatus", {
+      includeToken: true,
+      refreshToken: true,
+    });
   }
 
   function createJsonRpcErrorResponse(requestId, error, defaultErrorCode) {

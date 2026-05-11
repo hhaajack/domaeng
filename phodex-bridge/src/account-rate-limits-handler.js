@@ -8,7 +8,9 @@ const { readLatestRateLimitsFromRollouts } = require("./rollout-watch");
 
 function handleAccountRateLimitsRequest(rawMessage, sendResponse, {
   readLiveRateLimits,
+  refreshLiveAccount = null,
   readFallbackRateLimits = readLatestRateLimitsFromRollouts,
+  allowFallback = true,
 } = {}) {
   const parsed = safeParseJson(rawMessage);
   const method = typeof parsed?.method === "string" ? parsed.method.trim() : "";
@@ -19,7 +21,9 @@ function handleAccountRateLimitsRequest(rawMessage, sendResponse, {
   const requestId = parsed.id;
   readAccountRateLimitsWithFallback({
     readLiveRateLimits,
+    refreshLiveAccount,
     readFallbackRateLimits,
+    allowFallback,
   })
     .then((result) => {
       sendResponse(JSON.stringify({ id: requestId, result }));
@@ -33,17 +37,28 @@ function handleAccountRateLimitsRequest(rawMessage, sendResponse, {
 
 async function readAccountRateLimitsWithFallback({
   readLiveRateLimits,
+  refreshLiveAccount = null,
   readFallbackRateLimits = readLatestRateLimitsFromRollouts,
+  allowFallback = true,
 } = {}) {
   if (typeof readLiveRateLimits !== "function") {
     throw accountRateLimitsError("rate_limits_reader_missing", "No live rate-limit reader is configured.");
   }
 
   try {
+    if (typeof refreshLiveAccount === "function") {
+      await refreshLiveAccount();
+    }
     return await readLiveRateLimits();
   } catch (error) {
     if (!shouldUseRateLimitFallback(error)) {
       throw error;
+    }
+    if (!rateLimitFallbackAllowed(allowFallback)) {
+      throw accountRateLimitsError(
+        "rate_limits_refresh_pending",
+        "Codex usage is waiting for fresh live account data."
+      );
     }
 
     const fallback = typeof readFallbackRateLimits === "function"
@@ -55,6 +70,13 @@ async function readAccountRateLimitsWithFallback({
 
     return sanitizeFallbackRateLimits(fallback);
   }
+}
+
+function rateLimitFallbackAllowed(allowFallback) {
+  if (typeof allowFallback === "function") {
+    return allowFallback() !== false;
+  }
+  return allowFallback !== false;
 }
 
 function handleChatgptAuthTokensRefreshRequest(rawMessage, sendCodexMessage) {
@@ -171,5 +193,6 @@ module.exports = {
   handleAccountRateLimitsRequest,
   handleChatgptAuthTokensRefreshRequest,
   readAccountRateLimitsWithFallback,
+  rateLimitFallbackAllowed,
   shouldUseRateLimitFallback,
 };

@@ -31,6 +31,29 @@ test("readAccountRateLimitsWithFallback returns live rate limits when the runtim
   assert.equal(result.rateLimits.primary.used_percent, 7);
 });
 
+test("readAccountRateLimitsWithFallback refreshes live account state before reading usage", async () => {
+  const calls = [];
+  const result = await readAccountRateLimitsWithFallback({
+    refreshLiveAccount: async () => {
+      calls.push("refresh-account");
+    },
+    readLiveRateLimits: async () => {
+      calls.push("read-rate-limits");
+      return {
+        rateLimits: {
+          limit_id: "codex",
+          primary: {
+            used_percent: 11,
+          },
+        },
+      };
+    },
+  });
+
+  assert.deepEqual(calls, ["refresh-account", "read-rate-limits"]);
+  assert.equal(result.rateLimits.primary.used_percent, 11);
+});
+
 test("readAccountRateLimitsWithFallback uses rollout data for auth-gated rate limit errors", async () => {
   const liveError = new Error("codex account authentication required to read rate limits");
   const result = await readAccountRateLimitsWithFallback({
@@ -77,6 +100,29 @@ test("readAccountRateLimitsWithFallback uses rollout data for auth-gated rate li
       },
     },
   });
+});
+
+test("readAccountRateLimitsWithFallback blocks stale rollout fallback after account changes", async () => {
+  const liveError = new Error("codex account authentication required to read rate limits");
+
+  await assert.rejects(
+    readAccountRateLimitsWithFallback({
+      readLiveRateLimits: async () => {
+        throw liveError;
+      },
+      readFallbackRateLimits: async () => ({
+        rateLimits: {
+          limit_id: "codex",
+          primary: {
+            used_percent: 34,
+          },
+        },
+      }),
+      allowFallback: () => false,
+    }),
+    (error) => error?.errorCode === "rate_limits_refresh_pending"
+      && /fresh live account/i.test(error.message)
+  );
 });
 
 test("readAccountRateLimitsWithFallback preserves non-auth failures", async () => {

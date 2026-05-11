@@ -295,7 +295,23 @@ test("readBridgeConfig uses a packaged push default only when it is explicitly p
   assert.equal(config.pushServiceUrl, "https://relay.example");
 });
 
-test("readBridgeConfig does not use the hosted fallback inside a source checkout", () => {
+test("readBridgeConfig defaults source checkouts with a local relay to localhost", () => {
+  const config = readBridgeConfig({
+    env: {},
+    runtimeRoot: "/workspace/phodex-bridge",
+    fsImpl: {
+      existsSync(targetPath) {
+        return targetPath === "/workspace/.git"
+          || targetPath === "/workspace/relay/server.js";
+      },
+    },
+  });
+
+  assert.equal(config.relayUrl, "ws://127.0.0.1:9000/relay");
+  assert.equal(config.pushServiceUrl, "http://127.0.0.1:9000");
+});
+
+test("readBridgeConfig does not use the hosted fallback inside a source checkout without a local relay", () => {
   const config = readBridgeConfig({
     env: {},
     runtimeRoot: "/workspace/phodex-bridge",

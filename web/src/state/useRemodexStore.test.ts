@@ -1005,6 +1005,46 @@ describe("useRemodexStore rate limits", () => {
     expect(useRemodexStore.getState().rateLimitsError).toBeUndefined();
   });
 
+  it("clears stale usage and refreshes when the Codex account changes", async () => {
+    client.readRateLimits = vi.fn().mockResolvedValue({
+      rateLimitsByLimitId: {
+        codex_5h: {
+          limitId: "codex_5h",
+          primary: {
+            usedPercent: 9,
+            windowDurationMins: 300
+          }
+        }
+      }
+    });
+    useRemodexStore.setState({
+      rateLimitBuckets: [{
+        limitId: "old_account",
+        primary: {
+          usedPercent: 92,
+          windowDurationMins: 300
+        }
+      }],
+      rateLimitsLoadedAt: 1_742_000_000_000
+    });
+
+    emitClientEvent({
+      type: "notification",
+      method: "account/updated",
+      params: {
+        account: {
+          email: "new@example.com"
+        }
+      }
+    });
+
+    await vi.waitFor(() => {
+      expect(client.readRateLimits).toHaveBeenCalledTimes(1);
+      expect(useRemodexStore.getState().rateLimitBuckets[0]?.limitId).toBe("codex_5h");
+    });
+    expect(useRemodexStore.getState().rateLimitsError).toBeUndefined();
+  });
+
   it("merges incoming snake case rate limit updates", () => {
     useRemodexStore.setState({
       rateLimitBuckets: [{

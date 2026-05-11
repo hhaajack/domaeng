@@ -554,12 +554,15 @@ function readBridgeConfig({
   const daemonConfig = readDaemonConfig({ env, fsImpl }) || {};
   const privateDefaults = readPrivatePackageDefaults({ runtimeRoot, fsImpl });
   const sourceCheckout = isSourceCheckout(runtimeRoot, fsImpl);
+  const sourceLocalRelayUrl = sourceCheckout && hasSourceLocalRelay({ runtimeRoot, fsImpl })
+    ? DEFAULT_LOCAL_RELAY_URL
+    : "";
   const bundledLocalRelayUrl = !sourceCheckout && hasBundledLocalRelay({ runtimeRoot, fsImpl })
     ? DEFAULT_LOCAL_RELAY_URL
     : "";
   const persistedRelayUrl = readString(daemonConfig.relayUrl) || "";
   const defaultRelayUrl = sourceCheckout
-    ? ""
+    ? sourceLocalRelayUrl
     : (bundledLocalRelayUrl || privateDefaults.relayUrl);
   const explicitRelayUrl = readFirstDefinedEnv(
     ["DOMAENG_RELAY", "REMODEX_RELAY", "PHODEX_RELAY"],
@@ -703,6 +706,10 @@ function pushServiceUrlFromRelayUrl(value) {
 
 function hasBundledLocalRelay({ runtimeRoot, fsImpl }) {
   return fsImpl.existsSync(path.join(runtimeRoot, "bundled", "relay", "server.js"));
+}
+
+function hasSourceLocalRelay({ runtimeRoot, fsImpl }) {
+  return fsImpl.existsSync(path.join(path.resolve(runtimeRoot, ".."), "relay", "server.js"));
 }
 
 // Keeps repo checkouts local-first while published npm installs can stay ready-to-run.
