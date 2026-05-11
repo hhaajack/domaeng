@@ -93,6 +93,7 @@ async function main({
       deps.printMacOSBridgePairingQr({
         pairingSession: result.pairingSession,
       });
+      printUpManagementHelp({ consoleImpl });
       return;
     }
 
@@ -395,6 +396,23 @@ function runMenuBarCommand({ action, deps }) {
     return deps.openMenuBarApp();
   }
   throw new Error("Usage: domaeng menubar <status|install|open>");
+}
+
+function printUpManagementHelp({ consoleImpl = console } = {}) {
+  consoleImpl.log([
+    "",
+    "[domaeng] Domaeng is running in the background. You can close this Terminal window.",
+    "",
+    "Manage:",
+    "  domaeng status",
+    "  domaeng restart",
+    "  domaeng stop",
+    "  domaeng renew-pairing",
+    "",
+    "Optional menu bar control (unsigned/adhoc-signed; macOS may require approval):",
+    "  domaeng menubar install",
+    "  domaeng menubar open",
+  ].join("\n"));
 }
 
 function menuBarActionMessage(action, result = {}) {

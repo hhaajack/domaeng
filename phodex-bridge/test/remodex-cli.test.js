@@ -94,6 +94,20 @@ test("domaeng up shows a startup indicator while waiting for the pairing QR", as
 
   assert.deepEqual(messages, [
     "[domaeng] Starting bridge and pairing QR...",
+    [
+      "",
+      "[domaeng] Domaeng is running in the background. You can close this Terminal window.",
+      "",
+      "Manage:",
+      "  domaeng status",
+      "  domaeng restart",
+      "  domaeng stop",
+      "  domaeng renew-pairing",
+      "",
+      "Optional menu bar control (unsigned/adhoc-signed; macOS may require approval):",
+      "  domaeng menubar install",
+      "  domaeng menubar open",
+    ].join("\n"),
   ]);
   assert.deepEqual(calls, [
     ["start-service", { waitForPairing: true }],
