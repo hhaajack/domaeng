@@ -29,18 +29,10 @@ Domaeng 让你从任意配对浏览器控制 [Codex](https://openai.com/index/co
 
 ```sh
 npm install -g domaeng@latest
-domaeng --version
+domaeng up
 ```
 
-CLI 需要一个 relay URL 才能让浏览器配对。第一次本地跑通时，最适合新手的路径仍然是仓库里的 launcher，因为它会把本地 relay 和 bridge 一起启动：
-
-```sh
-git clone https://github.com/hhaajack/domaeng.git
-cd domaeng
-./run-local-domaeng.sh
-```
-
-这一步在负责 host Codex 的 Mac 上运行。launcher 会在需要时安装本地 package 依赖，并打印 Web App 的 URL / QR 配对信息。
+这一步在负责 host Codex 的 Mac 上运行。npm 包会带上 bridge、本地 relay 和 Web App assets。`domaeng up` 会启动本地 relay 和 bridge service，并打印 Web App 的 URL / QR 配对信息。
 
 在另一台设备上，打开 relay 提供的 `/app/` Web App，然后扫码或输入配对码。
 
@@ -50,7 +42,7 @@ cd domaeng
 
 - 一台负责运行 Codex 和 Domaeng bridge 的 Mac
 - Node.js 18+
-- shell 里能使用 npm、git 和 curl
+- shell 里能使用 npm
 - Codex CLI 已安装，并且在 `PATH` 里
 - 任意能访问你的 relay 或私有网络的设备浏览器
 
@@ -86,7 +78,7 @@ cd domaeng
   <img src="assets/architecture.zh-CN.svg" alt="Domaeng 本地优先架构图" width="720" />
 </p>
 
-1. 在负责 host Codex 的 Mac 上运行 `./run-local-domaeng.sh`，或者在设置了 `DOMAENG_RELAY` 的情况下运行 `domaeng up`。
+1. 在负责 host Codex 的 Mac 上运行 `domaeng up`。
 2. 从任意设备打开 relay 提供的 Web App。
 3. 用 QR 或配对码完成一次配对。
 4. 浏览器把加密指令发给 Mac bridge。
@@ -97,21 +89,12 @@ cd domaeng
 
 ### 普通用户
 
-安装 CLI：
-
 ```sh
 npm install -g domaeng@latest
+domaeng up
 ```
 
-第一次用本地 relay 跑通：
-
-```sh
-git clone https://github.com/hhaajack/domaeng.git
-cd domaeng
-./run-local-domaeng.sh
-```
-
-使用 launcher 打印出来的 URL 和 QR。对第一次使用的人来说，这仍然最顺，因为它会替你提供本地 relay。
+使用 CLI 打印出来的 URL 和 QR。对第一次使用的人来说，这是最顺的路径，因为 npm 包会替你提供本地 relay 和 Web App assets。
 
 第一次使用时，可以按 [新手入门](Docs/zh-CN/getting-started.md) 一步一步走。
 
@@ -159,7 +142,7 @@ domaeng up
 
 - [新手入门](Docs/zh-CN/getting-started.md)：第一次安装、第一次配对、第一次成功控制 Codex
 - [Tailscale 使用说明](Docs/zh-CN/tailscale.md)：用私有网络做跨设备访问，不引入硬编码托管服务假设
-- [菜单栏控制](Docs/zh-CN/menu-bar.md)：macOS 状态栏/菜单栏控制，以及可直接交给 Codex 的设置 prompt
+- [菜单栏控制](Docs/zh-CN/menu-bar.md)：可选 macOS 状态栏/菜单栏控制、未签名 app 说明，以及源码设置 prompt
 - [操作功能说明](Docs/zh-CN/operations.md)：Web App、bridge、配对、信任设备和 git 操作分别做什么
 - [Advanced reference](Docs/reference.md)：命令、环境变量、安全说明、集成、源码构建
 - [Self-hosting guide](Docs/self-hosting.md)：本地 LAN、VPS relay、反向代理、排障
@@ -167,12 +150,12 @@ domaeng up
 
 ## 当前打包状态
 
-- 公开 npm 包：可以通过 `npm install -g domaeng@latest` 安装
-- 源码 launcher：可以通过 `./run-local-domaeng.sh` 使用，适合 all-in-one 本地 relay 路径
+- 公开 npm 包：包含 bridge CLI、本地 relay 和 Web App assets，可以通过 `npm install -g domaeng@latest` 安装
+- 源码 launcher：可以通过 `./run-local-domaeng.sh` 使用，适合开发和本地源码测试
 - 本地源码 bridge CLI：可以在 checkout 里通过 `npm install -g ./phodex-bridge` 安装
 - Web App：由 bridge / relay 在 `/app/` 提供
 - 移动端 App：没有单独下载包，使用浏览器或 PWA
-- macOS 菜单栏控制：还没有签名的 `.app`、`.dmg` 或 `.zip` GitHub Release；按 [菜单栏控制](Docs/zh-CN/menu-bar.md) 里的 Codex prompt 设置
+- macOS 菜单栏控制：可选的 `DomaengMenuBar.app`；如果通过 npm 包附带，它是未签名/adhoc 签名 app，第一次打开时 macOS 可能需要你手动允许
 
 ## 和 Remodex 的关系
 

@@ -7,13 +7,13 @@ Domaeng 是 local-first：
 - Codex 运行在你的 Mac 上。
 - git 和 workspace 操作也在你的 Mac 上执行。
 - 浏览器只是遥控器。
-- relay 只负责配对、重连和加密控制流量的传输。
+- 本地 relay 只负责配对、重连和加密控制流量的传输。
 
 ## 你需要什么
 
 - 一台负责运行 Codex 和 Domaeng 的 Mac。
 - Node.js 18 或更新版本。
-- shell 里能使用 npm、git 和 curl。
+- shell 里能使用 npm。
 - Codex CLI 已安装，并且在 shell 的 `PATH` 里。
 - 一个能访问 relay 或私有网络的浏览器。
 
@@ -25,24 +25,16 @@ Domaeng 是 local-first：
 
 ```sh
 npm install -g domaeng@latest
-domaeng --version
+domaeng up
 ```
 
-第一次本地跑通时，建议使用源码 launcher，因为它会把本地 relay 和 bridge 一起启动：
-
-```sh
-git clone https://github.com/hhaajack/domaeng.git
-cd domaeng
-./run-local-domaeng.sh
-```
-
-`./run-local-domaeng.sh` 会在需要时安装本地 package 依赖，并打印 Web App URL、QR 或配对码。
+`domaeng up` 会启动本地 relay 和 bridge service，并打印 Web App URL、QR 或配对码。
 
 打开打印出来的 Web App URL，通常是 `/app/` 路径，然后扫码或输入配对码。
 
 ## 第一次配对
 
-1. 保持 `./run-local-domaeng.sh` 运行，直到它打印配对信息。
+1. 保持 `domaeng up` 运行，直到它打印配对信息。
 2. 在你想使用的浏览器里打开打印出来的 Web App URL。
 3. 扫 QR，或输入配对码。
 4. 在 Web App 里创建或打开一个 thread。

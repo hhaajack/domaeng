@@ -33,18 +33,10 @@ Install the bridge CLI on the Mac that will host Codex:
 
 ```sh
 npm install -g domaeng@latest
-domaeng --version
+domaeng up
 ```
 
-The CLI needs a relay URL before it can pair a browser. For a first local run, the beginner-friendly path is still the repository launcher because it starts a local relay and the bridge together:
-
-```sh
-git clone https://github.com/hhaajack/domaeng.git
-cd domaeng
-./run-local-domaeng.sh
-```
-
-Run this on the Mac that will host Codex. The launcher installs local package dependencies when needed and prints the URL / QR information for the Web App.
+Run this on the Mac that will host Codex. The npm package includes the bridge, local relay, and Web App assets. `domaeng up` starts the local relay and bridge service, then prints the URL / QR information for the Web App.
 
 On the other device, open the Web App URL served at `/app/`, then pair by QR code or pairing code.
 
@@ -54,7 +46,7 @@ You do **not** need a separate mobile app download. The browser is the client.
 
 - A Mac that will run Codex and the Domaeng bridge
 - Node.js 18+
-- npm, git, and curl available in your shell
+- npm available in your shell
 - Codex CLI installed and available in your `PATH`
 - A browser on any device that can reach your relay or private network
 
@@ -90,7 +82,7 @@ You do not need to read every document before trying Domaeng. Start with the pat
   <img src="assets/architecture.svg" alt="Domaeng local-first architecture diagram" width="720" />
 </p>
 
-1. Run `./run-local-domaeng.sh`, or run `domaeng up` with `DOMAENG_RELAY` set, on the Mac that hosts Codex.
+1. Run `domaeng up` on the Mac that hosts Codex.
 2. Open the relay-served Web App from any device.
 3. Pair once with QR or pairing code.
 4. The browser sends encrypted instructions to the Mac bridge.
@@ -101,21 +93,12 @@ You do not need to read every document before trying Domaeng. Start with the pat
 
 ### Normal Use
 
-Install the CLI:
-
 ```sh
 npm install -g domaeng@latest
+domaeng up
 ```
 
-For a first local run with the bundled source relay:
-
-```sh
-git clone https://github.com/hhaajack/domaeng.git
-cd domaeng
-./run-local-domaeng.sh
-```
-
-Use the URL and QR printed by the launcher. This is the easiest path for most first-time users because it provides the local relay for you.
+Use the URL and QR printed by the CLI. This is the easiest path for most first-time users because the npm package provides the local relay and Web App assets for you.
 
 For a step-by-step first run, see [Getting started](Docs/getting-started.md).
 
@@ -163,7 +146,7 @@ The front page is intentionally short. Use these when you need the deeper knobs:
 
 - [Getting started](Docs/getting-started.md): first install, first pairing, and first successful Codex run
 - [Tailscale setup](Docs/tailscale.md): private cross-device access without hardcoded hosted-service assumptions
-- [Menu bar control](Docs/menu-bar.md): macOS status/menu bar control and a Codex setup prompt
+- [Menu bar control](Docs/menu-bar.md): optional macOS status/menu bar control, unsigned app notes, and source setup prompt
 - [Operations guide](Docs/operations.md): what the Web App, bridge, pairing, trusted devices, and git actions do
 - [Advanced reference](Docs/reference.md): commands, environment variables, security notes, integrations, source build notes
 - [Self-hosting guide](Docs/self-hosting.md): local LAN, VPS relay, reverse proxy, troubleshooting
@@ -171,12 +154,12 @@ The front page is intentionally short. Use these when you need the deeper knobs:
 
 ## Current Packaging Status
 
-- Public npm package: available with `npm install -g domaeng@latest`
-- Source checkout launcher: available with `./run-local-domaeng.sh` for the all-in-one local relay path
+- Public npm package: includes the bridge CLI, local relay, and Web App assets; install with `npm install -g domaeng@latest`
+- Source checkout launcher: available with `./run-local-domaeng.sh` for development and local source testing
 - Local source bridge CLI: installable from a checkout with `npm install -g ./phodex-bridge`
 - Web App: served by the bridge / relay at `/app/`
 - Mobile app: no separate download; use the browser or installed PWA
-- macOS menu bar control: no signed `.app`, `.dmg`, or `.zip` GitHub Release yet; use the Codex setup prompt in [Menu bar control](Docs/menu-bar.md)
+- macOS menu bar control: optional `DomaengMenuBar.app`; when bundled through npm it is unsigned/adhoc-signed and may require manual macOS approval on first launch
 
 ## Relationship To Remodex
 

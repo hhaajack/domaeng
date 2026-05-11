@@ -310,6 +310,29 @@ test("readBridgeConfig does not use the hosted fallback inside a source checkout
   assert.equal(config.pushServiceUrl, "");
 });
 
+test("readBridgeConfig defaults packaged installs with bundled relay to localhost", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "domaeng-bundled-package-"));
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "domaeng-state-"));
+  try {
+    fs.mkdirSync(path.join(tempRoot, "bundled", "relay"), { recursive: true });
+    fs.writeFileSync(path.join(tempRoot, "bundled", "relay", "server.js"), "module.exports = {};");
+
+    const config = readBridgeConfig({
+      env: {
+        REMODEX_DEVICE_STATE_DIR: stateDir,
+      },
+      runtimeRoot: tempRoot,
+      fsImpl: fs,
+    });
+
+    assert.equal(config.relayUrl, "ws://127.0.0.1:9000/relay");
+    assert.equal(config.pushServiceUrl, "http://127.0.0.1:9000");
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("readBridgeConfig preserves reverse-proxy subpaths when deriving push URLs", () => {
   const config = readBridgeConfig({
     env: {

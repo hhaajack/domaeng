@@ -78,6 +78,23 @@ test("resolveRelayServerModule finds the sibling relay server in a source checko
   }
 });
 
+test("resolveRelayServerModule finds the bundled relay server in a packaged install", () => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "domaeng-bundled-relay-module-"));
+  try {
+    fs.mkdirSync(path.join(rootDir, "bundled", "relay"), { recursive: true });
+    fs.writeFileSync(path.join(rootDir, "bundled", "relay", "server.js"), "module.exports = {};");
+
+    assert.equal(
+      resolveRelayServerModule({
+        runtimeRoot: rootDir,
+      }),
+      path.join(rootDir, "bundled", "relay", "server.js")
+    );
+  } finally {
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  }
+});
+
 test("startLocalRelayService bootstraps launchd when local relay health is down", async () => {
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "domaeng-local-relay-"));
   try {

@@ -4,7 +4,36 @@
 
 它是可选项。你完全可以只用 CLI 和 Web App 使用 Domaeng。
 
-当前打包状态：公开仓库还没有发布签名好的 `.app`、`.dmg` 或 `.zip`。现在最适合新手的方式不是自己照着 Xcode 命令构建，而是把下面这段 prompt 交给 Codex，让它在本地仓库里按当前代码检查并设置。
+当前打包状态：npm 包可以附带一个可选的 `DomaengMenuBar.app`，但它是未签名/adhoc 签名 app，没有经过 Apple notarization。第一次打开时，macOS 可能会拦截它。这是当前预期行为。
+
+如果你不需要菜单栏控制，可以直接跳过本页。普通路径只需要 `domaeng up`，然后使用 CLI + Web App。
+
+## 从 npm 安装
+
+先安装普通 CLI：
+
+```sh
+npm install -g domaeng@latest
+```
+
+然后检查这版 npm 包里是否带了可选的菜单栏 app：
+
+```sh
+domaeng menubar status
+```
+
+如果显示已经 bundled，可以安装并打开：
+
+```sh
+domaeng menubar install
+domaeng menubar open
+```
+
+默认会复制到 `~/Applications/DomaengMenuBar.app`。
+
+因为这个 app 未签名/adhoc 签名，macOS 可能提示“无法打开，因为无法验证开发者”。如果出现这个提示，打开 **系统设置 -> 隐私与安全性**，允许刚刚被拦截的 app，然后再打开一次。也可以在 Finder 里按住 Control 点 app，选择 **打开**。
+
+这个警告只和 Apple 签名/notarization 有关，不表示 Domaeng 使用了托管服务。除非你自己显式配置远程 relay，否则 bridge、relay 和 Codex runtime 仍然在本机运行。
 
 ## 它能做什么
 
@@ -20,9 +49,9 @@
 
 它不替代 Codex，也不运行托管服务。bridge 和 Codex runtime 仍然在你的 Mac 本地运行。
 
-## 推荐给 Codex 的 prompt
+## 源码设置 prompt
 
-在这个仓库里打开 Codex，然后粘贴这段：
+如果 npm 包暂时没有附带 app，或者你正在从源码 checkout 开发，在这个仓库里打开 Codex，然后粘贴这段：
 
 ```text
 请从这个本地仓库设置 Domaeng 的 macOS 菜单栏控制。

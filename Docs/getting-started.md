@@ -7,13 +7,13 @@ Domaeng is local-first:
 - Codex runs on your Mac.
 - Git and workspace actions run on your Mac.
 - Your browser is the remote control.
-- The relay only moves pairing, reconnect, and encrypted control traffic.
+- The local relay only moves pairing, reconnect, and encrypted control traffic.
 
 ## What You Need
 
 - A Mac that will host Codex and Domaeng.
 - Node.js 18 or newer.
-- npm, git, and curl available in your shell.
+- npm available in your shell.
 - Codex CLI installed and available in your shell `PATH`.
 - A browser on the same Mac or on a device that can reach your relay/private network.
 
@@ -25,24 +25,16 @@ Install the bridge CLI on the Mac that runs Codex:
 
 ```sh
 npm install -g domaeng@latest
-domaeng --version
+domaeng up
 ```
 
-For a first local run, use the source checkout launcher because it starts a local relay and bridge together:
-
-```sh
-git clone https://github.com/hhaajack/domaeng.git
-cd domaeng
-./run-local-domaeng.sh
-```
-
-`./run-local-domaeng.sh` installs local package dependencies when needed and prints the Web App URL plus QR or pairing information.
+`domaeng up` starts the local relay and bridge service, then prints the Web App URL plus QR or pairing information.
 
 Open the printed Web App URL, usually the `/app/` route, then scan the QR code or enter the pairing code.
 
 ## First Pairing
 
-1. Keep `./run-local-domaeng.sh` running until it prints pairing details.
+1. Keep `domaeng up` running until it prints pairing details.
 2. Open the printed Web App URL from the browser you want to use.
 3. Scan the QR code or enter the pairing code.
 4. Start a thread in the Web App.
