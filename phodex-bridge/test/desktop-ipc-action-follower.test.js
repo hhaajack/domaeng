@@ -445,6 +445,85 @@ test("desktop IPC follower forwards active iOS turn/start requests to the deskto
   assert.deepEqual(fallback, []);
 });
 
+test("desktop IPC follower waits for initialize before forwarding runtime requests", async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "remodex-ipc-turn-init-order-"));
+  const socketPath = path.join(tempDir, "ipc.sock");
+  const serverFrames = [];
+  let serverSocket = null;
+
+  const server = net.createServer((socket) => {
+    serverSocket = socket;
+    attachFrameReader(socket, (frame) => {
+      serverFrames.push(frame);
+      if (frame.method === "thread-follower-start-turn") {
+        writeFrame(socket, {
+          type: "response",
+          requestId: frame.requestId,
+          resultType: "success",
+          method: frame.method,
+          handledByClientId: "desktop-owner",
+          result: { result: { ok: true } },
+        });
+      }
+    });
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  t.after(() => {
+    server.close();
+    serverSocket?.destroy();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  const outbound = [];
+  const follower = createDesktopIpcActionFollower({
+    socketPath,
+    sendApplicationResponse(message) {
+      outbound.push(JSON.parse(message));
+    },
+    requestTimeoutMs: 500,
+  });
+  t.after(() => follower.stopAll());
+
+  follower.observeInbound(JSON.stringify({
+    method: "thread/resume",
+    params: { threadId: "thread-live" },
+  }));
+  assert.equal(follower.observeInbound(JSON.stringify({
+    id: "turn-start-before-init",
+    method: "turn/start",
+    params: {
+      threadId: "thread-live",
+      input: [{ type: "text", text: "hello" }],
+    },
+  })), true);
+
+  const initializeFrame = await waitForMessage(
+    serverFrames,
+    (frame) => frame.method === "initialize"
+  );
+  await wait(25);
+  assert.equal(
+    serverFrames.some((frame) => frame.method === "thread-follower-start-turn"),
+    false
+  );
+
+  writeFrame(serverSocket, {
+    type: "response",
+    requestId: initializeFrame.requestId,
+    resultType: "success",
+    method: "initialize",
+    handledByClientId: "desktop",
+    result: { clientId: "remodex-test" },
+  });
+
+  const ipcStart = await waitForMessage(
+    serverFrames,
+    (frame) => frame.method === "thread-follower-start-turn"
+  );
+  assert.equal(ipcStart.sourceClientId, "remodex-test");
+  await waitFor(() => outbound.some((message) => message.id === "turn-start-before-init"));
+});
+
 test("desktop IPC follower falls back to bridge runtime when no desktop owner can handle a turn", async (t) => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "remodex-ipc-turn-fallback-"));
   const socketPath = path.join(tempDir, "ipc.sock");

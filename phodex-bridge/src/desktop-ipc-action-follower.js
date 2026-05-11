@@ -505,6 +505,9 @@ function createDesktopIpcClient({
 }) {
   let socket = null;
   let clientId = "";
+  let initialized = false;
+  let initializationPromise = null;
+  let rejectInitialization = null;
   let isConnecting = false;
   let readBuffer = Buffer.alloc(0);
   const pendingRequests = new Map();
@@ -517,18 +520,26 @@ function createDesktopIpcClient({
     isConnecting = true;
     const nextSocket = netModule.createConnection(socketPath);
     socket = nextSocket;
-
-    nextSocket.on("connect", () => {
-      isConnecting = false;
-      sendRequest("initialize", { clientType: "remodex-bridge" })
-        .then((result) => {
-          clientId = readString(result?.clientId) || clientId;
-        })
-        .catch((error) => {
-          console.warn(`${logPrefix} desktop IPC initialize failed: ${error.message}`);
-          close();
-        });
+    initializationPromise = new Promise((resolve, reject) => {
+      rejectInitialization = reject;
+      nextSocket.once("connect", () => {
+        isConnecting = false;
+        sendRawRequest("initialize", { clientType: "remodex-bridge" })
+          .then((result) => {
+            clientId = readString(result?.clientId) || clientId;
+            initialized = true;
+            rejectInitialization = null;
+            resolve();
+          })
+          .catch((error) => {
+            console.warn(`${logPrefix} desktop IPC initialize failed: ${error.message}`);
+            reject(error);
+            close();
+          });
+      });
     });
+    initializationPromise.catch(() => {});
+
     nextSocket.on("data", handleData);
     nextSocket.on("close", handleClose);
     nextSocket.on("error", (error) => {
@@ -540,6 +551,18 @@ function createDesktopIpcClient({
 
   function sendRequest(method, params, { targetClientId = "" } = {}) {
     ensureConnected();
+    if (!socket || socket.destroyed) {
+      return Promise.reject(new Error("Desktop IPC is not connected."));
+    }
+
+    if (method !== "initialize" && initializationPromise && !initialized) {
+      return initializationPromise.then(() => sendRawRequest(method, params, { targetClientId }));
+    }
+
+    return sendRawRequest(method, params, { targetClientId });
+  }
+
+  function sendRawRequest(method, params, { targetClientId = "" } = {}) {
     if (!socket || socket.destroyed) {
       return Promise.reject(new Error("Desktop IPC is not connected."));
     }
@@ -639,8 +662,14 @@ function createDesktopIpcClient({
   function handleClose() {
     socket = null;
     clientId = "";
+    initialized = false;
     isConnecting = false;
     readBuffer = Buffer.alloc(0);
+    if (rejectInitialization) {
+      rejectInitialization(new Error("Desktop IPC connection closed."));
+    }
+    initializationPromise = null;
+    rejectInitialization = null;
     for (const waiter of pendingRequests.values()) {
       clearTimeout(waiter.timeout);
       waiter.reject(new Error("Desktop IPC connection closed."));
