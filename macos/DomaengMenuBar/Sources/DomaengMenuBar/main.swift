@@ -562,52 +562,79 @@ enum DomaengAssets {
         let image = NSImage(size: size)
         image.lockFocus()
         NSColor.black.setFill()
-
-        let path = NSBezierPath()
-        path.windingRule = .evenOdd
-        path.move(to: NSPoint(x: 4.2, y: 2.2))
-        path.line(to: NSPoint(x: 4.2, y: 15.8))
-        path.line(to: NSPoint(x: 8.6, y: 15.8))
-        path.curve(
-            to: NSPoint(x: 15.0, y: 9.0),
-            controlPoint1: NSPoint(x: 12.6, y: 15.8),
-            controlPoint2: NSPoint(x: 15.0, y: 13.0)
-        )
-        path.curve(
-            to: NSPoint(x: 8.6, y: 2.2),
-            controlPoint1: NSPoint(x: 15.0, y: 5.0),
-            controlPoint2: NSPoint(x: 12.6, y: 2.2)
-        )
-        path.close()
-
-        path.move(to: NSPoint(x: 7.2, y: 5.3))
-        path.line(to: NSPoint(x: 8.5, y: 5.3))
-        path.curve(
-            to: NSPoint(x: 11.8, y: 9.0),
-            controlPoint1: NSPoint(x: 10.6, y: 5.3),
-            controlPoint2: NSPoint(x: 11.8, y: 6.8)
-        )
-        path.curve(
-            to: NSPoint(x: 8.5, y: 12.7),
-            controlPoint1: NSPoint(x: 11.8, y: 11.2),
-            controlPoint2: NSPoint(x: 10.6, y: 12.7)
-        )
-        path.line(to: NSPoint(x: 7.2, y: 12.7))
-        path.close()
-        path.fill()
-
-        let prompt = NSBezierPath()
-        prompt.lineWidth = 1.7
-        prompt.lineCapStyle = .round
-        prompt.lineJoinStyle = .round
-        prompt.move(to: NSPoint(x: 6.9, y: 7.0))
-        prompt.line(to: NSPoint(x: 8.9, y: 9.0))
-        prompt.line(to: NSPoint(x: 6.9, y: 11.0))
-        prompt.stroke()
+        menuBarIconPath(in: NSRect(origin: .zero, size: size)).fill()
 
         image.unlockFocus()
         image.isTemplate = true
         return image
+    }
+
+    private static func menuBarIconPath(in rect: NSRect) -> NSBezierPath {
+        let sourceWidth: CGFloat = 98
+        let sourceHeight: CGFloat = 96
+        let scale = min(rect.width / sourceWidth, rect.height / sourceHeight)
+        let offsetX = rect.minX + (rect.width - sourceWidth * scale) / 2
+        let offsetY = rect.minY + (rect.height - sourceHeight * scale) / 2
+        func point(_ x: CGFloat, _ y: CGFloat) -> NSPoint {
+            NSPoint(x: offsetX + x * scale, y: offsetY + (sourceHeight - y) * scale)
+        }
+
+        let path = NSBezierPath()
+        path.windingRule = .evenOdd
+
+        path.move(to: point(47, 68))
+        path.line(to: point(47, 70))
+        path.line(to: point(57, 70))
+        path.line(to: point(57, 68))
+        path.close()
+
+        path.move(to: point(33, 53))
+        path.line(to: point(32, 55))
+        path.line(to: point(41, 61))
+        path.line(to: point(32, 68))
+        path.line(to: point(32, 69))
+        path.line(to: point(34, 70))
+        path.line(to: point(44, 64))
+        path.line(to: point(46, 61))
+        path.line(to: point(38, 55))
+        path.close()
+
+        path.move(to: point(10, 8))
+        path.line(to: point(9, 9))
+        path.line(to: point(9, 90))
+        path.line(to: point(11, 90))
+        path.line(to: point(26, 74))
+        path.line(to: point(26, 26))
+        path.line(to: point(28, 24))
+        path.line(to: point(52, 24))
+        path.line(to: point(62, 27))
+        path.line(to: point(71, 35))
+        path.line(to: point(74, 41))
+        path.line(to: point(74, 44))
+        path.line(to: point(75, 45))
+        path.line(to: point(75, 55))
+        path.line(to: point(71, 65))
+        path.line(to: point(64, 72))
+        path.line(to: point(54, 76))
+        path.line(to: point(33, 76))
+        path.line(to: point(23, 86))
+        path.line(to: point(18, 93))
+        path.line(to: point(55, 93))
+        path.line(to: point(69, 89))
+        path.line(to: point(77, 84))
+        path.line(to: point(83, 78))
+        path.line(to: point(88, 70))
+        path.line(to: point(91, 61))
+        path.line(to: point(91, 54))
+        path.line(to: point(92, 53))
+        path.line(to: point(91, 41))
+        path.line(to: point(88, 32))
+        path.line(to: point(84, 25))
+        path.line(to: point(71, 13))
+        path.line(to: point(57, 8))
+        path.close()
+
+        return path
     }
 
     static func logoImage() -> NSImage {
