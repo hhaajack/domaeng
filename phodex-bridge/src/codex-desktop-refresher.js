@@ -6,8 +6,10 @@
 
 const { execFile } = require("child_process");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { readDaemonConfig } = require("./daemon-state");
+const { resolveDefaultLocalRelayUrl } = require("./local-relay-url");
 const { createThreadRolloutActivityWatcher } = require("./rollout-watch");
 
 const DEFAULT_BUNDLE_ID = "com.openai.codex";
@@ -20,7 +22,6 @@ const DEFAULT_CUSTOM_REFRESH_FAILURE_THRESHOLD = 3;
 const DEFAULT_COMPLETION_REFRESH_MODE = "remount";
 const DEFAULT_RELAUNCH_WAIT_MS = 300;
 const DEFAULT_APP_BOOT_WAIT_MS = 1_200;
-const DEFAULT_LOCAL_RELAY_URL = "ws://127.0.0.1:9000/relay";
 const DESKTOP_REFRESH_TIMEOUT_MS = 20_000;
 const REFRESH_SCRIPT_PATH = path.join(__dirname, "scripts", "codex-refresh.applescript");
 const NEW_THREAD_DEEP_LINK = "codex://threads/new";
@@ -550,16 +551,18 @@ function readBridgeConfig({
   platform = process.platform,
   runtimeRoot = path.resolve(__dirname, ".."),
   fsImpl = fs,
+  osImpl = os,
 } = {}) {
   const daemonConfig = readDaemonConfig({ env, fsImpl }) || {};
   const privateDefaults = readPrivatePackageDefaults({ runtimeRoot, fsImpl });
   const sourceCheckout = isSourceCheckout(runtimeRoot, fsImpl);
   const sourceLocalRelayUrl = sourceCheckout && hasSourceLocalRelay({ runtimeRoot, fsImpl })
-    ? DEFAULT_LOCAL_RELAY_URL
+    ? resolveDefaultLocalRelayUrl({ env, osImpl })
     : "";
   const bundledLocalRelayUrl = !sourceCheckout && hasBundledLocalRelay({ runtimeRoot, fsImpl })
-    ? DEFAULT_LOCAL_RELAY_URL
+    ? resolveDefaultLocalRelayUrl({ env, osImpl })
     : "";
+  const localRelayUrl = sourceLocalRelayUrl || bundledLocalRelayUrl;
   const persistedRelayUrl = readString(daemonConfig.relayUrl) || "";
   const defaultRelayUrl = sourceCheckout
     ? sourceLocalRelayUrl
@@ -571,7 +574,7 @@ function readBridgeConfig({
   );
   const relayUrl = readFirstDefinedEnv(
     ["DOMAENG_RELAY", "REMODEX_RELAY", "PHODEX_RELAY"],
-    bundledLocalRelayUrl || persistedRelayUrl || defaultRelayUrl,
+    localRelayUrl || persistedRelayUrl || defaultRelayUrl,
     env
   );
   const derivedPushServiceUrl = pushServiceUrlFromRelayUrl(relayUrl);

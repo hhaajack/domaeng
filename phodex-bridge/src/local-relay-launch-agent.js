@@ -9,9 +9,12 @@ const fs = require("fs");
 const http = require("http");
 const os = require("os");
 const path = require("path");
+const {
+  DEFAULT_LOCAL_RELAY_PORT,
+  isLocalRelayHost,
+} = require("./local-relay-url");
 
 const SERVICE_LABEL = "com.domaeng.relay";
-const DEFAULT_LOCAL_RELAY_PORT = 9000;
 const DEFAULT_LOCAL_RELAY_BIND_HOST = "0.0.0.0";
 const DEFAULT_HEALTH_TIMEOUT_MS = 800;
 
@@ -118,12 +121,7 @@ function shouldManageLocalRelay(relayUrl, { env = process.env } = {}) {
 
   try {
     const url = new URL(String(relayUrl || ""));
-    const host = url.hostname.toLowerCase();
-    return host === "localhost"
-      || host === "127.0.0.1"
-      || host === "::1"
-      || host.endsWith(".local")
-      || host.endsWith(".ts.net");
+    return isLocalRelayHost(url.hostname);
   } catch {
     return false;
   }

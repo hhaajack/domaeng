@@ -46,18 +46,46 @@ test("domaeng restart reuses the macOS service start flow", async () => {
         calls.push(["start-service", options]);
         return {
           plistPath: "/tmp/remodex.plist",
-          pairingSession: { relay: "ws://127.0.0.1:9000/relay" },
+          pairingSession: { pairingPayload: { sessionId: "session-restart" } },
+          config: { relayUrl: "ws://192.168.1.44:9000/relay" },
+          localRelay: { managed: true, alreadyRunning: true, port: 9000 },
         };
+      },
+      printMacOSBridgePairingQr(options) {
+        calls.push(["print-qr", options]);
       },
     },
   });
 
   assert.deepEqual(calls, [
     "read-config",
-    ["start-service", { waitForPairing: false }],
+    ["start-service", { waitForPairing: true }],
+    ["print-qr", {
+      pairingSession: { pairingPayload: { sessionId: "session-restart" } },
+      showQRCode: false,
+    }],
   ]);
   assert.deepEqual(messages, [
     "[domaeng] macOS bridge service restarted.",
+    [
+      "",
+      "[domaeng] Domaeng is running in the background. You can close this Terminal window.",
+      "",
+      "Relay:",
+      "  Active relay: ws://192.168.1.44:9000/relay",
+      "  Web app: http://192.168.1.44:9000/app/",
+      "  Local relay: already running on port 9000",
+      "",
+      "Manage:",
+      "  domaeng status",
+      "  domaeng restart",
+      "  domaeng stop",
+      "  domaeng renew-pairing",
+      "",
+      "Optional menu bar control (unsigned/adhoc-signed; macOS may require approval):",
+      "  domaeng menubar install",
+      "  domaeng menubar open",
+    ].join("\n"),
   ]);
 });
 
@@ -84,7 +112,7 @@ test("domaeng up shows a startup indicator while waiting for the pairing code", 
         calls.push(["start-service", options]);
         return {
           pairingSession: { pairingPayload: { sessionId: "session-up" } },
-          config: { relayUrl: "ws://127.0.0.1:9000/relay" },
+          config: { relayUrl: "ws://192.168.1.44:9000/relay" },
           localRelay: { managed: true, started: true, port: 9000 },
         };
       },
@@ -101,8 +129,8 @@ test("domaeng up shows a startup indicator while waiting for the pairing code", 
       "[domaeng] Domaeng is running in the background. You can close this Terminal window.",
       "",
       "Relay:",
-      "  Active relay: ws://127.0.0.1:9000/relay",
-      "  Web app: http://127.0.0.1:9000/app/",
+      "  Active relay: ws://192.168.1.44:9000/relay",
+      "  Web app: http://192.168.1.44:9000/app/",
       "  Local relay: started on port 9000",
       "",
       "Manage:",
@@ -357,4 +385,57 @@ test("domaeng renew-pairing emits the fresh daemon pairing session", async () =>
   assert.equal(payload.ok, true);
   assert.equal(payload.request.id, "renew-1");
   assert.equal(payload.pairingSession.pairingPayload.sessionId, "session-renewed");
+});
+
+test("domaeng renew-pairing prints the renewed QR/code and Web App URL", async () => {
+  const calls = [];
+  const messages = [];
+  const pairingSession = {
+    pairingCode: "ABCD2345EF",
+    pairingPayload: {
+      relay: "ws://192.168.1.44:9000/relay",
+      sessionId: "session-renewed",
+    },
+  };
+
+  await main({
+    argv: ["node", "domaeng", "renew-pairing"],
+    platform: "darwin",
+    consoleImpl: {
+      log(message) {
+        messages.push(message);
+      },
+      error(message) {
+        throw new Error(`unexpected error: ${message}`);
+      },
+    },
+    exitImpl(code) {
+      throw new Error(`unexpected exit ${code}`);
+    },
+    deps: {
+      async requestMacOSBridgePairingRenewal(options) {
+        calls.push(["renew", options]);
+        return {
+          request: { id: "renew-1" },
+          pairingSession,
+        };
+      },
+      printMacOSBridgePairingQr(options) {
+        calls.push(["print-qr", options]);
+      },
+    },
+  });
+
+  assert.deepEqual(calls, [
+    ["renew", { waitForPairing: true }],
+    ["print-qr", { pairingSession, showQRCode: true }],
+  ]);
+  assert.deepEqual(messages, [
+    "[domaeng] Pairing code renewed.",
+    [
+      "Relay:",
+      "  Active relay: ws://192.168.1.44:9000/relay",
+      "  Web app: http://192.168.1.44:9000/app/",
+    ].join("\n"),
+  ]);
 });

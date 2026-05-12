@@ -20,7 +20,12 @@ const {
 test("shouldManageLocalRelay covers LAN and Tailscale relay URLs only by default", () => {
   assert.equal(shouldManageLocalRelay("ws://mac.local:9000/relay"), true);
   assert.equal(shouldManageLocalRelay("ws://127.0.0.1:9000/relay"), true);
+  assert.equal(shouldManageLocalRelay("ws://192.168.1.44:9000/relay"), true);
+  assert.equal(shouldManageLocalRelay("ws://10.0.0.12:9000/relay"), true);
+  assert.equal(shouldManageLocalRelay("ws://172.20.1.12:9000/relay"), true);
+  assert.equal(shouldManageLocalRelay("ws://100.64.1.5:9000/relay"), true);
   assert.equal(shouldManageLocalRelay("wss://mac.tailnet.ts.net/relay"), true);
+  assert.equal(shouldManageLocalRelay("ws://203.0.113.5:9000/relay"), false);
   assert.equal(shouldManageLocalRelay("wss://relay.example.com/relay"), false);
   assert.equal(shouldManageLocalRelay("wss://relay.example.com/relay", {
     env: { DOMAENG_LOCAL_RELAY_ENABLED: "true" },

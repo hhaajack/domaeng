@@ -32,6 +32,20 @@ async function waitFor(predicate, timeoutMs = 500) {
   return predicate();
 }
 
+function osWithLanAddress(address) {
+  return {
+    networkInterfaces() {
+      return {
+        en0: [{
+          address,
+          family: "IPv4",
+          internal: false,
+        }],
+      };
+    },
+  };
+}
+
 test("readBridgeConfig keeps safe defaults and explicit overrides", () => {
   const macConfig = readBridgeConfig({
     env: {},
@@ -295,10 +309,11 @@ test("readBridgeConfig uses a packaged push default only when it is explicitly p
   assert.equal(config.pushServiceUrl, "https://relay.example");
 });
 
-test("readBridgeConfig defaults source checkouts with a local relay to localhost", () => {
+test("readBridgeConfig defaults source checkouts with a local relay to LAN", () => {
   const config = readBridgeConfig({
     env: {},
     runtimeRoot: "/workspace/phodex-bridge",
+    osImpl: osWithLanAddress("192.168.1.44"),
     fsImpl: {
       existsSync(targetPath) {
         return targetPath === "/workspace/.git"
@@ -307,8 +322,45 @@ test("readBridgeConfig defaults source checkouts with a local relay to localhost
     },
   });
 
-  assert.equal(config.relayUrl, "ws://127.0.0.1:9000/relay");
-  assert.equal(config.pushServiceUrl, "http://127.0.0.1:9000");
+  assert.equal(config.relayUrl, "ws://192.168.1.44:9000/relay");
+  assert.equal(config.pushServiceUrl, "http://192.168.1.44:9000");
+});
+
+test("readBridgeConfig lets source local relay outrank stale loopback daemon config", () => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "domaeng-source-state-"));
+  try {
+    fs.writeFileSync(
+      path.join(stateDir, "daemon-config.json"),
+      JSON.stringify({ relayUrl: "ws://127.0.0.1:9000/relay" }),
+      "utf8"
+    );
+
+    const config = readBridgeConfig({
+      env: {
+        REMODEX_DEVICE_STATE_DIR: stateDir,
+      },
+      runtimeRoot: "/workspace/phodex-bridge",
+      osImpl: osWithLanAddress("192.168.1.45"),
+      fsImpl: {
+        existsSync(targetPath) {
+          return targetPath === "/workspace/.git"
+            || targetPath === "/workspace/relay/server.js"
+            || targetPath === path.join(stateDir, "daemon-config.json");
+        },
+        readFileSync(targetPath) {
+          if (targetPath === path.join(stateDir, "daemon-config.json")) {
+            return JSON.stringify({ relayUrl: "ws://127.0.0.1:9000/relay" });
+          }
+          throw new Error("unexpected read");
+        },
+      },
+    });
+
+    assert.equal(config.relayUrl, "ws://192.168.1.45:9000/relay");
+    assert.equal(config.pushServiceUrl, "http://192.168.1.45:9000");
+  } finally {
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
 });
 
 test("readBridgeConfig does not use the hosted fallback inside a source checkout without a local relay", () => {
@@ -326,7 +378,7 @@ test("readBridgeConfig does not use the hosted fallback inside a source checkout
   assert.equal(config.pushServiceUrl, "");
 });
 
-test("readBridgeConfig defaults packaged installs with bundled relay to localhost", () => {
+test("readBridgeConfig defaults packaged installs with bundled relay to LAN", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "domaeng-bundled-package-"));
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "domaeng-state-"));
   try {
@@ -339,10 +391,11 @@ test("readBridgeConfig defaults packaged installs with bundled relay to localhos
       },
       runtimeRoot: tempRoot,
       fsImpl: fs,
+      osImpl: osWithLanAddress("10.0.0.12"),
     });
 
-    assert.equal(config.relayUrl, "ws://127.0.0.1:9000/relay");
-    assert.equal(config.pushServiceUrl, "http://127.0.0.1:9000");
+    assert.equal(config.relayUrl, "ws://10.0.0.12:9000/relay");
+    assert.equal(config.pushServiceUrl, "http://10.0.0.12:9000");
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(stateDir, { recursive: true, force: true });
@@ -376,6 +429,7 @@ test("readBridgeConfig lets bundled local relay outrank stale persisted package 
       },
       runtimeRoot: tempRoot,
       fsImpl: fs,
+      osImpl: osWithLanAddress("192.168.50.10"),
     });
     const explicitConfig = readBridgeConfig({
       env: {
@@ -386,8 +440,8 @@ test("readBridgeConfig lets bundled local relay outrank stale persisted package 
       fsImpl: fs,
     });
 
-    assert.equal(config.relayUrl, "ws://127.0.0.1:9000/relay");
-    assert.equal(config.pushServiceUrl, "http://127.0.0.1:9000");
+    assert.equal(config.relayUrl, "ws://192.168.50.10:9000/relay");
+    assert.equal(config.pushServiceUrl, "http://192.168.50.10:9000");
     assert.equal(explicitConfig.relayUrl, "wss://self-host.example/relay");
     assert.equal(explicitConfig.pushServiceUrl, "https://self-host.example");
   } finally {

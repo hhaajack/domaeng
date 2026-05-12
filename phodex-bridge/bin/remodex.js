@@ -153,8 +153,21 @@ async function main({
     });
     deps.readBridgeConfig();
     const result = await deps.startMacOSBridgeService({
-      waitForPairing: false,
+      waitForPairing: !jsonOutput,
     });
+    if (!jsonOutput) {
+      consoleImpl.log("[domaeng] macOS bridge service restarted.");
+      deps.printMacOSBridgePairingQr({
+        pairingSession: result?.pairingSession,
+        showQRCode: false,
+      });
+      printUpManagementHelp({
+        config: result?.config,
+        localRelay: result?.localRelay,
+        consoleImpl,
+      });
+      return;
+    }
     emitResult({
       payload: {
         ok: true,
@@ -249,6 +262,18 @@ async function main({
       const result = await deps.requestMacOSBridgePairingRenewal({
         waitForPairing: true,
       });
+      if (!jsonOutput) {
+        consoleImpl.log("[domaeng] Pairing code renewed.");
+        deps.printMacOSBridgePairingQr({
+          pairingSession: result?.pairingSession,
+          showQRCode: true,
+        });
+        printPairingAccessHelp({
+          pairingSession: result?.pairingSession,
+          consoleImpl,
+        });
+        return;
+      }
       emitResult({
         payload: {
           ok: true,
@@ -429,6 +454,19 @@ function printUpManagementHelp({
     "Optional menu bar control (unsigned/adhoc-signed; macOS may require approval):",
     "  domaeng menubar install",
     "  domaeng menubar open",
+  ].join("\n"));
+}
+
+function printPairingAccessHelp({
+  pairingSession = null,
+  consoleImpl = console,
+} = {}) {
+  const relayUrl = readNonEmptyString(pairingSession?.pairingPayload?.relay) || "unknown";
+  const webAppUrl = webAppUrlFromRelayUrl(relayUrl) || "unknown";
+  consoleImpl.log([
+    "Relay:",
+    `  Active relay: ${relayUrl}`,
+    `  Web app: ${webAppUrl}`,
   ].join("\n"));
 }
 
