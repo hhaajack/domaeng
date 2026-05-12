@@ -440,9 +440,11 @@ function printUpManagementHelp({
     "",
     "[domaeng] Domaeng is running in the background. You can close this Terminal window.",
     "",
+    "=== Web app ===",
+    `  ${webAppUrl}`,
+    "",
     "Relay:",
     `  Active relay: ${relayUrl}`,
-    `  Web app: ${webAppUrl}`,
     `  Local relay: ${localRelayStatus}`,
     "",
     "Manage:",
@@ -464,9 +466,11 @@ function printPairingAccessHelp({
   const relayUrl = readNonEmptyString(pairingSession?.pairingPayload?.relay) || "unknown";
   const webAppUrl = webAppUrlFromRelayUrl(relayUrl) || "unknown";
   consoleImpl.log([
+    "=== Web app ===",
+    `  ${webAppUrl}`,
+    "",
     "Relay:",
     `  Active relay: ${relayUrl}`,
-    `  Web app: ${webAppUrl}`,
   ].join("\n"));
 }
 

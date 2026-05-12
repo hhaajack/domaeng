@@ -48,14 +48,15 @@ function printQR(pairingSessionOrPayload, options = {}) {
   const env = options.env || process.env;
   const showQRCode = options.showQRCode !== false;
 
+  console.log("\n=== Pairing code ===\n");
   if (showQRCode) {
-    console.log("\nScan this QR with Domaeng Web:\n");
+    console.log("Scan this QR with Domaeng Web:\n");
     qrcode.generate(payload, { small: true });
   }
   if (pairingCode) {
     console.log(showQRCode
       ? "Or paste this pairing code in Domaeng Web:\n"
-      : "\nPaste this pairing code in Domaeng Web:\n");
+      : "Paste this pairing code in Domaeng Web:\n");
     console.log(pairingCode);
   }
   console.log(`\nSession ID: ${sessionIdShort || "(none)"}`);
