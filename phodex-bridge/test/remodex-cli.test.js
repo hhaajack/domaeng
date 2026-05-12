@@ -146,6 +146,52 @@ test("domaeng up shows a startup indicator while waiting for the pairing code", 
   ]);
 });
 
+test("domaeng up opens an installed MenuBar app without changing startup output", async () => {
+  const calls = [];
+  const messages = [];
+
+  await main({
+    argv: ["node", "domaeng", "up"],
+    platform: "darwin",
+    consoleImpl: {
+      log(message) {
+        messages.push(message);
+      },
+      error(message) {
+        messages.push(message);
+      },
+    },
+    exitImpl(code) {
+      throw new Error(`unexpected exit ${code}`);
+    },
+    deps: {
+      async startMacOSBridgeService(options) {
+        calls.push(["start-service", options]);
+        return {
+          pairingSession: { pairingPayload: { sessionId: "session-up" } },
+          config: { relayUrl: "ws://192.168.1.44:9000/relay" },
+          localRelay: { managed: true, started: true, port: 9000 },
+        };
+      },
+      printMacOSBridgePairingQr(options) {
+        calls.push(["print-qr", options]);
+      },
+      ensureMenuBarAppForStartup() {
+        calls.push(["open-menubar"]);
+        return { opened: true };
+      },
+    },
+  });
+
+  assert.deepEqual(calls, [
+    ["start-service", { waitForPairing: true }],
+    ["print-qr", { pairingSession: { pairingPayload: { sessionId: "session-up" } }, showQRCode: false }],
+    ["open-menubar"],
+  ]);
+  assert.equal(messages[0], "[domaeng] Starting bridge and pairing code...");
+  assert.equal(messages.length, 2);
+});
+
 test("domaeng status --json exposes daemon metadata for local diagnostics", async () => {
   const writes = [];
   const originalWrite = process.stdout.write;
@@ -251,6 +297,149 @@ test("domaeng trusted-device disable emits machine-readable result", async () =>
   assert.equal(payload.action, "disable");
   assert.equal(payload.trustedDevice.id, "dev_abc123");
   assert.equal(payload.trustedDevice.status, "disabled");
+});
+
+test("domaeng menubar install reports the installed prebuilt app path", async () => {
+  const messages = [];
+
+  await main({
+    argv: ["node", "domaeng", "menubar", "install"],
+    platform: "darwin",
+    consoleImpl: {
+      log(message) {
+        messages.push(message);
+      },
+      error(message) {
+        throw new Error(`unexpected error: ${message}`);
+      },
+    },
+    exitImpl(code) {
+      throw new Error(`unexpected exit ${code}`);
+    },
+    deps: {
+      installMenuBarApp() {
+        return {
+          installedAppPath: "/Users/tester/Applications/DomaengMenuBar.app",
+        };
+      },
+    },
+  });
+
+  assert.deepEqual(messages, [
+    "[domaeng] Installed DomaengMenuBar.app to /Users/tester/Applications/DomaengMenuBar.app.",
+  ]);
+});
+
+test("domaeng menubar status emits machine-readable bundled state", async () => {
+  const writes = [];
+  const originalWrite = process.stdout.write;
+
+  process.stdout.write = (chunk, encoding, callback) => {
+    writes.push(String(chunk));
+    if (typeof callback === "function") {
+      callback();
+    }
+    return true;
+  };
+
+  try {
+    await main({
+      argv: ["node", "domaeng", "menubar", "status", "--json"],
+      platform: "darwin",
+      consoleImpl: {
+        log() {},
+        error(message) {
+          throw new Error(`unexpected error: ${message}`);
+        },
+      },
+      exitImpl(code) {
+        throw new Error(`unexpected exit ${code}`);
+      },
+      deps: {
+        getMenuBarAppStatus() {
+          return {
+            bundled: true,
+            bundledAppPath: "/pkg/bundled/menubar/DomaengMenuBar.app",
+            installed: false,
+            installedAppPath: "/Users/tester/Applications/DomaengMenuBar.app",
+          };
+        },
+      },
+    });
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+
+  const payload = JSON.parse(writes.join("").trim());
+  assert.equal(payload.ok, true);
+  assert.equal(payload.action, "status");
+  assert.equal(payload.bundled, true);
+  assert.equal(payload.installed, false);
+});
+
+test("domaeng menubar open routes through the prebuilt app opener", async () => {
+  const messages = [];
+
+  await main({
+    argv: ["node", "domaeng", "menubar", "open"],
+    platform: "darwin",
+    consoleImpl: {
+      log(message) {
+        messages.push(message);
+      },
+      error(message) {
+        throw new Error(`unexpected error: ${message}`);
+      },
+    },
+    exitImpl(code) {
+      throw new Error(`unexpected exit ${code}`);
+    },
+    deps: {
+      openMenuBarApp() {
+        return {
+          appPath: "/Users/tester/Applications/DomaengMenuBar.app",
+        };
+      },
+    },
+  });
+
+  assert.deepEqual(messages, [
+    "[domaeng] Opened DomaengMenuBar.app from /Users/tester/Applications/DomaengMenuBar.app.",
+  ]);
+});
+
+test("domaeng menubar login toggles open-at-login", async () => {
+  const messages = [];
+  const calls = [];
+
+  await main({
+    argv: ["node", "domaeng", "menubar", "login", "off"],
+    platform: "darwin",
+    consoleImpl: {
+      log(message) {
+        messages.push(message);
+      },
+      error(message) {
+        throw new Error(`unexpected error: ${message}`);
+      },
+    },
+    exitImpl(code) {
+      throw new Error(`unexpected exit ${code}`);
+    },
+    deps: {
+      setMenuBarOpenAtLoginEnabled(options) {
+        calls.push(options);
+        return {
+          openAtLogin: false,
+        };
+      },
+    },
+  });
+
+  assert.deepEqual(calls, [{ enabled: false }]);
+  assert.deepEqual(messages, [
+    "[domaeng] Menu bar open-at-login disabled.",
+  ]);
 });
 
 test("domaeng renew-pairing emits the fresh daemon pairing session", async () => {

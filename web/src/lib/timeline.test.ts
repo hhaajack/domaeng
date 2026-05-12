@@ -91,6 +91,27 @@ describe("timeline item reconciliation", () => {
     });
   });
 
+  it("removes repeated placeholder thinking text when the turn completes", () => {
+    let next = state();
+    next = applyNotification(next, "item/reasoning/textDelta", {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      delta: "Thinking..."
+    });
+    next = applyNotification(next, "item/reasoning/textDelta", {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      delta: "Thinking..."
+    });
+    next = applyNotification(next, "turn/completed", {
+      threadId: "thread-1",
+      turnId: "turn-1"
+    });
+
+    expect(next.runningTurnByThread["thread-1"]).toBeUndefined();
+    expect(next.messagesByThread["thread-1"]).toEqual([]);
+  });
+
   it("reconciles assistant completion by turn when the streaming delta lacks item identity", () => {
     let next = state();
     next = applyNotification(next, "item/agentMessage/delta", {
@@ -382,6 +403,46 @@ describe("timeline item reconciliation", () => {
     });
 
     expect(next.runningTurnByThread["thread-1"]).toBeUndefined();
+  });
+
+  it("drops placeholder thinking when thread read catches up with the completed turn", () => {
+    let initial = state();
+    initial = applyNotification(initial, "turn/started", {
+      threadId: "thread-1",
+      turnId: "turn-live"
+    });
+    initial = applyNotification(initial, "item/reasoning/textDelta", {
+      threadId: "thread-1",
+      turnId: "turn-live",
+      delta: "Thinking..."
+    });
+    initial = applyNotification(initial, "item/reasoning/textDelta", {
+      threadId: "thread-1",
+      turnId: "turn-live",
+      delta: "Thinking..."
+    });
+
+    const next = decodeThreadRead(initial, {
+      thread: {
+        id: "thread-1",
+        turns: [{
+          id: "turn-live",
+          items: [{
+            id: "assistant-canonical",
+            type: "assistant_message",
+            text: "done"
+          }]
+        }]
+      }
+    });
+
+    expect(next.runningTurnByThread["thread-1"]).toBeUndefined();
+    expect(next.messagesByThread["thread-1"]).toHaveLength(1);
+    expect(next.messagesByThread["thread-1"][0]).toMatchObject({
+      role: "assistant",
+      text: "done"
+    });
+    expect(next.messagesByThread["thread-1"][0].streaming).toBeUndefined();
   });
 
   it("ignores stale terminal notifications for a different running turn", () => {

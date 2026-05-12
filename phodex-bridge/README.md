@@ -70,6 +70,10 @@ Managed push remains off unless you configure it explicitly.
 - `domaeng renew-pairing` asks the macOS daemon for a fresh pairing QR/code.
 - `domaeng trusted-device disable` disables trusted reconnect without deleting pairing history.
 - `domaeng restart` restarts the macOS bridge service.
+- `domaeng menubar status` checks whether the optional native MenuBar app is bundled/installed.
+- `domaeng menubar install` installs the bundled prebuilt `DomaengMenuBar.app` to `~/Applications` and enables login startup.
+- `domaeng menubar open` opens the installed or bundled `DomaengMenuBar.app`.
+- `domaeng menubar login on|off` changes the MenuBar login startup preference.
 - `domaeng-jsonl-diagnose` inspects Codex JSONL session files for debugging.
 
 ## State and Compatibility
@@ -90,4 +94,4 @@ npm test
 npm pack --dry-run
 ```
 
-The package tarball should contain `bin/`, `src/`, `bundled/`, `README.md`, `LICENSE`, `NOTICE`, and `package.json`. The `bundled/` directory contains distributable local relay and Web App assets. It should not contain test fixtures, local relay sessions, pairing secrets, or private packaged defaults.
+The package tarball should contain `bin/`, `src/`, `bundled/`, `README.md`, `LICENSE`, `NOTICE`, and `package.json`. The `bundled/` directory contains distributable local relay and Web App assets, plus the optional prebuilt native MenuBar app when a release build provides it. It should not contain test fixtures, local relay sessions, pairing secrets, or private packaged defaults.

@@ -95,6 +95,18 @@ Open the web app served by the relay, then scan the QR code or enter the pairing
 5. Try git operations from the web app (commit, push, branch switching)
 6. Reopen the web app and verify that the trusted reconnect path is used instead of forcing a fresh QR immediately
 
+### macOS MenuBar control
+
+The native MenuBar app is a thin control panel. It must not embed a WebView, bundle `web/dist`, or run its own relay.
+
+To build the prebuilt app bundle for local packaging:
+
+```sh
+./macos/DomaengMenuBar/scripts/build-app.sh
+```
+
+The output is `macos/DomaengMenuBar/build/DomaengMenuBar.app`. `npm pack` copies that bundle when it exists. User-facing `domaeng menubar install` only installs a prebuilt bundle, enables the user LaunchAgent for login startup, and must not run a local Xcode or Swift build.
+
 ### Environment variables
 
 For OSS/local development, prefer the launcher above. If you want to point the bridge process at your own relay manually without the launcher, export `DOMAENG_RELAY` in your shell:
@@ -126,11 +138,15 @@ domaeng/
 │       ├── rollout-watch.js        # Thread event log tailing
 │       └── qr.js                   # QR code generation
 │
+├── macos/                  # Native macOS MenuBar control panel
+│   └── DomaengMenuBar/
+│
 ```
 
 ### Code style
 
 - **Bridge**: CommonJS, no transpilation, no TypeScript. Keep it simple.
+- **MenuBar**: SwiftUI/AppKit through Swift Package Manager. Keep it as a thin CLI-driven control panel.
 - No linter or formatter is enforced — just match what's already there.
 
 ### Attribution

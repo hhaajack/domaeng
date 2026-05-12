@@ -81,6 +81,7 @@ domaeng up
 ## 接下来读什么
 
 - 另一台设备连不上 Mac：看 [Tailscale 使用说明](tailscale.md)。
+- 想用 GUI 查看和控制后台服务：看 [菜单栏控制](menu-bar.md)。
 - 想理解每个按钮：看 [操作功能说明](operations.md)。
 - 想自己运行 relay 或反向代理：看 [Self-hosting Domaeng](../self-hosting.md)。
 - 想查命令、环境变量、安全说明：看 [Advanced reference](../reference.md)。

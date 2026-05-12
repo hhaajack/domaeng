@@ -121,9 +121,15 @@ export function decodeThreadRead(state: TimelineState, result: JSONValue | undef
     }
   }
   const existingMessages = state.messagesByThread[thread.id] ?? [];
-  const mergedMessages = mergeDecodedThreadMessages(existingMessages, messages);
   const runningTurnId = runningTurnIdFromThreadObject(threadObject, turns);
   const existingRunningTurnId = state.runningTurnByThread[thread.id];
+  const settledTurnIds = settledTurnIdsFromDecodedThread(turns, messages);
+  const mergedMessages = mergeDecodedThreadMessages(existingMessages, messages, {
+    settledTurnIds,
+    runningTurnId,
+    existingRunningTurnId,
+    threadIsTerminal: isTerminalStatusObject(threadObject)
+  });
   const runningTurnByThread = { ...state.runningTurnByThread };
   if (runningTurnId) {
     runningTurnByThread[thread.id] = runningTurnId;
@@ -132,7 +138,8 @@ export function decodeThreadRead(state: TimelineState, result: JSONValue | undef
     existingMessages,
     decodedMessages: messages,
     threadObject,
-    turns
+    turns,
+    settledTurnIds
   })) {
     runningTurnByThread[thread.id] = existingRunningTurnId;
   } else {
@@ -392,7 +399,7 @@ function isPlaceholderThinkingForCompletedTurn(entry: TimelineMessage, turnId: s
   if (turnId && entry.turnId && entry.turnId !== turnId) {
     return false;
   }
-  return normalizeMessageText(entry.text).replace(/[^a-z0-9]/gi, "").toLowerCase() === "thinking";
+  return isPlaceholderThinkingText(entry.text);
 }
 
 function appendSystemMessage(
@@ -573,19 +580,24 @@ function shouldPreserveExistingRunningTurn({
   existingMessages,
   decodedMessages,
   threadObject,
-  turns
+  turns,
+  settledTurnIds
 }: {
   existingRunningTurnId: string | undefined;
   existingMessages: TimelineMessage[];
   decodedMessages: TimelineMessage[];
   threadObject: JSONObject;
   turns: JSONValue[];
+  settledTurnIds: Set<string>;
 }): boolean {
   if (!existingRunningTurnId || isTerminalStatusObject(threadObject)) {
     return false;
   }
 
-  if (existingRunningTurnId !== "__running__" && turnHasTerminalStatus(turns, existingRunningTurnId)) {
+  if (
+    existingRunningTurnId !== "__running__"
+    && (turnHasTerminalStatus(turns, existingRunningTurnId) || settledTurnIds.has(existingRunningTurnId))
+  ) {
     return false;
   }
 
@@ -915,6 +927,11 @@ function normalizeMessageText(value: string): string {
   return value.trim().replace(/\s+/g, " ");
 }
 
+function isPlaceholderThinkingText(value: string): boolean {
+  const normalized = normalizeMessageText(value).replace(/[^a-z0-9]/gi, "").toLowerCase();
+  return /^(thinking)+$/.test(normalized);
+}
+
 function textsOverlap(left: string, right: string): boolean {
   const normalizedLeft = normalizeMessageText(left);
   const normalizedRight = normalizeMessageText(right);
@@ -947,13 +964,14 @@ function shouldReplaceItemId(entry: TimelineMessage, nextItemId: string | undefi
 
 function mergeDecodedThreadMessages(
   existing: TimelineMessage[],
-  decoded: TimelineMessage[]
+  decoded: TimelineMessage[],
+  context: ThreadReadMergeContext
 ): TimelineMessage[] {
   if (existing.length === 0) {
     return decoded;
   }
 
-  const preserved = existing.filter((entry) => shouldPreserveExistingMessage(entry, decoded));
+  const preserved = existing.filter((entry) => shouldPreserveExistingMessage(entry, decoded, context));
   if (preserved.length === 0) {
     return decoded;
   }
@@ -963,9 +981,14 @@ function mergeDecodedThreadMessages(
 
 function shouldPreserveExistingMessage(
   existing: TimelineMessage,
-  decoded: TimelineMessage[]
+  decoded: TimelineMessage[],
+  context: ThreadReadMergeContext
 ): boolean {
   if (decoded.some((candidate) => decodedMessageRepresentsExisting(candidate, existing))) {
+    return false;
+  }
+
+  if (isPlaceholderThinkingForCompletedTurn(existing, undefined) && shouldDropPlaceholderThinkingFromThreadRead(existing, context)) {
     return false;
   }
 
@@ -978,6 +1001,53 @@ function shouldPreserveExistingMessage(
   }
 
   return existing.kind !== "error";
+}
+
+interface ThreadReadMergeContext {
+  settledTurnIds: Set<string>;
+  runningTurnId: string | undefined;
+  existingRunningTurnId: string | undefined;
+  threadIsTerminal: boolean;
+}
+
+function shouldDropPlaceholderThinkingFromThreadRead(
+  existing: TimelineMessage,
+  context: ThreadReadMergeContext
+): boolean {
+  if (context.threadIsTerminal) {
+    return true;
+  }
+  if (existing.turnId) {
+    if (context.runningTurnId === existing.turnId) {
+      return false;
+    }
+    return context.settledTurnIds.has(existing.turnId);
+  }
+  const existingRunningTurnId = context.existingRunningTurnId;
+  if (!existingRunningTurnId || existingRunningTurnId === "__running__") {
+    return false;
+  }
+  if (context.runningTurnId === existingRunningTurnId) {
+    return false;
+  }
+  return context.settledTurnIds.has(existingRunningTurnId);
+}
+
+function settledTurnIdsFromDecodedThread(turns: JSONValue[], messages: TimelineMessage[]): Set<string> {
+  const settledTurnIds = new Set<string>();
+  for (const turnValue of turns) {
+    const turn = asObject(turnValue);
+    const turnId = readString(turn.id) || readString(turn.turnId) || readString(turn.turn_id);
+    if (turnId && isTerminalStatusObject(turn)) {
+      settledTurnIds.add(turnId);
+    }
+  }
+  for (const decoded of messages) {
+    if (decoded.turnId && decoded.role === "assistant") {
+      settledTurnIds.add(decoded.turnId);
+    }
+  }
+  return settledTurnIds;
 }
 
 function decodedMessageRepresentsExisting(

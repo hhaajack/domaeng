@@ -12,6 +12,7 @@ fs.mkdirSync(bundleRoot, { recursive: true });
 
 copyRelayAssets();
 copyWebAssets();
+copyMenuBarAppIfAvailable();
 
 function copyRelayAssets() {
   const sourceRoot = path.join(repoRoot, "relay");
@@ -40,6 +41,33 @@ function copyWebAssets() {
   });
 }
 
+function copyMenuBarAppIfAvailable() {
+  const sourcePath = resolveMenuBarAppPath();
+  if (!sourcePath) {
+    return;
+  }
+
+  const targetRoot = path.join(bundleRoot, "menubar");
+  const targetPath = path.join(targetRoot, "DomaengMenuBar.app");
+  fs.mkdirSync(targetRoot, { recursive: true });
+  fs.cpSync(sourcePath, targetPath, {
+    recursive: true,
+    force: true,
+    dereference: false,
+  });
+}
+
+function resolveMenuBarAppPath() {
+  const explicitPath = readString(process.env.DOMAENG_MENUBAR_APP_PATH);
+  if (explicitPath) {
+    assertDirectory(explicitPath, `DOMAENG_MENUBAR_APP_PATH does not exist: ${explicitPath}`);
+    return explicitPath;
+  }
+
+  const defaultPath = path.join(repoRoot, "macos", "DomaengMenuBar", "build", "DomaengMenuBar.app");
+  return fs.existsSync(defaultPath) ? defaultPath : "";
+}
+
 function copyFile(sourcePath, targetPath) {
   if (!fs.existsSync(sourcePath)) {
     throw new Error(`Missing bundled asset source: ${sourcePath}`);
@@ -56,4 +84,8 @@ function assertDirectory(targetPath, message) {
 
 function removeIfPresent(targetPath) {
   fs.rmSync(targetPath, { recursive: true, force: true });
+}
+
+function readString(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : "";
 }

@@ -6,6 +6,7 @@ This page keeps the details out of the front-page README. Start with [README.md]
 
 - [Getting started](getting-started.md): first install, first pairing, and first successful run.
 - [Tailscale setup](tailscale.md): private cross-device access without hardcoded hosted-service assumptions.
+- [Menu bar control](menu-bar.md): optional native macOS control panel for the background service.
 - [Operations guide](operations.md): user-facing explanations of common actions.
 - [Self-hosting Domaeng](self-hosting.md): local LAN, private relay, reverse proxy, and troubleshooting.
 
@@ -21,6 +22,10 @@ This page keeps the details out of the front-page README. Start with [README.md]
 | `domaeng reset-pairing` | Clear local pairing state when you intentionally want to trust a new client. |
 | `domaeng resume` | Reopen the most recently active thread in `Codex.app`. |
 | `domaeng watch [threadId]` | Watch local rollout updates for a thread. |
+| `domaeng menubar status` | Check whether the optional native MenuBar app is bundled or installed. |
+| `domaeng menubar install` | Install the bundled prebuilt `DomaengMenuBar.app` to `~/Applications` and enable login startup. |
+| `domaeng menubar open` | Open the installed or bundled `DomaengMenuBar.app`. |
+| `domaeng menubar login on\|off` | Enable or disable MenuBar open-at-login. |
 
 ## Environment Variables
 

@@ -6,7 +6,12 @@
 // Depends on: ../src
 
 const {
+  ensureMenuBarAppForStartup,
   getMacOSBridgeServiceStatus,
+  getMenuBarAppStatus,
+  installMenuBarApp,
+  openInstalledMenuBarAppIfAvailable,
+  openMenuBarApp,
   printMacOSBridgePairingQr,
   printMacOSBridgeServiceStatus,
   readBridgeConfig,
@@ -21,6 +26,7 @@ const {
   startLocalRelayService,
   stopMacOSBridgeService,
   stopLocalRelayService,
+  setMenuBarOpenAtLoginEnabled,
   setTrustedDeviceEnabled,
   resetBridgePairing,
   openLastActiveThread,
@@ -29,7 +35,12 @@ const {
 const { version } = require("../package.json");
 
 const defaultDeps = {
+  ensureMenuBarAppForStartup,
   getMacOSBridgeServiceStatus,
+  getMenuBarAppStatus,
+  installMenuBarApp,
+  openInstalledMenuBarAppIfAvailable,
+  openMenuBarApp,
   printMacOSBridgePairingQr,
   printMacOSBridgeServiceStatus,
   readBridgeConfig,
@@ -44,6 +55,7 @@ const defaultDeps = {
   startLocalRelayService,
   stopMacOSBridgeService,
   stopLocalRelayService,
+  setMenuBarOpenAtLoginEnabled,
   setTrustedDeviceEnabled,
   resetBridgePairing,
   openLastActiveThread,
@@ -70,6 +82,8 @@ async function main({
     trustedDeviceAction,
     trustedDeviceId,
     trustedDeviceName,
+    menuBarAction,
+    menuBarValue,
   } = parseCliArgs(argv.slice(2));
 
   if (isVersionCommand(command)) {
@@ -92,6 +106,7 @@ async function main({
         localRelay: result.localRelay,
         consoleImpl,
       });
+      ensureMenuBarAppForStartupQuietly({ deps });
       return;
     }
 
@@ -311,6 +326,36 @@ async function main({
     return;
   }
 
+  if (command === "menubar") {
+    assertMacOSCommand(command, {
+      platform,
+      consoleImpl,
+      exitImpl,
+    });
+    try {
+      const result = runMenuBarCommand({
+        action: menuBarAction,
+        value: menuBarValue,
+        deps,
+      });
+      emitResult({
+        payload: {
+          ok: true,
+          currentVersion: version,
+          action: menuBarAction || "status",
+          ...result,
+        },
+        message: menuBarActionMessage(menuBarAction, result),
+        jsonOutput,
+        consoleImpl,
+      });
+    } catch (error) {
+      consoleImpl.error(`[domaeng] ${(error && error.message) || "Failed to control the menu bar app."}`);
+      exitImpl(1);
+    }
+    return;
+  }
+
   if (command === "resume") {
     try {
       const state = deps.openLastActiveThread();
@@ -347,8 +392,9 @@ async function main({
     "Usage: domaeng up | domaeng run | domaeng start | domaeng restart | domaeng stop | domaeng status | "
     + "domaeng reset-pairing | domaeng renew-pairing | "
     + "domaeng trusted-device <enable|disable|revoke|rename> <id> [name] | "
+    + "domaeng menubar <status|install|open|login> [on|off] | "
     + "domaeng resume | domaeng watch [threadId] | domaeng --version | "
-    + "append --json to start/restart/stop/status/reset-pairing/renew-pairing/trusted-device/resume for machine-readable output"
+    + "append --json to start/restart/stop/status/reset-pairing/renew-pairing/trusted-device/menubar/resume for machine-readable output"
   );
   exitImpl(1);
 }
@@ -373,7 +419,50 @@ function parseCliArgs(rawArgs) {
     trustedDeviceAction: positionals[1] || "",
     trustedDeviceId: positionals[2] || "",
     trustedDeviceName: positionals.slice(3).join(" "),
+    menuBarAction: positionals[1] || "status",
+    menuBarValue: positionals[2] || "",
   };
+}
+
+function runMenuBarCommand({ action, value, deps }) {
+  const normalizedAction = action || "status";
+  if (normalizedAction === "status") {
+    return deps.getMenuBarAppStatus();
+  }
+  if (normalizedAction === "install") {
+    return deps.installMenuBarApp();
+  }
+  if (normalizedAction === "open") {
+    return deps.openMenuBarApp();
+  }
+  if (normalizedAction === "login") {
+    return deps.setMenuBarOpenAtLoginEnabled({
+      enabled: parseMenuBarLoginValue(value),
+    });
+  }
+  throw new Error("Usage: domaeng menubar <status|install|open|login> [on|off]");
+}
+
+function ensureMenuBarAppForStartupQuietly({ deps }) {
+  if (typeof deps.ensureMenuBarAppForStartup !== "function") {
+    return;
+  }
+  try {
+    deps.ensureMenuBarAppForStartup();
+  } catch {
+    // The GUI is optional. Starting the bridge should not fail because the control panel cannot open.
+  }
+}
+
+function parseMenuBarLoginValue(value) {
+  const normalized = readNonEmptyString(value).toLowerCase();
+  if (["on", "enable", "enabled", "true", "1", "yes"].includes(normalized)) {
+    return true;
+  }
+  if (["off", "disable", "disabled", "false", "0", "no"].includes(normalized)) {
+    return false;
+  }
+  throw new Error("Usage: domaeng menubar login <on|off>");
 }
 
 function printUpManagementHelp({
@@ -454,6 +543,30 @@ function webAppUrlFromRelayUrl(value) {
 
 function readNonEmptyString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function menuBarActionMessage(action, result = {}) {
+  switch (action || "status") {
+  case "install":
+    return `[domaeng] Installed DomaengMenuBar.app to ${result.installedAppPath}.`;
+  case "open":
+    return `[domaeng] Opened DomaengMenuBar.app from ${result.appPath}.`;
+  case "login":
+    return `[domaeng] Menu bar open-at-login ${result.openAtLogin ? "enabled" : "disabled"}.`;
+  case "status":
+    if (result.bundled && result.installed) {
+      return `[domaeng] DomaengMenuBar.app is bundled and installed at ${result.installedAppPath}.`;
+    }
+    if (result.installed) {
+      return `[domaeng] DomaengMenuBar.app is installed at ${result.installedAppPath}.`;
+    }
+    if (result.bundled) {
+      return "[domaeng] DomaengMenuBar.app is bundled but not installed. Run `domaeng menubar install`.";
+    }
+    return "[domaeng] DomaengMenuBar.app is not bundled with this install.";
+  default:
+    return "[domaeng] Menu bar app command completed.";
+  }
 }
 
 function runTrustedDeviceCommand({ action, deviceId, displayName, deps }) {

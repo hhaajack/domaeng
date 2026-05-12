@@ -10,6 +10,7 @@ The public repository includes:
 
 - the bridge that runs on your Mac
 - the web app source code
+- the native macOS MenuBar control panel source
 - the public relay code
 - local pairing and self-hosting documentation
 
