@@ -66,16 +66,11 @@ Managed push remains off unless you configure it explicitly.
 
 - `domaeng up` starts the bridge or macOS bridge service and prints pairing details.
 - `domaeng status` shows current daemon and bridge status.
-- `domaeng status --json` prints machine-readable status for companion apps.
+- `domaeng status --json` prints machine-readable status for local diagnostics.
 - `domaeng renew-pairing` asks the macOS daemon for a fresh pairing QR/code.
 - `domaeng trusted-device disable` disables trusted reconnect without deleting pairing history.
 - `domaeng restart` restarts the macOS bridge service.
-- `domaeng menubar status` checks whether the optional macOS menu bar app is bundled/installed.
-- `domaeng menubar install` installs the optional unsigned `DomaengMenuBar.app` to `~/Applications`.
-- `domaeng menubar open` opens the optional menu bar app.
 - `domaeng-jsonl-diagnose` inspects Codex JSONL session files for debugging.
-
-The optional `DomaengMenuBar.app` is unsigned/adhoc-signed and not notarized. macOS may require manual approval the first time you open it.
 
 ## State and Compatibility
 
@@ -95,4 +90,4 @@ npm test
 npm pack --dry-run
 ```
 
-The package tarball should contain `bin/`, `src/`, `bundled/`, `README.md`, `LICENSE`, `NOTICE`, and `package.json`. The `bundled/` directory contains distributable local relay and Web App assets, plus the optional unsigned menu bar app when a local app build is available. It should not contain test fixtures, local relay sessions, pairing secrets, or private packaged defaults.
+The package tarball should contain `bin/`, `src/`, `bundled/`, `README.md`, `LICENSE`, `NOTICE`, and `package.json`. The `bundled/` directory contains distributable local relay and Web App assets. It should not contain test fixtures, local relay sessions, pairing secrets, or private packaged defaults.

@@ -7,9 +7,6 @@
 
 const {
   getMacOSBridgeServiceStatus,
-  getMenuBarAppStatus,
-  installMenuBarApp,
-  openMenuBarApp,
   printMacOSBridgePairingQr,
   printMacOSBridgeServiceStatus,
   readBridgeConfig,
@@ -33,9 +30,6 @@ const { version } = require("../package.json");
 
 const defaultDeps = {
   getMacOSBridgeServiceStatus,
-  getMenuBarAppStatus,
-  installMenuBarApp,
-  openMenuBarApp,
   printMacOSBridgePairingQr,
   printMacOSBridgeServiceStatus,
   readBridgeConfig,
@@ -76,7 +70,6 @@ async function main({
     trustedDeviceAction,
     trustedDeviceId,
     trustedDeviceName,
-    menuBarAction,
   } = parseCliArgs(argv.slice(2));
 
   if (isVersionCommand(command)) {
@@ -318,35 +311,6 @@ async function main({
     return;
   }
 
-  if (command === "menubar") {
-    assertMacOSCommand(command, {
-      platform,
-      consoleImpl,
-      exitImpl,
-    });
-    try {
-      const result = runMenuBarCommand({
-        action: menuBarAction,
-        deps,
-      });
-      emitResult({
-        payload: {
-          ok: true,
-          currentVersion: version,
-          action: menuBarAction || "status",
-          ...result,
-        },
-        message: menuBarActionMessage(menuBarAction, result),
-        jsonOutput,
-        consoleImpl,
-      });
-    } catch (error) {
-      consoleImpl.error(`[domaeng] ${(error && error.message) || "Failed to control the menu bar app."}`);
-      exitImpl(1);
-    }
-    return;
-  }
-
   if (command === "resume") {
     try {
       const state = deps.openLastActiveThread();
@@ -383,9 +347,8 @@ async function main({
     "Usage: domaeng up | domaeng run | domaeng start | domaeng restart | domaeng stop | domaeng status | "
     + "domaeng reset-pairing | domaeng renew-pairing | "
     + "domaeng trusted-device <enable|disable|revoke|rename> <id> [name] | "
-    + "domaeng menubar <status|install|open> | "
     + "domaeng resume | domaeng watch [threadId] | domaeng --version | "
-    + "append --json to start/restart/stop/status/reset-pairing/renew-pairing/trusted-device/menubar/resume for machine-readable output"
+    + "append --json to start/restart/stop/status/reset-pairing/renew-pairing/trusted-device/resume for machine-readable output"
   );
   exitImpl(1);
 }
@@ -410,22 +373,7 @@ function parseCliArgs(rawArgs) {
     trustedDeviceAction: positionals[1] || "",
     trustedDeviceId: positionals[2] || "",
     trustedDeviceName: positionals.slice(3).join(" "),
-    menuBarAction: positionals[1] || "status",
   };
-}
-
-function runMenuBarCommand({ action, deps }) {
-  const normalizedAction = action || "status";
-  if (normalizedAction === "status") {
-    return deps.getMenuBarAppStatus();
-  }
-  if (normalizedAction === "install") {
-    return deps.installMenuBarApp();
-  }
-  if (normalizedAction === "open") {
-    return deps.openMenuBarApp();
-  }
-  throw new Error("Usage: domaeng menubar <status|install|open>");
 }
 
 function printUpManagementHelp({
@@ -452,10 +400,6 @@ function printUpManagementHelp({
     "  domaeng restart",
     "  domaeng stop",
     "  domaeng renew-pairing",
-    "",
-    "Optional menu bar control (unsigned/adhoc-signed; macOS may require approval):",
-    "  domaeng menubar install",
-    "  domaeng menubar open",
   ].join("\n"));
 }
 
@@ -510,25 +454,6 @@ function webAppUrlFromRelayUrl(value) {
 
 function readNonEmptyString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : "";
-}
-
-function menuBarActionMessage(action, result = {}) {
-  switch (action || "status") {
-  case "install":
-    return `[domaeng] Installed optional unsigned/adhoc-signed DomaengMenuBar.app to ${result.installedAppPath}. macOS may require manual approval on first launch.`;
-  case "open":
-    return `[domaeng] Opened optional unsigned/adhoc-signed DomaengMenuBar.app from ${result.appPath}. macOS may require manual approval on first launch.`;
-  case "status":
-    if (result.bundled && result.installed) {
-      return `[domaeng] Optional unsigned/adhoc-signed DomaengMenuBar.app is bundled and installed at ${result.installedAppPath}.`;
-    }
-    if (result.bundled) {
-      return "[domaeng] Optional unsigned/adhoc-signed DomaengMenuBar.app is bundled but not installed. Run `domaeng menubar install`.";
-    }
-    return "[domaeng] Optional DomaengMenuBar.app is not bundled with this install.";
-  default:
-    return "[domaeng] Menu bar app command completed.";
-  }
 }
 
 function runTrustedDeviceCommand({ action, deviceId, displayName, deps }) {

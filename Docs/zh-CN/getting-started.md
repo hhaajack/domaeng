@@ -81,7 +81,6 @@ domaeng up
 ## 接下来读什么
 
 - 另一台设备连不上 Mac：看 [Tailscale 使用说明](tailscale.md)。
-- 想从 macOS 状态栏/菜单栏控制：看 [菜单栏控制](menu-bar.md)。
 - 想理解每个按钮：看 [操作功能说明](operations.md)。
 - 想自己运行 relay 或反向代理：看 [Self-hosting Domaeng](../self-hosting.md)。
 - 想查命令、环境变量、安全说明：看 [Advanced reference](../reference.md)。
@@ -106,23 +105,6 @@ domaeng renew-pairing
 domaeng stop
 domaeng up
 ```
-
-### 菜单栏控制提示 CLI missing
-
-先安装 bridge CLI：
-
-```sh
-npm install -g domaeng@latest
-```
-
-如果你在 checkout 里开发，也可以安装本地源码版本：
-
-```sh
-cd domaeng
-npm install -g ./phodex-bridge
-```
-
-然后在菜单栏控制里点 Retry。
 
 ### 需要反馈 bug
 

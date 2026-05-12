@@ -81,7 +81,6 @@ For regular cross-device use, prefer a stable private network such as Tailscale 
 ## When To Read The Other Guides
 
 - If another device cannot reach the Mac, read [Tailscale setup](tailscale.md).
-- If you want a macOS status/menu bar control, read [Menu bar control](menu-bar.md).
 - If you want to understand each button, read [Operations guide](operations.md).
 - If you want to run your own relay or reverse proxy, read [Self-hosting Domaeng](self-hosting.md).
 - If you need commands, environment variables, or security notes, read [Advanced reference](reference.md).
@@ -106,23 +105,6 @@ On macOS, you can also stop and start the bridge again:
 domaeng stop
 domaeng up
 ```
-
-### The menu bar control says the CLI is missing
-
-Install the bridge CLI first:
-
-```sh
-npm install -g domaeng@latest
-```
-
-If you are developing from a checkout, install the local source version instead:
-
-```sh
-cd domaeng
-npm install -g ./phodex-bridge
-```
-
-Then use the control's Retry action.
 
 ### You need to report a bug
 

@@ -40,7 +40,6 @@ Opening a PR does not create an obligation on my side. I may close it. I may ign
 - **[Codex CLI](https://github.com/openai/codex)** installed and working
 - **[Codex desktop app](https://openai.com/index/codex/)** (optional — for viewing threads on Mac)
 - **macOS** (required for desktop refresh; core bridge works on any OS)
-- **Xcode 16+** only if you choose to work on the macOS menu bar companion
 
 ### Bridge setup
 
@@ -87,51 +86,6 @@ That runs `domaeng up`, which:
 
 Open the web app served by the relay, then scan the QR code or enter the pairing code to trust that Mac.
 
-### macOS menu bar companion
-
-```sh
-cd CodexMobile
-open CodexMobile.xcodeproj
-```
-
-1. Select the `DomaengMenuBar` scheme
-2. Build and run (Cmd+R)
-
-The historical iOS client is archived outside the active source tree. Keep menu bar changes scoped to `CodexMobile/DomaengMenuBar/` and its build support.
-
-For a command-line local build from the repo root:
-
-```sh
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-xcodebuild -project CodexMobile/CodexMobile.xcodeproj \
-  -scheme DomaengMenuBar \
-  -configuration Debug \
-  -destination 'platform=macOS' \
-  -derivedDataPath .build/xcode-derived \
-  CODE_SIGNING_ALLOWED=NO build
-```
-
-To use that build on your Mac, install the matching local bridge CLI and copy the app into `/Applications`:
-
-```sh
-cd web
-npm install
-npm run build
-cd ..
-npm install -g ./phodex-bridge
-
-APP_PATH=/Applications/DomaengMenuBar.app
-rm -rf "$APP_PATH"
-ditto .build/xcode-derived/Build/Products/Debug/DomaengMenuBar.app "$APP_PATH"
-rm -rf "$APP_PATH/Contents/Resources/dist"
-ditto web/dist "$APP_PATH/Contents/Resources/dist"
-open "$APP_PATH"
-```
-
-If npm reports a user-cache ownership error, rerun the install with `npm --cache /private/tmp/domaeng-npm-cache install -g ./phodex-bridge` instead of changing repo files.
-
-After installing, the menu bar app's Start action should start both the local relay launchd service and the bridge daemon. `http://127.0.0.1:9000/health` should return `{"ok":true}` before pairing from another device.
-
 ### Testing a full local session
 
 1. Start the local launcher: `./run-local-domaeng.sh`
@@ -172,16 +126,11 @@ domaeng/
 │       ├── rollout-watch.js        # Thread event log tailing
 │       └── qr.js                   # QR code generation
 │
-├── CodexMobile/            # macOS DomaengMenuBar Xcode project
-│   ├── DomaengMenuBar/     # menu bar app source
-│   ├── BuildSupport/       # menu bar build settings and Info.plist
-│   └── CodexMobile/        # shared app assets retained for the menu bar target
 ```
 
 ### Code style
 
 - **Bridge**: CommonJS, no transpilation, no TypeScript. Keep it simple.
-- **Menu bar**: SwiftUI/AppKit, async/await, MainActor isolation. Keep source changes in `CodexMobile/DomaengMenuBar/` unless build support or assets are required.
 - No linter or formatter is enforced — just match what's already there.
 
 ### Attribution

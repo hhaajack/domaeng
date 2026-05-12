@@ -41,18 +41,6 @@ The exact reachable URL depends on how you expose the local relay:
 
 Keep the actual hostname in your own local config. Do not commit personal tailnet names or private addresses to the public repo.
 
-## With The Menu Bar Companion
-
-The macOS menu bar control has a Connection section that can help with this flow:
-
-- `Tailscale Web` shows the Web App URL derived from the detected or saved Tailscale address.
-- `Tailscale Relay` shows the matching relay URL.
-- `Use Tailscale Relay` switches the bridge to that relay path.
-- `Save Tailscale Address` lets you paste a stable Tailscale host when auto-detection is not enough.
-- `Auto Detect` clears the manual host and lets the control inspect the local machine again.
-
-After switching relay paths, use the displayed QR or pairing code to trust the Mac from the Web App.
-
 ## With The CLI
 
 If you use the npm-installed CLI, point the bridge at the reachable relay URL:
@@ -78,10 +66,6 @@ The phone cannot reach that hostname or port. Use the Mac's reachable Tailscale 
 ### Pairing works once but reconnect fails later
 
 Check that the bridge is still using the same reachable relay path. Trusted reconnect depends on the trusted browser finding the current live bridge session through the configured relay.
-
-### The menu bar shows a blank Tailscale address
-
-Paste the Mac's Tailscale host manually in `Tailscale Address`, save it, then use `Use Tailscale Relay`.
 
 ### Should I use a public VPS instead?
 

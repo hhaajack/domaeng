@@ -70,7 +70,6 @@ bridge 能启动但 Web App 无法配对或重连时，可以看日志。
 
 - `domaeng status`
 - `domaeng status --json`，仅用于本地 machine-readable 诊断
-- 菜单栏控制打开的 stdout/stderr 日志
 - 本地或自托管 relay 的 `/health` endpoint
 
 不要在公开 issue 中贴 live relay session ID、QR payload、配对码、原始 JSON status、私有 relay hostname 或 credentials。

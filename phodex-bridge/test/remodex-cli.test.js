@@ -83,10 +83,6 @@ test("domaeng restart reuses the macOS service start flow", async () => {
       "  domaeng restart",
       "  domaeng stop",
       "  domaeng renew-pairing",
-      "",
-      "Optional menu bar control (unsigned/adhoc-signed; macOS may require approval):",
-      "  domaeng menubar install",
-      "  domaeng menubar open",
     ].join("\n"),
   ]);
 });
@@ -142,10 +138,6 @@ test("domaeng up shows a startup indicator while waiting for the pairing code", 
       "  domaeng restart",
       "  domaeng stop",
       "  domaeng renew-pairing",
-      "",
-      "Optional menu bar control (unsigned/adhoc-signed; macOS may require approval):",
-      "  domaeng menubar install",
-      "  domaeng menubar open",
     ].join("\n"),
   ]);
   assert.deepEqual(calls, [
@@ -154,7 +146,7 @@ test("domaeng up shows a startup indicator while waiting for the pairing code", 
   ]);
 });
 
-test("domaeng status --json exposes daemon metadata for companion apps", async () => {
+test("domaeng status --json exposes daemon metadata for local diagnostics", async () => {
   const writes = [];
   const originalWrite = process.stdout.write;
 
@@ -259,86 +251,6 @@ test("domaeng trusted-device disable emits machine-readable result", async () =>
   assert.equal(payload.action, "disable");
   assert.equal(payload.trustedDevice.id, "dev_abc123");
   assert.equal(payload.trustedDevice.status, "disabled");
-});
-
-test("domaeng menubar install reports the unsigned companion app path", async () => {
-  const messages = [];
-
-  await main({
-    argv: ["node", "domaeng", "menubar", "install"],
-    platform: "darwin",
-    consoleImpl: {
-      log(message) {
-        messages.push(message);
-      },
-      error(message) {
-        throw new Error(`unexpected error: ${message}`);
-      },
-    },
-    exitImpl(code) {
-      throw new Error(`unexpected exit ${code}`);
-    },
-    deps: {
-      installMenuBarApp() {
-        return {
-          installedAppPath: "/Users/tester/Applications/DomaengMenuBar.app",
-          signed: false,
-        };
-      },
-    },
-  });
-
-  assert.deepEqual(messages, [
-    "[domaeng] Installed optional unsigned/adhoc-signed DomaengMenuBar.app to /Users/tester/Applications/DomaengMenuBar.app. macOS may require manual approval on first launch.",
-  ]);
-});
-
-test("domaeng menubar status emits machine-readable bundled state", async () => {
-  const writes = [];
-  const originalWrite = process.stdout.write;
-
-  process.stdout.write = (chunk, encoding, callback) => {
-    writes.push(String(chunk));
-    if (typeof callback === "function") {
-      callback();
-    }
-    return true;
-  };
-
-  try {
-    await main({
-      argv: ["node", "domaeng", "menubar", "status", "--json"],
-      platform: "darwin",
-      consoleImpl: {
-        log() {},
-        error(message) {
-          throw new Error(`unexpected error: ${message}`);
-        },
-      },
-      exitImpl(code) {
-        throw new Error(`unexpected exit ${code}`);
-      },
-      deps: {
-        getMenuBarAppStatus() {
-          return {
-            bundled: true,
-            bundledAppPath: "/pkg/bundled/menubar/DomaengMenuBar.app",
-            installed: false,
-            installedAppPath: "/Users/tester/Applications/DomaengMenuBar.app",
-            signed: false,
-          };
-        },
-      },
-    });
-  } finally {
-    process.stdout.write = originalWrite;
-  }
-
-  const payload = JSON.parse(writes.join("").trim());
-  assert.equal(payload.ok, true);
-  assert.equal(payload.action, "status");
-  assert.equal(payload.bundled, true);
-  assert.equal(payload.signed, false);
 });
 
 test("domaeng renew-pairing emits the fresh daemon pairing session", async () => {

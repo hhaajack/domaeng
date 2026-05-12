@@ -6,7 +6,6 @@ Start with the shortest guide that matches what you are trying to do.
 
 - [Getting started](getting-started.md): install, pair, and run Domaeng for the first time.
 - [Tailscale setup](tailscale.md): use a private network path when another device cannot reliably reach the Mac.
-- [Menu bar control](menu-bar.md): use the optional macOS status/menu bar control center.
 - [Operations guide](operations.md): understand the buttons, pairing actions, trusted devices, git actions, and diagnostics.
 
 ## Advanced Paths

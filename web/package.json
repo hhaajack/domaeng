@@ -6,8 +6,6 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
-    "sync:menubar": "npm run build && node ./scripts/sync-menubar-dist.mjs",
-    "sync:menubar:restart": "npm run build && node ./scripts/sync-menubar-dist.mjs --restart",
     "test": "vitest run"
   },
   "dependencies": {

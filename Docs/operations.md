@@ -70,7 +70,6 @@ Useful checks:
 
 - `domaeng status`
 - `domaeng status --json` for local machine-readable diagnostics only
-- stdout/stderr logs from the menu bar control
 - relay `/health` endpoint when running a local or self-hosted relay
 
 Avoid posting live relay session IDs, QR payloads, pairing codes, raw JSON status, private relay hostnames, or credentials in public issues.

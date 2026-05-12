@@ -41,18 +41,6 @@ Codex 仍然运行在 Mac 上。git 凭据和 workspace 文件也仍然留在 Ma
 
 真实 hostname 应该保存在你自己的本地配置里。不要把个人 tailnet 名称或私有地址提交到公开仓库。
 
-## 搭配菜单栏控制中心
-
-macOS 菜单栏控制的 Connection 区域可以辅助这个流程：
-
-- `Tailscale Web`：根据检测到或保存的 Tailscale 地址生成 Web App URL。
-- `Tailscale Relay`：生成对应 relay URL。
-- `Use Tailscale Relay`：把 bridge 切换到这个 relay 路径。
-- `Save Tailscale Address`：自动检测不够时，手动保存一个稳定 Tailscale host。
-- `Auto Detect`：清除手动 host，重新尝试本机检测。
-
-切换 relay 后，用显示出来的 QR 或配对码在 Web App 里信任这台 Mac。
-
 ## 搭配 CLI
 
 如果你使用 npm 安装好的 CLI，把 bridge 指向可达的 relay URL：
@@ -78,10 +66,6 @@ launcher 会在需要时把 HTTP(S) relay base 转成 WebSocket relay 路径。
 ### 配对成功过一次，但之后不能重连
 
 检查 bridge 是否还在使用同一个可达 relay 路径。trusted reconnect 需要浏览器通过配置的 relay 找到当前 live bridge session。
-
-### 菜单栏里 Tailscale 地址为空
-
-在 `Tailscale Address` 里手动粘贴 Mac 的 Tailscale host，保存后再点 `Use Tailscale Relay`。
 
 ### 应该改用公网 VPS 吗
 

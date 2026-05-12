@@ -1,5 +1,5 @@
 // FILE: local-relay-launch-agent.test.js
-// Purpose: Verifies source-checkout local relay launchd helpers used by menu bar startup.
+// Purpose: Verifies source-checkout local relay launchd helpers used by CLI startup.
 // Layer: Unit test
 // Exports: node:test suite
 // Depends on: node:test, node:assert/strict, fs, os, path, ../src/local-relay-launch-agent

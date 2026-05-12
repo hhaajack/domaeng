@@ -1,6 +1,0 @@
-// Shared public defaults for open-source builds.
-// Real private endpoints belong in the ignored PrivateOverrides.xcconfig file.
-
-DOMAENG_SUPPORTED_BRIDGE_VERSION = 1.5.2
-
-#include? "PrivateOverrides.xcconfig"
