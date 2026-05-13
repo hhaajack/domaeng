@@ -121,11 +121,21 @@ describe("RemodexClient slow-link request budgets", () => {
 
     await client.listThreads();
     await client.readThread("thread-1");
+    await client.listThreadTurns("thread-1", 4);
 
     expect(captured[0]?.method).toBe("thread/list");
     expect(captured[0]?.timeoutMs).toBe(180_000);
     expect(captured[1]?.method).toBe("thread/read");
     expect(captured[1]?.timeoutMs).toBe(180_000);
+    expect(captured[2]).toMatchObject({
+      method: "thread/turns/list",
+      params: {
+        threadId: "thread-1",
+        limit: 4,
+        cursor: null
+      },
+      timeoutMs: 180_000
+    });
   });
 });
 

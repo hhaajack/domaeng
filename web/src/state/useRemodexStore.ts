@@ -30,6 +30,7 @@ import {
   appendLocalUserMessage,
   applyNotification,
   decodeThreadRead,
+  decodeThreadTurnsList,
   type TimelineState
 } from "../lib/timeline";
 import { normalizeRuntimeSettings, readRuntimeSettings, readTrustedMacs, writeRuntimeSettings } from "../lib/storage";
@@ -80,6 +81,7 @@ interface RemodexStore {
   disconnect: () => void;
   refreshAfterConnect: () => Promise<void>;
   refreshThreads: () => Promise<void>;
+  refreshThreadSnapshot: (threadId: string) => Promise<void>;
   openThread: (threadId: string) => Promise<void>;
   newThread: (cwd?: string) => Promise<void>;
   renameThread: (threadId: string, name: string) => Promise<void>;
@@ -419,8 +421,14 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
   }
 
   async function refreshThreadRunSnapshot(threadId: string): Promise<void> {
-    const response = await client.readThread(threadId);
-    set((state) => applyThreadReadResult(state, response.result));
+    try {
+      const response = await client.listThreadTurns(threadId, 4);
+      set((state) => applyTimelinePatch(state, decodeThreadTurnsList(state, threadId, response.result)));
+      return;
+    } catch {
+      const response = await client.readThread(threadId);
+      set((state) => applyThreadReadResult(state, response.result));
+    }
   }
 
   async function reconcileRunningThreadsAfterConnect(): Promise<void> {
@@ -536,10 +544,11 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
       const nextActive = currentActive && threads.some((thread) => thread.id === currentActive)
         ? currentActive
         : threads[0]?.id;
-      set({
+      set((state) => ({
         threads,
-        activeThreadId: nextActive
-      });
+        activeThreadId: nextActive,
+        ...runningStateFromListedThreads(state, threads)
+      }));
       if (nextActive && !get().messagesByThread[nextActive]) {
         try {
           await get().openThread(nextActive);
@@ -559,6 +568,10 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
       void get().refreshModels();
       void get().refreshRateLimits();
       void get().refreshWebPushStatus();
+    },
+
+    async refreshThreadSnapshot(threadId) {
+      await refreshThreadRunSnapshot(threadId);
     },
 
     async openThread(threadId) {
@@ -972,9 +985,23 @@ function applyTimelinePatch<T extends TimelineState>(state: T, next: TimelineSta
 }
 
 function applyThreadReadResult<T extends RemodexStore>(state: T, result: JSONValue | undefined): T {
-  const patched = applyTimelinePatch(state, decodeThreadRead(state, result));
   const threadObject = objectValue(objectValue(result).thread ?? result);
-  const threadId = resolveThreadId(threadObject);
+  const threadId = readString(threadObject.id) || resolveThreadId(threadObject);
+  const listedRunningTurnId = threadId ? state.runningTurnByThread[threadId] : undefined;
+  const listStillShowsRunning = threadId
+    ? state.threads.some((thread) => thread.id === threadId && isRunningThreadStatus(thread.status))
+    : false;
+  const shouldPreserveListedRunning = Boolean(
+    threadId
+      && listedRunningTurnId
+      && listStillShowsRunning
+      && !isTerminalStatusPayload(threadObject)
+  );
+  const patched = preserveListedRunningAfterRead(
+    applyTimelinePatch(state, decodeThreadRead(state, result)),
+    threadId,
+    shouldPreserveListedRunning ? listedRunningTurnId : undefined
+  );
   if (!threadId) {
     return patched;
   }
@@ -985,6 +1012,49 @@ function applyThreadReadResult<T extends RemodexStore>(state: T, result: JSONVal
   return {
     ...patched,
     ...contextUsageStatePatch(patched, threadId, usage)
+  };
+}
+
+function preserveListedRunningAfterRead<T extends RemodexStore>(
+  state: T,
+  threadId: string | undefined,
+  runningTurnId: string | undefined
+): T {
+  if (!threadId || !runningTurnId || state.runningTurnByThread[threadId]) {
+    return state;
+  }
+  return markStoreThreadRunning(state, threadId, runningTurnId);
+}
+
+function runningStateFromListedThreads(
+  state: RemodexStore,
+  threads: CodexThread[]
+): Pick<RemodexStore, "runningTurnByThread" | "threadRunStateByThread"> {
+  let runningTurnByThread = state.runningTurnByThread;
+  let threadRunStateByThread = state.threadRunStateByThread;
+
+  for (const thread of threads) {
+    if (!isRunningThreadStatus(thread.status)) {
+      continue;
+    }
+    const runningTurnId = runningTurnByThread[thread.id] || "__running__";
+    if (runningTurnByThread[thread.id] !== runningTurnId) {
+      runningTurnByThread = {
+        ...runningTurnByThread,
+        [thread.id]: runningTurnId
+      };
+    }
+    if (threadRunStateByThread[thread.id] !== "running") {
+      threadRunStateByThread = {
+        ...threadRunStateByThread,
+        [thread.id]: "running"
+      };
+    }
+  }
+
+  return {
+    runningTurnByThread,
+    threadRunStateByThread
   };
 }
 
@@ -1538,6 +1608,15 @@ function isActiveThreadStatus(method: string, params: Record<string, unknown>): 
     return false;
   }
   return ["active", "running", "processing", "inprogress", "started", "pending"].includes(threadStatusToken(params));
+}
+
+function isRunningThreadStatus(status: string | undefined): boolean {
+  return ["active", "running", "processing", "inprogress", "started", "pending"].includes(normalizeStatusToken(status));
+}
+
+function isTerminalStatusPayload(params: Record<string, unknown>): boolean {
+  const token = threadStatusToken(params);
+  return ["idle", "notloaded", "completed", "complete", "done", "finished", "failed", "failure", "canceled", "cancelled", "interrupted", "stopped"].includes(token);
 }
 
 function isThreadStatusMethod(method: string): boolean {

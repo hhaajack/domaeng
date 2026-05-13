@@ -945,6 +945,7 @@ textarea {
   height: 100%;
   min-height: 0;
   min-width: 0;
+  position: relative;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
   background:
@@ -1059,67 +1060,49 @@ textarea {
 
 .context-usage-popover {
   position: absolute;
-  top: calc(100% + 8px);
+  top: calc(100% + 12px);
   right: 0;
   z-index: 9;
-  width: min(270px, calc(100vw - 20px));
+  width: min(304px, calc(100vw - 28px));
   display: grid;
-  gap: 8px;
-  padding: 11px;
-  border: 1px solid var(--glass-border);
-  border-color: rgba(255, 255, 255, 0.94) !important;
-  border-radius: var(--radius-sm);
+  gap: 10px;
+  padding: 14px 16px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  border-radius: 26px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 252, 249, 0.94)),
-    #f8fcf9 !important;
+    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.74), transparent 34%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.14)),
+    rgba(247, 250, 245, 0.24);
   box-shadow:
     var(--liquid-border),
-    0 22px 56px rgba(18, 36, 28, 0.24),
-    0 2px 10px rgba(18, 36, 28, 0.1) !important;
-  -webkit-backdrop-filter: blur(18px) saturate(1.1) !important;
-  backdrop-filter: blur(18px) saturate(1.1) !important;
-}
-
-.context-usage-popover {
-  border-color: rgba(255, 255, 255, 0.9);
-  background:
-    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.96), transparent 38%),
-    linear-gradient(145deg, rgba(248, 254, 250, 0.9), rgba(226, 244, 234, 0.78)),
-    rgba(238, 249, 243, 0.92);
-  box-shadow:
-    var(--liquid-border),
-    0 18px 48px rgba(37, 67, 52, 0.2);
-  -webkit-backdrop-filter: blur(28px) saturate(1.35);
-  backdrop-filter: blur(28px) saturate(1.35);
+    0 22px 58px rgba(31, 44, 45, 0.16);
+  -webkit-backdrop-filter: blur(48px) saturate(1.86);
+  backdrop-filter: blur(48px) saturate(1.86);
 }
 
 .context-usage-popover-header strong,
 .context-usage-summary span {
-  color: #0e1a14;
-  text-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.86),
-    0 0 14px rgba(255, 255, 255, 0.52);
+  color: var(--ink);
+  text-shadow: var(--text-shadow-strong);
 }
 
 .context-usage-summary strong,
 .context-usage-popover small,
 .context-usage-popover .usage-updated {
-  color: #4c5c54;
-  text-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.78),
-    0 0 12px rgba(255, 255, 255, 0.46);
+  color: var(--muted);
+  text-shadow: var(--text-shadow-soft);
 }
 
 .context-usage-meter {
-  background: rgba(20, 42, 32, 0.13);
+  background: rgba(20, 42, 32, 0.14);
 }
 
 .context-usage-popover-header,
 .context-usage-summary {
   min-width: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
 }
 
@@ -1172,6 +1155,12 @@ textarea {
   color: var(--muted);
   font-size: 11px;
   font-weight: 580;
+}
+
+.context-usage-popover .usage-updated {
+  justify-self: end;
+  font-size: 11px;
+  font-weight: 620;
 }
 
 .git-toolbar {
@@ -1768,17 +1757,21 @@ textarea {
 }
 
 .runtime-control {
-  flex: 1 1 164px;
-  max-width: 190px;
+  flex: 0 1 184px;
+  max-width: 184px;
+  margin-left: auto;
+  order: 3;
 }
 
 .tools-control {
   flex: 0 0 auto;
+  order: 1;
 }
 
 .access-control {
   flex: 0 1 184px;
   min-width: 0;
+  order: 2;
 }
 
 .composer-icon-tool {
@@ -1800,7 +1793,7 @@ textarea {
 .composer-bar .composer-choice-button {
   width: 100%;
   min-width: 86px;
-  max-width: 160px;
+  max-width: none;
   justify-content: space-between;
   gap: 4px;
   padding: 0 9px;
@@ -1875,15 +1868,15 @@ textarea {
 }
 
 .composer-bar .runtime-control .composer-popover {
-  left: 50%;
-  right: auto;
+  left: auto;
+  right: 0;
   width: min(318px, calc(100vw - 42px));
-  transform: translateX(-50%);
+  transform: none;
 }
 
 .composer-bar .access-control .composer-popover {
-  right: 0;
-  left: auto;
+  right: auto;
+  left: 0;
   width: min(264px, calc(100vw - 42px));
 }
 
@@ -2461,7 +2454,8 @@ textarea {
   }
 
   .composer-bar .runtime-control .composer-popover {
-    left: 0;
+    left: auto;
+    right: 0;
     transform: none;
     width: min(318px, calc(100vw - 42px));
     bottom: calc(100% + 12px);
@@ -2871,12 +2865,41 @@ textarea {
 }
 
 .conversation {
+  grid-template-rows: minmax(0, 1fr) auto auto;
   background: transparent;
 }
 
+.conversation::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 3;
+  height: 104px;
+  background:
+    linear-gradient(180deg, rgba(239, 244, 236, 0.88) 0%, rgba(239, 244, 236, 0.58) 44%, rgba(239, 244, 236, 0) 100%);
+  pointer-events: none;
+}
+
+.conversation::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  z-index: 3;
+  height: 150px;
+  background:
+    linear-gradient(0deg, rgba(239, 244, 236, 0.88) 0%, rgba(239, 244, 236, 0.58) 44%, rgba(239, 244, 236, 0) 100%);
+  pointer-events: none;
+}
+
 .topbar {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 4;
   min-height: 64px;
-  margin: 14px 14px 8px;
+  width: min(520px, calc(100% - 28px));
+  max-width: 520px;
+  margin: 0;
   padding: 8px;
   border: 1px solid rgba(255, 255, 255, 0.78);
   border-radius: 32px;
@@ -2889,6 +2912,21 @@ textarea {
   backdrop-filter: blur(48px) saturate(1.86);
 }
 
+.topbar::after {
+  content: "";
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: -28px;
+  height: 34px;
+  border-radius: 0 0 30px 30px;
+  background:
+    linear-gradient(180deg, rgba(79, 111, 111, 0.24), rgba(79, 111, 111, 0.08) 48%, transparent 100%);
+  filter: blur(10px);
+  pointer-events: none;
+  z-index: -1;
+}
+
 .topbar > button,
 .sidebar-header button,
 .settings-sheet header button,
@@ -2899,6 +2937,12 @@ textarea {
 .notification-bubble .bubble-close,
 .icon-upload {
   border-radius: 50%;
+}
+
+.topbar > button {
+  width: 44px;
+  min-width: 44px;
+  min-height: 44px;
 }
 
 .thread-title {
@@ -2922,7 +2966,7 @@ textarea {
 }
 
 .timeline {
-  padding: 20px 18px 16px;
+  padding: 20px 18px 170px;
 }
 
 .timeline-row {
@@ -2985,9 +3029,16 @@ textarea {
 }
 
 .composer {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  z-index: 4;
+  display: flex;
+  justify-content: center;
   border-top: 0;
   background: transparent;
-  padding: 8px 14px max(12px, env(safe-area-inset-bottom));
+  padding: 0;
 }
 
 .composer-error {
@@ -3037,6 +3088,7 @@ textarea {
 
 .composer-bar button.primary,
 .composer-bar button.danger {
+  order: 4;
   width: 44px;
   min-width: 44px;
   min-height: 44px;
@@ -3051,7 +3103,7 @@ textarea {
 
 .composer-bar .composer-choice-button {
   min-height: 40px;
-  max-width: 154px;
+  max-width: none;
   padding-inline: 14px 11px;
   border-radius: 22px;
   font-weight: 650;
@@ -3154,8 +3206,13 @@ textarea {
   }
 
   .topbar {
+    top: 10px;
+    left: 10px;
     min-height: 58px;
-    margin: 10px 10px 6px;
+    width: calc(100% - 20px);
+    max-width: none;
+    margin: 0;
+    grid-template-columns: 44px minmax(0, 1fr) 44px;
     border-radius: 28px;
   }
 
@@ -3180,7 +3237,7 @@ textarea {
   }
 
   .timeline {
-    padding: 10px 10px 12px;
+    padding: 10px 10px 168px;
   }
 
   .timeline-row,
@@ -3202,7 +3259,10 @@ textarea {
   }
 
   .composer {
-    padding: 8px 8px max(10px, env(safe-area-inset-bottom));
+    left: 8px;
+    right: 8px;
+    bottom: max(10px, env(safe-area-inset-bottom));
+    padding: 0;
   }
 
   .composer-glass {
@@ -3222,9 +3282,13 @@ textarea {
 
   .composer-bar {
     grid-template-columns: 46px minmax(0, 1fr) minmax(0, 1fr) 46px;
-    grid-template-areas: "tools runtime access send";
+    grid-template-areas: "tools access runtime send";
     gap: 6px;
     padding: 2px 0 0;
+  }
+
+  .runtime-control {
+    margin-left: 0;
   }
 
   .tools-button {
@@ -3370,6 +3434,24 @@ textarea {
     color: var(--green-strong);
   }
 
+  .jump-latest-button {
+    border-color: rgba(181, 250, 205, 0.2);
+    background:
+      radial-gradient(circle at 28% 12%, rgba(255, 255, 255, 0.16), transparent 44%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.035)),
+      rgba(17, 25, 25, 0.42);
+    color: var(--green-strong);
+    box-shadow: var(--liquid-border), 0 14px 36px rgba(0, 0, 0, 0.28);
+  }
+
+  .jump-latest-button:hover:not(:disabled) {
+    border-color: rgba(181, 250, 205, 0.28);
+    background:
+      radial-gradient(circle at 28% 12%, rgba(255, 255, 255, 0.2), transparent 44%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.17), rgba(255, 255, 255, 0.05)),
+      rgba(22, 34, 33, 0.48);
+  }
+
   input,
   select,
   textarea {
@@ -3425,6 +3507,16 @@ textarea {
     backdrop-filter: blur(54px) saturate(1.65);
   }
 
+  .conversation::before {
+    background:
+      linear-gradient(180deg, rgba(11, 17, 18, 0.88) 0%, rgba(11, 17, 18, 0.56) 44%, rgba(11, 17, 18, 0) 100%);
+  }
+
+  .conversation::after {
+    background:
+      linear-gradient(0deg, rgba(11, 17, 18, 0.88) 0%, rgba(11, 17, 18, 0.56) 44%, rgba(11, 17, 18, 0) 100%);
+  }
+
   .sidebar {
     border-right-color: rgba(255, 255, 255, 0.1);
     background:
@@ -3452,6 +3544,21 @@ textarea {
       radial-gradient(circle at 16% 0%, rgba(180, 255, 205, 0.16), transparent 34%),
       linear-gradient(145deg, rgba(96, 187, 123, 0.16), rgba(255, 255, 255, 0.025)),
       rgba(18, 31, 25, 0.32);
+  }
+
+  .context-usage-popover {
+    border-color: rgba(255, 255, 255, 0.15);
+    background:
+      radial-gradient(circle at 16% 0%, rgba(255, 255, 255, 0.15), transparent 34%),
+      linear-gradient(145deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.025)),
+      rgba(12, 19, 20, 0.36);
+    box-shadow: var(--liquid-border), 0 24px 70px rgba(0, 0, 0, 0.3);
+    -webkit-backdrop-filter: blur(54px) saturate(1.65);
+    backdrop-filter: blur(54px) saturate(1.65);
+  }
+
+  .context-usage-meter {
+    background: rgba(255, 255, 255, 0.12);
   }
 
   .project-toggle > svg,

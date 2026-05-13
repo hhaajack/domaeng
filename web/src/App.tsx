@@ -70,6 +70,8 @@ const EMPTY_MESSAGES: TimelineMessage[] = [];
 const EMPTY_DRAFTS: QueuedComposerDraft[] = [];
 const DEFAULT_PROJECT_THREAD_LIMIT = 8;
 const PROJECT_THREAD_INCREMENT = 8;
+const ACTIVE_THREAD_RUNNING_REFRESH_MS = 2200;
+const ACTIVE_THREAD_IDLE_LIST_REFRESH_MS = 10000;
 
 type ComposerSuggestionKind = "command" | "plugin" | "skill";
 
@@ -542,10 +544,14 @@ function Workspace() {
   const openThread = useRemodexStore((state) => state.openThread);
   const newThread = useRemodexStore((state) => state.newThread);
   const refreshThreads = useRemodexStore((state) => state.refreshThreads);
+  const refreshThreadSnapshot = useRemodexStore((state) => state.refreshThreadSnapshot);
   const settingsOpen = useRemodexStore((state) => state.settingsOpen);
   const setSettingsOpen = useRemodexStore((state) => state.setSettingsOpen);
   const gitToolbarEnabled = useRemodexStore((state) => state.runtimeSettings.gitToolbarEnabled === true);
   const activeThread = threads.find((thread) => thread.id === activeThreadId);
+  const activeThreadRunning = activeThreadId
+    ? Boolean(runningTurnByThread[activeThreadId] || threadRunStateByThread[activeThreadId] === "running")
+    : false;
   const projectGroups = buildProjectGroups(threads);
   const visibleProjectGroups = filterProjectGroups(projectGroups, sidebarSearch);
   const activeProjectKey = activeThread ? projectKeyForThread(activeThread) : projectGroups[0]?.key;
@@ -558,6 +564,30 @@ function Workspace() {
     }
     setProjectOpenByKey((state) => state[activeProjectKey] === false ? { ...state, [activeProjectKey]: true } : state);
   }, [activeProjectKey]);
+
+  useEffect(() => {
+    if (!activeThreadId) {
+      return;
+    }
+    let refreshing = false;
+    const refresh = () => {
+      if (refreshing || document.visibilityState === "hidden") {
+        return;
+      }
+      refreshing = true;
+      const refreshTask = activeThreadRunning ? refreshThreadSnapshot(activeThreadId) : refreshThreads();
+      void refreshTask
+        .catch(() => undefined)
+        .finally(() => {
+          refreshing = false;
+        });
+    };
+    const interval = window.setInterval(
+      refresh,
+      activeThreadRunning ? ACTIVE_THREAD_RUNNING_REFRESH_MS : ACTIVE_THREAD_IDLE_LIST_REFRESH_MS
+    );
+    return () => window.clearInterval(interval);
+  }, [activeThreadId, activeThreadRunning, refreshThreadSnapshot, refreshThreads]);
 
   useEffect(() => {
     if (!openThreadMenuId) {

@@ -157,6 +157,38 @@ export function decodeThreadRead(state: TimelineState, result: JSONValue | undef
   };
 }
 
+export function decodeThreadTurnsList(
+  state: TimelineState,
+  threadId: string,
+  result: JSONValue | undefined
+): TimelineState {
+  const normalizedThreadId = threadId.trim();
+  if (!normalizedThreadId) {
+    return state;
+  }
+
+  const resultObject = asObject(result);
+  const turns = asArray(resultObject.data)
+    ?? asArray(resultObject.items)
+    ?? asArray(resultObject.turns)
+    ?? asArray(asObject(resultObject.thread).turns)
+    ?? [];
+  if (turns.length === 0) {
+    return state;
+  }
+
+  const existingThread = state.threads.find((thread) => thread.id === normalizedThreadId);
+  const resultThread = asObject(resultObject.thread);
+  return decodeThreadRead(state, {
+    thread: {
+      ...existingThread,
+      ...resultThread,
+      id: normalizedThreadId,
+      turns
+    }
+  });
+}
+
 export function appendLocalUserMessage(
   state: TimelineState,
   threadId: string,
@@ -300,7 +332,7 @@ function appendMirroredUserMessage(state: TimelineState, object: JSONObject): Ti
   if (!threadId || !text) {
     return state;
   }
-  return reconcileOrAppendMessage(state, message({
+  const nextMessage = message({
     role: "user",
     kind: "chat",
     threadId,
@@ -308,7 +340,8 @@ function appendMirroredUserMessage(state: TimelineState, object: JSONObject): Ti
     itemId: resolveItemId(object, incomingItemObject(object)),
     text,
     createdAt: Date.now()
-  }));
+  });
+  return placeUserMessageBeforeTurnActivity(reconcileOrAppendMessage(state, nextMessage), nextMessage);
 }
 
 function appendGeneratedImage(state: TimelineState, object: JSONObject): TimelineState {
@@ -456,6 +489,43 @@ function reconcileOrAppendMessage(state: TimelineState, nextMessage: TimelineMes
     messagesByThread: {
       ...state.messagesByThread,
       [nextMessage.threadId]: nextMessages
+    }
+  };
+}
+
+function placeUserMessageBeforeTurnActivity(state: TimelineState, nextMessage: TimelineMessage): TimelineState {
+  if (nextMessage.role !== "user" || !nextMessage.turnId) {
+    return state;
+  }
+  const existing = state.messagesByThread[nextMessage.threadId] ?? [];
+  const userIndex = findLastIndex(existing, (entry) =>
+    entry.role === "user"
+    && entry.kind === nextMessage.kind
+    && entry.turnId === nextMessage.turnId
+    && normalizeMessageText(entry.text) === normalizeMessageText(nextMessage.text)
+  );
+  if (userIndex < 0) {
+    return state;
+  }
+  const activityIndex = existing.findIndex((entry, entryIndex) =>
+    entryIndex < userIndex
+    && entry.turnId === nextMessage.turnId
+    && entry.role !== "user"
+  );
+  if (activityIndex < 0) {
+    return state;
+  }
+  const userMessage = existing[userIndex];
+  const withoutUser = existing.filter((_, entryIndex) => entryIndex !== userIndex);
+  return {
+    ...state,
+    messagesByThread: {
+      ...state.messagesByThread,
+      [nextMessage.threadId]: [
+        ...withoutUser.slice(0, activityIndex),
+        userMessage,
+        ...withoutUser.slice(activityIndex)
+      ]
     }
   };
 }

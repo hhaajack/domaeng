@@ -112,6 +112,22 @@ describe("timeline item reconciliation", () => {
     expect(next.messagesByThread["thread-1"]).toEqual([]);
   });
 
+  it("keeps mirrored user messages before same-turn thinking placeholders", () => {
+    let next = state();
+    next = applyNotification(next, "item/reasoning/textDelta", {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      delta: "Thinking..."
+    });
+    next = applyNotification(next, "codex/event/user_message", {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      message: "desktop prompt"
+    });
+
+    expect(next.messagesByThread["thread-1"].map((entry) => entry.role)).toEqual(["user", "reasoning"]);
+  });
+
   it("reconciles assistant completion by turn when the streaming delta lacks item identity", () => {
     let next = state();
     next = applyNotification(next, "item/agentMessage/delta", {

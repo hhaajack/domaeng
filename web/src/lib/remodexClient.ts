@@ -224,6 +224,14 @@ export class RemodexClient {
     }, STARTUP_REFRESH_REQUEST_TIMEOUT_MS);
   }
 
+  async listThreadTurns(threadId: string, limit = 4): Promise<RPCMessage> {
+    return this.request("thread/turns/list", {
+      threadId,
+      limit,
+      cursor: null
+    }, STARTUP_REFRESH_REQUEST_TIMEOUT_MS);
+  }
+
   async renameThread(threadId: string, name: string): Promise<JSONValue> {
     const response = await this.request("thread/name/set", {
       threadId,

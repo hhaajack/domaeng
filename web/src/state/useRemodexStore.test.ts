@@ -7,6 +7,7 @@ const client = initialState.client;
 const originalClientMethods = {
   listThreads: client.listThreads.bind(client),
   readThread: client.readThread.bind(client),
+  listThreadTurns: client.listThreadTurns.bind(client),
   connectTrusted: client.connectTrusted.bind(client),
   renameThread: client.renameThread.bind(client),
   resumeThread: client.resumeThread.bind(client),
@@ -28,6 +29,7 @@ const originalClientMethods = {
 function restoreClientMethods() {
   client.listThreads = originalClientMethods.listThreads;
   client.readThread = originalClientMethods.readThread;
+  client.listThreadTurns = originalClientMethods.listThreadTurns;
   client.connectTrusted = originalClientMethods.connectTrusted;
   client.renameThread = originalClientMethods.renameThread;
   client.resumeThread = originalClientMethods.resumeThread;
@@ -670,6 +672,34 @@ describe("useRemodexStore thread activity", () => {
     expect(useRemodexStore.getState().threadRunStateByThread["thread-active"]).toBe("running");
   });
 
+  it("hydrates the active composer running state from the refreshed thread list", async () => {
+    client.listThreads = vi.fn().mockResolvedValue([{ id: "thread-active", title: "Active", status: "active" }]);
+    client.readThread = vi.fn().mockResolvedValue({
+      result: {
+        thread: {
+          id: "thread-active",
+          title: "Active",
+          turns: []
+        }
+      }
+    });
+    client.listModels = vi.fn().mockResolvedValue([]);
+    client.readRateLimits = vi.fn().mockResolvedValue({});
+
+    useRemodexStore.setState({
+      threads: [{ id: "thread-active", title: "Active" }],
+      activeThreadId: "thread-active",
+      messagesByThread: { "thread-active": [] },
+      runningTurnByThread: {},
+      threadRunStateByThread: {}
+    });
+
+    await useRemodexStore.getState().refreshAfterConnect();
+
+    expect(useRemodexStore.getState().runningTurnByThread["thread-active"]).toBe("__running__");
+    expect(useRemodexStore.getState().threadRunStateByThread["thread-active"]).toBe("running");
+  });
+
   it("ignores turn-less terminal events that arrive after a concrete running turn", () => {
     useRemodexStore.setState({
       threads: [{ id: "thread-active", title: "Active" }],
@@ -878,6 +908,19 @@ describe("useRemodexStore thread activity", () => {
 
   it("rechecks the active thread after reconnect even when cached messages exist", async () => {
     client.listThreads = vi.fn().mockResolvedValue([{ id: "thread-active", title: "Active" }]);
+    client.listThreadTurns = vi.fn().mockResolvedValue({
+      result: {
+        data: [{
+          id: "turn-active",
+          status: "completed",
+          items: [{
+            id: "assistant-item",
+            type: "agentMessage",
+            text: "done"
+          }]
+        }]
+      }
+    });
     client.readThread = vi.fn().mockResolvedValue({
       result: {
         thread: {
@@ -918,13 +961,15 @@ describe("useRemodexStore thread activity", () => {
 
     await useRemodexStore.getState().refreshAfterConnect();
 
-    expect(client.readThread).toHaveBeenCalledWith("thread-active");
+    expect(client.listThreadTurns).toHaveBeenCalledWith("thread-active", 4);
+    expect(client.readThread).not.toHaveBeenCalled();
     expect(useRemodexStore.getState().runningTurnByThread["thread-active"]).toBeUndefined();
     expect(useRemodexStore.getState().threadRunStateByThread["thread-active"]).toBeUndefined();
   });
 
   it("keeps reconnect state running when thread/read reports an in-progress turn", async () => {
     client.listThreads = vi.fn().mockResolvedValue([{ id: "thread-active", title: "Active" }]);
+    client.listThreadTurns = vi.fn().mockRejectedValue(new Error("turns list unavailable"));
     client.readThread = vi.fn().mockResolvedValue({
       result: {
         thread: {
