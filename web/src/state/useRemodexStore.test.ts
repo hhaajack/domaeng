@@ -765,6 +765,42 @@ describe("useRemodexStore thread activity", () => {
     expect(client.readThread).toHaveBeenCalledWith("thread-new");
   });
 
+  it("keeps an unlisted locally created active thread during background refresh", async () => {
+    client.listThreads = vi.fn().mockResolvedValue([
+      { id: "standup-thread", title: "Standup summary", updatedAt: 2 }
+    ]);
+    client.readThread = vi.fn().mockResolvedValue({
+      result: {
+        thread: {
+          id: "standup-thread",
+          title: "Standup summary",
+          turns: []
+        }
+      }
+    });
+
+    useRemodexStore.setState({
+      threads: [
+        { id: "new-thread", title: "New chat", cwd: "/repo" },
+        { id: "standup-thread", title: "Standup summary", updatedAt: 2 }
+      ],
+      activeThreadId: "new-thread",
+      locallyStartedThreadIds: { "new-thread": true },
+      messagesByThread: {},
+      runningTurnByThread: {},
+      threadRunStateByThread: {}
+    });
+
+    await useRemodexStore.getState().refreshThreads();
+
+    expect(useRemodexStore.getState().activeThreadId).toBe("new-thread");
+    expect(useRemodexStore.getState().threads.map((thread) => thread.id)).toEqual([
+      "new-thread",
+      "standup-thread"
+    ]);
+    expect(client.readThread).not.toHaveBeenCalled();
+  });
+
   it("clears list-derived running state when the refreshed thread list reports idle", async () => {
     client.listThreads = vi.fn().mockResolvedValue([{ id: "thread-active", title: "Active", status: "idle" }]);
 

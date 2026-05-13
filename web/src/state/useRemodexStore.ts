@@ -226,6 +226,7 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
     const patchedThread = sourceThread?.cwd && !continuation.cwd
       ? { ...continuation, cwd: sourceThread.cwd }
       : continuation;
+    rememberLastActiveThread(patchedThread.id);
     set((state) => ({
       threads: [patchedThread, ...state.threads.filter((entry) => entry.id !== patchedThread.id)],
       activeThreadId: patchedThread.id,
@@ -546,8 +547,10 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
     },
 
     async refreshThreads() {
-      const threads = decodeThreads(await client.listThreads());
-      const currentActive = get().activeThreadId;
+      const listedThreads = decodeThreads(await client.listThreads());
+      const currentState = get();
+      const currentActive = currentState.activeThreadId;
+      const threads = preserveUnlistedLocalActiveThread(listedThreads, currentState);
       const savedActive = await readLastActiveThreadId().catch(() => undefined);
       const nextActive = selectThreadAfterRefresh(threads, currentActive, savedActive);
       set((state) => ({
@@ -556,7 +559,7 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
         ...runningStateFromListedThreads(state, threads)
       }));
       rememberLastActiveThread(nextActive);
-      if (nextActive && !get().messagesByThread[nextActive]) {
+      if (nextActive && !get().messagesByThread[nextActive] && !get().locallyStartedThreadIds[nextActive]) {
         try {
           await get().openThread(nextActive);
         } catch (error) {
@@ -1047,6 +1050,19 @@ function selectThreadAfterRefresh(
     return savedActive;
   }
   return threads[0]?.id;
+}
+
+function preserveUnlistedLocalActiveThread(threads: CodexThread[], state: RemodexStore): CodexThread[] {
+  const currentActive = state.activeThreadId;
+  if (
+    !currentActive
+    || !state.locallyStartedThreadIds[currentActive]
+    || threads.some((thread) => thread.id === currentActive)
+  ) {
+    return threads;
+  }
+  const localThread = state.threads.find((thread) => thread.id === currentActive);
+  return localThread ? [localThread, ...threads] : threads;
 }
 
 function rememberLastActiveThread(threadId: string | undefined): void {

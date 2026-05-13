@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Domaeng - 从任意设备控制 Mac 上的 Codex</title>
+    <meta
+      name="description"
+      content="Domaeng 是一个 local-first 的开源工具，让你从手机、平板或浏览器控制仍运行在 Mac 上的 Codex。"
+    />
+    <meta property="og:title" content="Domaeng - Mac-hosted Codex remote control" />
+    <meta
+      property="og:description"
+      content="一次配对，任意设备控制 Mac-hosted Codex。浏览器是遥控器，Mac 保留运行时、仓库和凭据。"
+    />
+    <meta property="og:image" content="assets/domaeng-og.png" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="Domaeng 首页">
+        <span class="brand-mark" aria-hidden="true">D</span>
+        <span>Domaeng</span>
+      </a>
+      <nav class="nav-links" aria-label="主导航">
+        <a href="#features">功能</a>
+        <a href="#how">工作方式</a>
+        <a href="#install">安装</a>
+        <a href="#self-host" data-config-href="selfHostedUrl" data-config-text="selfHostedLabel">自托管入口</a>
+      </nav>
+      <a class="header-action" href="https://github.com/hhaajack/domaeng" data-config-href="githubUrl">
+        GitHub
+        <span aria-hidden="true">↗</span>
+      </a>
+    </header>
+
+    <main id="top">
+      <section class="hero" aria-labelledby="hero-title">
+        <img class="hero-media" src="assets/domaeng-banner.png" alt="Domaeng Web App 功能界面预览" />
+        <div class="hero-overlay" aria-hidden="true"></div>
+        <div class="hero-content">
+          <p class="eyebrow">开源 · Local-first · Self-host friendly</p>
+          <h1 id="hero-title">Domaeng</h1>
+          <p class="hero-lede">
+            从手机、平板或另一台浏览器控制 Mac 上的 Codex。Codex、git、workspace 和线程历史仍留在你的 Mac，
+            浏览器只做安全遥控器。
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="#features">查看功能</a>
+            <a class="button secondary" href="https://github.com/hhaajack/domaeng" data-config-href="githubUrl">
+              查看源码
+              <span aria-hidden="true">↗</span>
+            </a>
+            <a class="button ghost" href="#self-host" data-config-href="selfHostedUrl" data-config-text="selfHostedLabel">
+              自托管入口
+            </a>
+          </div>
+          <dl class="hero-points" aria-label="Domaeng 重点能力">
+            <div>
+              <dt>Mac-hosted</dt>
+              <dd>运行时留在本机</dd>
+            </div>
+            <div>
+              <dt>Web/PWA</dt>
+              <dd>任意设备访问</dd>
+            </div>
+            <div>
+              <dt>QR pairing</dt>
+              <dd>一次信任，后续重连</dd>
+            </div>
+          </dl>
+        </div>
+      </section>
+
+      <section class="section intro" aria-labelledby="intro-title">
+        <div class="section-heading">
+          <p class="eyebrow">为什么需要它</p>
+          <h2 id="intro-title">把本地 Codex 变成跨设备工作台</h2>
+          <p>
+            Domaeng 面向已经在 Mac 上使用 Codex 的用户：你可以离开键盘，在 iPhone、iPad、另一台电脑或同一台 Mac
+            的浏览器里继续看输出、补充方向、停止运行、管理线程和触发本地 git 操作。
+          </p>
+        </div>
+        <div class="feature-strip">
+          <article>
+            <strong>不用把仓库搬走</strong>
+            <span>workspace 读写、git 凭据和 Codex 运行环境继续在 Mac 上。</span>
+          </article>
+          <article>
+            <strong>不用单独装移动端 App</strong>
+            <span>浏览器就是客户端，也可以安装成 PWA。</span>
+          </article>
+          <article>
+            <strong>不绑定托管 relay</strong>
+            <span>relay 可以本地跑，也可以放在你自己的私有网络或 VPS。</span>
+          </article>
+        </div>
+      </section>
+
+      <section class="section showcase" id="features" aria-labelledby="features-title">
+        <div class="showcase-copy">
+          <p class="eyebrow">核心体验</p>
+          <h2 id="features-title">远程控制，但不是远程托管</h2>
+          <p>
+            Web App 展示实时输出、线程、项目上下文、模式切换、图片附件和本地操作。你的浏览器发送指令，
+            bridge 在 Mac 上完成真正的 Codex 和 workspace 工作。
+          </p>
+          <div class="check-list">
+            <span>实时 streaming 输出</span>
+            <span>运行中追加 prompt</span>
+            <span>Stop / resume 线程</span>
+            <span>图片附件输入</span>
+            <span>浏览器通知</span>
+            <span>本地 git 操作</span>
+          </div>
+        </div>
+        <div class="showcase-visual" aria-label="Domaeng Web App 截图">
+          <img class="desktop-shot" src="assets/screenshots/web-preview-main.png" alt="Domaeng 桌面 Web App 主界面" />
+          <img class="phone-shot phone-a" src="assets/screenshots/web-preview-composer.png" alt="Domaeng 移动端输入界面" />
+          <img class="phone-shot phone-b" src="assets/screenshots/web-preview-settings.png" alt="Domaeng 移动端设置界面" />
+        </div>
+      </section>
+
+      <section class="section feature-grid" aria-label="功能列表">
+        <article class="feature-card">
+          <span class="icon" aria-hidden="true">⌘</span>
+          <h3>Mac-hosted Codex</h3>
+          <p>Codex、shell、git 和本地文件系统都在 Mac 上执行，浏览器不接管你的开发环境。</p>
+        </article>
+        <article class="feature-card">
+          <span class="icon" aria-hidden="true">◇</span>
+          <h3>一次配对，后续重连</h3>
+          <p>通过 QR 或配对码完成首次信任，之后 bridge 可达时可以回到同一台 trusted Mac。</p>
+        </article>
+        <article class="feature-card">
+          <span class="icon" aria-hidden="true">↯</span>
+          <h3>运行中继续引导</h3>
+          <p>在 turn 还没结束时排队下一条 prompt，或者直接 stop 当前 run，让控制感留在你手里。</p>
+        </article>
+        <article class="feature-card">
+          <span class="icon" aria-hidden="true">▣</span>
+          <h3>项目和线程上下文</h3>
+          <p>按本地项目和 thread 工作，不把不同 repo 的上下文混在一起，也不用在侧栏按 repo 过滤。</p>
+        </article>
+        <article class="feature-card">
+          <span class="icon" aria-hidden="true">⇄</span>
+          <h3>自托管 relay</h3>
+          <p>relay 只是传输层。你可以用本地 LAN、Tailscale、反向代理或自己的 VPS。</p>
+        </article>
+        <article class="feature-card">
+          <span class="icon" aria-hidden="true">✓</span>
+          <h3>开源友好</h3>
+          <p>公开源码保持 local-first 和通用配置，不把私有托管服务写进默认运行路径。</p>
+        </article>
+      </section>
+
+      <section class="section flow" id="how" aria-labelledby="how-title">
+        <div class="section-heading">
+          <p class="eyebrow">工作方式</p>
+          <h2 id="how-title">从安装到控制，只需要一条本地路径</h2>
+          <p>
+            在 Mac 上启动 bridge，打开 relay 提供的 Web App，扫码或输入配对码。之后浏览器和 Mac bridge
+            通过加密应用流量交换指令与输出。
+          </p>
+        </div>
+        <img class="diagram" src="assets/setup-flow.zh-CN.svg" alt="Domaeng 新手安装和配对流程" />
+      </section>
+
+      <section class="section architecture" aria-labelledby="architecture-title">
+        <div class="architecture-copy">
+          <p class="eyebrow">Local-first 架构</p>
+          <h2 id="architecture-title">relay 负责传输，Mac 负责真正的工作</h2>
+          <p>
+            这种边界让 Domaeng 适合开源和自托管：relay 不执行 git 命令，也不应该接收仓库凭据；
+            它只帮助浏览器找到并安全连接到你的 Mac bridge。
+          </p>
+        </div>
+        <img class="diagram" src="assets/architecture.zh-CN.svg" alt="Domaeng 本地优先架构图" />
+      </section>
+
+      <section class="api-banner" id="self-host" aria-labelledby="self-host-title">
+        <div>
+          <p class="eyebrow">可替换入口</p>
+          <h2 id="self-host-title" data-config-text="selfHostedBannerTitle">需要连接自己的 relay 或内网入口？</h2>
+          <p data-config-text="selfHostedBannerText">
+            把这里配置成你的本地、Tailscale 或自托管 Domaeng Web App 地址。默认站点不绑定任何生产服务。
+          </p>
+        </div>
+        <a class="button banner-button" href="#install" data-config-href="selfHostedUrl" data-config-text="selfHostedBannerCta">
+          查看自托管说明
+        </a>
+      </section>
+
+      <section class="section install" id="install" aria-labelledby="install-title">
+        <div class="install-copy">
+          <p class="eyebrow">开始使用</p>
+          <h2 id="install-title">在负责 host Codex 的 Mac 上运行</h2>
+          <p>
+            npm package 会带上 bridge、本地 relay 和 Web App assets。另一台设备打开打印出来的 `/app/` URL 后，
+            扫 QR 或输入配对码即可连接。
+          </p>
+        </div>
+        <pre aria-label="Domaeng 安装命令"><code>npm install -g domaeng@latest
+domaeng up</code></pre>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div>
+        <strong>Domaeng</strong>
+        <span>Apache-2.0 open source project</span>
+      </div>
+      <nav aria-label="页脚导航">
+        <a href="https://github.com/hhaajack/domaeng" data-config-href="githubUrl">GitHub</a>
+        <a href="#install">Install</a>
+        <a href="#self-host" data-config-href="selfHostedUrl" data-config-text="selfHostedLabel">自托管入口</a>
+      </nav>
+      <span>© <span data-current-year>2026</span></span>
+    </footer>
+
+    <script src="site-config.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

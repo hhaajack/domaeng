@@ -1,6 +1,6 @@
 {
   "name": "domaeng",
-  "version": "1.5.3",
+  "version": "1.5.4",
   "description": "Local bridge between Codex and the Domaeng web app. Run `domaeng up` to start.",
   "main": "src/index.js",
   "bin": {
