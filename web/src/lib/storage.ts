@@ -21,7 +21,8 @@ const KEYS = {
   phoneIdentity: "phoneIdentity",
   trustedMacs: "trustedMacs",
   relayState: "relayState",
-  runtimeSettings: "runtimeSettings"
+  runtimeSettings: "runtimeSettings",
+  lastActiveThreadId: "lastActiveThreadId"
 };
 
 let idbAvailable = true;
@@ -129,6 +130,19 @@ export async function readRuntimeSettings(): Promise<RuntimeSettings> {
 
 export async function writeRuntimeSettings(settings: RuntimeSettings): Promise<void> {
   await writeKV(KEYS.runtimeSettings, normalizeRuntimeSettings(settings));
+}
+
+export async function readLastActiveThreadId(): Promise<string | undefined> {
+  const threadId = await readKV<string>(KEYS.lastActiveThreadId);
+  return typeof threadId === "string" && threadId.trim() ? threadId.trim() : undefined;
+}
+
+export async function writeLastActiveThreadId(threadId: string): Promise<void> {
+  const normalized = threadId.trim();
+  if (!normalized) {
+    return;
+  }
+  await writeKV(KEYS.lastActiveThreadId, normalized);
 }
 
 export function normalizeRuntimeSettings(settings: Partial<RuntimeSettings>): RuntimeSettings {

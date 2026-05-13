@@ -1067,17 +1067,17 @@ textarea {
   display: grid;
   gap: 10px;
   padding: 14px 16px 16px;
-  border: 1px solid rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.82);
   border-radius: 26px;
   background:
-    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.74), transparent 34%),
-    linear-gradient(145deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.14)),
-    rgba(247, 250, 245, 0.24);
+    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.86), transparent 34%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.68), rgba(255, 255, 255, 0.24)),
+    rgba(247, 250, 245, 0.42);
   box-shadow:
     var(--liquid-border),
-    0 22px 58px rgba(31, 44, 45, 0.16);
-  -webkit-backdrop-filter: blur(48px) saturate(1.86);
-  backdrop-filter: blur(48px) saturate(1.86);
+    0 22px 58px rgba(31, 44, 45, 0.18);
+  -webkit-backdrop-filter: blur(64px) saturate(1.92);
+  backdrop-filter: blur(64px) saturate(1.92);
 }
 
 .context-usage-popover-header strong,
@@ -2969,6 +2969,11 @@ textarea {
   padding: 20px 18px 170px;
 }
 
+.jump-latest-button {
+  bottom: 166px;
+  z-index: 5;
+}
+
 .timeline-row {
   padding: 14px 16px;
   border: 1px solid rgba(255, 255, 255, 0.78);
@@ -3547,18 +3552,31 @@ textarea {
   }
 
   .context-usage-popover {
-    border-color: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.28);
     background:
-      radial-gradient(circle at 16% 0%, rgba(255, 255, 255, 0.15), transparent 34%),
-      linear-gradient(145deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.025)),
-      rgba(12, 19, 20, 0.36);
-    box-shadow: var(--liquid-border), 0 24px 70px rgba(0, 0, 0, 0.3);
-    -webkit-backdrop-filter: blur(54px) saturate(1.65);
-    backdrop-filter: blur(54px) saturate(1.65);
+      radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.24), transparent 34%),
+      linear-gradient(145deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.055)),
+      rgba(13, 23, 25, 0.72);
+    box-shadow: var(--liquid-border), 0 26px 76px rgba(0, 0, 0, 0.42);
+    -webkit-backdrop-filter: blur(72px) saturate(1.9);
+    backdrop-filter: blur(72px) saturate(1.9);
+  }
+
+  .context-usage-popover-header strong,
+  .context-usage-summary span {
+    color: #f2faf7;
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.62), 0 10px 24px rgba(0, 0, 0, 0.26);
+  }
+
+  .context-usage-summary strong,
+  .context-usage-popover small,
+  .context-usage-popover .usage-updated {
+    color: #d4e4df;
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.58);
   }
 
   .context-usage-meter {
-    background: rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.18);
   }
 
   .project-toggle > svg,

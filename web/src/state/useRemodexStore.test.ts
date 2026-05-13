@@ -4,6 +4,7 @@ import { useRemodexStore } from "./useRemodexStore";
 
 const initialState = useRemodexStore.getState();
 const client = initialState.client;
+const LAST_ACTIVE_THREAD_STORAGE_KEY = "remodex-web:lastActiveThreadId";
 const originalClientMethods = {
   listThreads: client.listThreads.bind(client),
   readThread: client.readThread.bind(client),
@@ -47,6 +48,10 @@ function restoreClientMethods() {
   client.gitPush = originalClientMethods.gitPush;
   client.gitPull = originalClientMethods.gitPull;
 }
+
+afterEach(() => {
+  localStorage.removeItem(LAST_ACTIVE_THREAD_STORAGE_KEY);
+});
 
 describe("useRemodexStore renameThread", () => {
   afterEach(() => {
@@ -698,6 +703,83 @@ describe("useRemodexStore thread activity", () => {
 
     expect(useRemodexStore.getState().runningTurnByThread["thread-active"]).toBe("__running__");
     expect(useRemodexStore.getState().threadRunStateByThread["thread-active"]).toBe("running");
+  });
+
+  it("restores the last active thread after reconnect when it is still listed", async () => {
+    localStorage.setItem(LAST_ACTIVE_THREAD_STORAGE_KEY, JSON.stringify("thread-old"));
+    client.listThreads = vi.fn().mockResolvedValue([
+      { id: "thread-new", title: "Newest", updatedAt: 2 },
+      { id: "thread-old", title: "Previous", updatedAt: 1 }
+    ]);
+    client.readThread = vi.fn().mockResolvedValue({
+      result: {
+        thread: {
+          id: "thread-old",
+          title: "Previous",
+          turns: []
+        }
+      }
+    });
+
+    useRemodexStore.setState({
+      threads: [],
+      activeThreadId: undefined,
+      messagesByThread: {},
+      runningTurnByThread: {},
+      threadRunStateByThread: {}
+    });
+
+    await useRemodexStore.getState().refreshThreads();
+
+    expect(useRemodexStore.getState().activeThreadId).toBe("thread-old");
+    expect(client.readThread).toHaveBeenCalledWith("thread-old");
+  });
+
+  it("falls back to the newest thread when the last active thread is not listed", async () => {
+    localStorage.setItem(LAST_ACTIVE_THREAD_STORAGE_KEY, JSON.stringify("missing-thread"));
+    client.listThreads = vi.fn().mockResolvedValue([
+      { id: "thread-new", title: "Newest", updatedAt: 2 },
+      { id: "thread-old", title: "Previous", updatedAt: 1 }
+    ]);
+    client.readThread = vi.fn().mockResolvedValue({
+      result: {
+        thread: {
+          id: "thread-new",
+          title: "Newest",
+          turns: []
+        }
+      }
+    });
+
+    useRemodexStore.setState({
+      threads: [],
+      activeThreadId: undefined,
+      messagesByThread: {},
+      runningTurnByThread: {},
+      threadRunStateByThread: {}
+    });
+
+    await useRemodexStore.getState().refreshThreads();
+
+    expect(useRemodexStore.getState().activeThreadId).toBe("thread-new");
+    expect(client.readThread).toHaveBeenCalledWith("thread-new");
+  });
+
+  it("clears list-derived running state when the refreshed thread list reports idle", async () => {
+    client.listThreads = vi.fn().mockResolvedValue([{ id: "thread-active", title: "Active", status: "idle" }]);
+
+    useRemodexStore.setState({
+      threads: [{ id: "thread-active", title: "Active", status: "active" }],
+      activeThreadId: "thread-active",
+      messagesByThread: { "thread-active": [] },
+      runningTurnByThread: { "thread-active": "__running__" },
+      threadRunStateByThread: { "thread-active": "running" }
+    });
+
+    await useRemodexStore.getState().refreshThreads();
+
+    expect(useRemodexStore.getState().runningTurnByThread["thread-active"]).toBeUndefined();
+    expect(useRemodexStore.getState().threadRunStateByThread["thread-active"]).toBeUndefined();
   });
 
   it("ignores turn-less terminal events that arrive after a concrete running turn", () => {

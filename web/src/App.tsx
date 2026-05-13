@@ -1309,7 +1309,12 @@ function Timeline() {
   }
 
   function scrollToLatest(behavior: ScrollBehavior = "smooth") {
-    bottomRef.current?.scrollIntoView({ block: "end", behavior });
+    const timeline = timelineRef.current;
+    if (timeline) {
+      timeline.scrollTo({ top: timeline.scrollHeight, behavior });
+    } else {
+      bottomRef.current?.scrollIntoView({ block: "end", behavior });
+    }
     stickToBottomRef.current = true;
     setShowJumpToLatest(false);
   }

@@ -33,7 +33,14 @@ import {
   decodeThreadTurnsList,
   type TimelineState
 } from "../lib/timeline";
-import { normalizeRuntimeSettings, readRuntimeSettings, readTrustedMacs, writeRuntimeSettings } from "../lib/storage";
+import {
+  normalizeRuntimeSettings,
+  readLastActiveThreadId,
+  readRuntimeSettings,
+  readTrustedMacs,
+  writeLastActiveThreadId,
+  writeRuntimeSettings
+} from "../lib/storage";
 import {
   disableWebPush,
   enableWebPush,
@@ -541,14 +548,14 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
     async refreshThreads() {
       const threads = decodeThreads(await client.listThreads());
       const currentActive = get().activeThreadId;
-      const nextActive = currentActive && threads.some((thread) => thread.id === currentActive)
-        ? currentActive
-        : threads[0]?.id;
+      const savedActive = await readLastActiveThreadId().catch(() => undefined);
+      const nextActive = selectThreadAfterRefresh(threads, currentActive, savedActive);
       set((state) => ({
         threads,
         activeThreadId: nextActive,
         ...runningStateFromListedThreads(state, threads)
       }));
+      rememberLastActiveThread(nextActive);
       if (nextActive && !get().messagesByThread[nextActive]) {
         try {
           await get().openThread(nextActive);
@@ -575,6 +582,7 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
     },
 
     async openThread(threadId) {
+      rememberLastActiveThread(threadId);
       set((state) => ({
         activeThreadId: threadId,
         threads: promoteThreadByRecentUse(state.threads, threadId),
@@ -599,6 +607,7 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
       const response = await client.startThread(cwd, get().runtimeSettings);
       const thread = extractThread(response.result);
       if (thread) {
+        rememberLastActiveThread(thread.id);
         set((state) => ({
           threads: [thread, ...state.threads.filter((entry) => entry.id !== thread.id)],
           activeThreadId: thread.id,
@@ -1026,6 +1035,27 @@ function preserveListedRunningAfterRead<T extends RemodexStore>(
   return markStoreThreadRunning(state, threadId, runningTurnId);
 }
 
+function selectThreadAfterRefresh(
+  threads: CodexThread[],
+  currentActive: string | undefined,
+  savedActive: string | undefined
+): string | undefined {
+  if (currentActive && threads.some((thread) => thread.id === currentActive)) {
+    return currentActive;
+  }
+  if (savedActive && threads.some((thread) => thread.id === savedActive)) {
+    return savedActive;
+  }
+  return threads[0]?.id;
+}
+
+function rememberLastActiveThread(threadId: string | undefined): void {
+  if (!threadId) {
+    return;
+  }
+  void writeLastActiveThreadId(threadId).catch(() => undefined);
+}
+
 function runningStateFromListedThreads(
   state: RemodexStore,
   threads: CodexThread[]
@@ -1035,6 +1065,10 @@ function runningStateFromListedThreads(
 
   for (const thread of threads) {
     if (!isRunningThreadStatus(thread.status)) {
+      if (isTerminalThreadStatus(thread.status) && runningTurnByThread[thread.id] === "__running__") {
+        runningTurnByThread = removeThreadKey(runningTurnByThread, thread.id);
+        threadRunStateByThread = clearThreadTerminalState(threadRunStateByThread, thread.id);
+      }
       continue;
     }
     const runningTurnId = runningTurnByThread[thread.id] || "__running__";
@@ -1612,6 +1646,10 @@ function isActiveThreadStatus(method: string, params: Record<string, unknown>): 
 
 function isRunningThreadStatus(status: string | undefined): boolean {
   return ["active", "running", "processing", "inprogress", "started", "pending"].includes(normalizeStatusToken(status));
+}
+
+function isTerminalThreadStatus(status: string | undefined): boolean {
+  return ["idle", "notloaded", "completed", "complete", "done", "finished", "failed", "failure", "canceled", "cancelled", "interrupted", "stopped"].includes(normalizeStatusToken(status));
 }
 
 function isTerminalStatusPayload(params: Record<string, unknown>): boolean {
