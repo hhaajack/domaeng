@@ -306,28 +306,44 @@ function makeDeviceState(overrides = {}) {
 }
 
 function withTempDeviceStateEnv(run) {
-  const previousDir = process.env.REMODEX_DEVICE_STATE_DIR;
-  const previousMirror = process.env.REMODEX_DEVICE_STATE_KEYCHAIN_MOCK_FILE;
+  const previousDomaengDir = process.env.DOMAENG_DEVICE_STATE_DIR;
+  const previousRemodexDir = process.env.REMODEX_DEVICE_STATE_DIR;
+  const previousDomaengMirror = process.env.DOMAENG_DEVICE_STATE_KEYCHAIN_MOCK_FILE;
+  const previousRemodexMirror = process.env.REMODEX_DEVICE_STATE_KEYCHAIN_MOCK_FILE;
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "remodex-device-state-"));
   const canonicalStateFile = path.join(tempRoot, "device-state.json");
   const keychainMirrorFile = path.join(tempRoot, "keychain-device-state.json");
 
+  process.env.DOMAENG_DEVICE_STATE_DIR = tempRoot;
   process.env.REMODEX_DEVICE_STATE_DIR = tempRoot;
+  process.env.DOMAENG_DEVICE_STATE_KEYCHAIN_MOCK_FILE = keychainMirrorFile;
   process.env.REMODEX_DEVICE_STATE_KEYCHAIN_MOCK_FILE = keychainMirrorFile;
 
   try {
     return run({ canonicalStateFile, keychainMirrorFile });
   } finally {
-    if (previousDir === undefined) {
-      delete process.env.REMODEX_DEVICE_STATE_DIR;
+    if (previousDomaengDir === undefined) {
+      delete process.env.DOMAENG_DEVICE_STATE_DIR;
     } else {
-      process.env.REMODEX_DEVICE_STATE_DIR = previousDir;
+      process.env.DOMAENG_DEVICE_STATE_DIR = previousDomaengDir;
     }
 
-    if (previousMirror === undefined) {
+    if (previousRemodexDir === undefined) {
+      delete process.env.REMODEX_DEVICE_STATE_DIR;
+    } else {
+      process.env.REMODEX_DEVICE_STATE_DIR = previousRemodexDir;
+    }
+
+    if (previousDomaengMirror === undefined) {
+      delete process.env.DOMAENG_DEVICE_STATE_KEYCHAIN_MOCK_FILE;
+    } else {
+      process.env.DOMAENG_DEVICE_STATE_KEYCHAIN_MOCK_FILE = previousDomaengMirror;
+    }
+
+    if (previousRemodexMirror === undefined) {
       delete process.env.REMODEX_DEVICE_STATE_KEYCHAIN_MOCK_FILE;
     } else {
-      process.env.REMODEX_DEVICE_STATE_KEYCHAIN_MOCK_FILE = previousMirror;
+      process.env.REMODEX_DEVICE_STATE_KEYCHAIN_MOCK_FILE = previousRemodexMirror;
     }
 
     fs.rmSync(tempRoot, { recursive: true, force: true });

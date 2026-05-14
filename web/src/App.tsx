@@ -42,6 +42,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode
 } from "react";
+import { flushSync } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import type {
   ApprovalRequest,
@@ -538,6 +539,7 @@ function Workspace() {
   const activeThreadId = useRemodexStore((state) => state.activeThreadId);
   const runningTurnByThread = useRemodexStore((state) => state.runningTurnByThread);
   const threadRunStateByThread = useRemodexStore((state) => state.threadRunStateByThread);
+  const activeThreadMessages = useRemodexStore((state) => activeThreadId ? state.messagesByThread[activeThreadId] ?? EMPTY_MESSAGES : EMPTY_MESSAGES);
   const pendingApprovals = useRemodexStore((state) => state.pendingApprovals);
   const inAppNotifications = useRemodexStore((state) => state.inAppNotifications);
   const dismissInAppNotification = useRemodexStore((state) => state.dismissInAppNotification);
@@ -550,7 +552,11 @@ function Workspace() {
   const gitToolbarEnabled = useRemodexStore((state) => state.runtimeSettings.gitToolbarEnabled === true);
   const activeThread = threads.find((thread) => thread.id === activeThreadId);
   const activeThreadRunning = activeThreadId
-    ? Boolean(runningTurnByThread[activeThreadId] || threadRunStateByThread[activeThreadId] === "running")
+    ? Boolean(
+        runningTurnByThread[activeThreadId]
+        || threadRunStateByThread[activeThreadId] === "running"
+        || hasLiveThreadActivity(activeThreadMessages)
+      )
     : false;
   const projectGroups = buildProjectGroups(threads);
   const visibleProjectGroups = filterProjectGroups(projectGroups, sidebarSearch);
@@ -575,19 +581,36 @@ function Workspace() {
         return;
       }
       refreshing = true;
-      const refreshTask = activeThreadRunning ? refreshThreadSnapshot(activeThreadId) : refreshThreads();
-      void refreshTask
+      void refreshThreadSnapshot(activeThreadId)
         .catch(() => undefined)
         .finally(() => {
           refreshing = false;
         });
     };
-    const interval = window.setInterval(
-      refresh,
-      activeThreadRunning ? ACTIVE_THREAD_RUNNING_REFRESH_MS : ACTIVE_THREAD_IDLE_LIST_REFRESH_MS
-    );
+    refresh();
+    const interval = window.setInterval(refresh, ACTIVE_THREAD_RUNNING_REFRESH_MS);
     return () => window.clearInterval(interval);
-  }, [activeThreadId, activeThreadRunning, refreshThreadSnapshot, refreshThreads]);
+  }, [activeThreadId, refreshThreadSnapshot]);
+
+  useEffect(() => {
+    if (!activeThreadId || activeThreadRunning) {
+      return;
+    }
+    let refreshing = false;
+    const refresh = () => {
+      if (refreshing || document.visibilityState === "hidden") {
+        return;
+      }
+      refreshing = true;
+      void refreshThreads()
+        .catch(() => undefined)
+        .finally(() => {
+          refreshing = false;
+        });
+    };
+    const interval = window.setInterval(refresh, ACTIVE_THREAD_IDLE_LIST_REFRESH_MS);
+    return () => window.clearInterval(interval);
+  }, [activeThreadId, activeThreadRunning, refreshThreads]);
 
   useEffect(() => {
     if (!openThreadMenuId) {
@@ -672,11 +695,12 @@ function Workspace() {
     if (!value) {
       return;
     }
+    flushSync(() => setSidebarNotice("Copying..."));
     try {
       await copyText(value);
-      setSidebarNotice(notice);
+      flushSync(() => setSidebarNotice(notice));
     } catch (error) {
-      setSidebarNotice(error instanceof Error ? error.message : "Copy failed");
+      flushSync(() => setSidebarNotice(error instanceof Error ? error.message : "Copy failed"));
     }
   }
 
@@ -885,6 +909,7 @@ function Workspace() {
         <ApprovalStack />
         <Composer />
       </section>
+      {sidebarNotice ? <div className="workspace-toast" role="status">{sidebarNotice}</div> : null}
       {settingsOpen ? <SettingsSheet onClose={() => setSettingsOpen(false)} /> : null}
       <NotificationBubbles
         notifications={inAppNotifications}
@@ -1552,6 +1577,26 @@ function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+function hasLiveThreadActivity(messages: TimelineMessage[]): boolean {
+  return messages.some((message) => (
+    message.streaming === true
+    || normalizeStatusToken(message.status) === "running"
+    || isPendingLocalUserMessage(message)
+  ));
+}
+
+function isPendingLocalUserMessage(message: TimelineMessage): boolean {
+  return message.role === "user"
+    && message.kind === "chat"
+    && !message.turnId
+    && !message.itemId
+    && objectValue(message.metadata).remodexLocalPending === true;
+}
+
+function normalizeStatusToken(value: unknown): string {
+  return typeof value === "string" ? value.replace(/[^a-z0-9]/gi, "").toLowerCase() : "";
+}
+
 function Composer() {
   const activeThreadId = useRemodexStore((state) => state.activeThreadId);
   const activeThread = useRemodexStore((state) => state.threads.find((thread) => thread.id === state.activeThreadId));
@@ -1567,12 +1612,19 @@ function Composer() {
   const sendComposer = useRemodexStore((state) => state.sendComposer);
   const stopActiveTurn = useRemodexStore((state) => state.stopActiveTurn);
   const queueDraft = useRemodexStore((state) => state.queueDraft);
-  const running = useRemodexStore((state) => activeThreadId ? Boolean(state.runningTurnByThread[activeThreadId]) : false);
+  const running = useRemodexStore((state) => activeThreadId
+    ? Boolean(
+        state.runningTurnByThread[activeThreadId]
+        || state.threadRunStateByThread[activeThreadId] === "running"
+        || hasLiveThreadActivity(state.messagesByThread[activeThreadId] ?? EMPTY_MESSAGES)
+      )
+    : false);
   const runtimeSettings = useRemodexStore((state) => state.runtimeSettings);
   const setRuntimeSettings = useRemodexStore((state) => state.setRuntimeSettings);
   const availableModels = useRemodexStore((state) => state.availableModels);
   const modelsError = useRemodexStore((state) => state.modelsError);
   const lastError = useRemodexStore((state) => state.lastError);
+  const dismissLastError = useRemodexStore((state) => state.dismissLastError);
   const queuedDrafts = useRemodexStore((state) => activeThreadId ? state.queuedDraftsByThread[activeThreadId] ?? EMPTY_DRAFTS : EMPTY_DRAFTS);
   const sendQueuedDraft = useRemodexStore((state) => state.sendQueuedDraft);
   const [openChoiceMenu, setOpenChoiceMenu] = useState<"tools" | "runtime" | "access" | null>(null);
@@ -1759,7 +1811,20 @@ function Composer() {
 
   return (
     <footer className="composer">
-      {lastError && !previewMode ? <p className="composer-error">{lastError}</p> : null}
+      {lastError && !previewMode ? (
+        <div className="composer-error" role="alert">
+          <span>{lastError}</span>
+          <button
+            type="button"
+            className="composer-error-dismiss"
+            title="Dismiss error"
+            aria-label="Dismiss error"
+            onClick={dismissLastError}
+          >
+            <X size={14} />
+          </button>
+        </div>
+      ) : null}
       <div className="composer-glass">
         {queuedDrafts.length ? (
           <div className="queued-drafts">
@@ -2881,25 +2946,43 @@ function timestampFromUUIDv7(value: string | undefined): number {
 }
 
 async function copyText(value: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
+  if (copyTextWithSelectionFallback(value)) {
     return;
   }
 
+  if (navigator.clipboard?.writeText) {
+    await withClipboardSoftTimeout(navigator.clipboard.writeText(value));
+    return;
+  }
+
+  throw new Error("Clipboard is unavailable.");
+}
+
+function copyTextWithSelectionFallback(value: string): boolean {
   const textArea = document.createElement("textarea");
   textArea.value = value;
   textArea.setAttribute("readonly", "");
   textArea.style.position = "fixed";
   textArea.style.opacity = "0";
+  textArea.style.pointerEvents = "none";
   document.body.appendChild(textArea);
-  textArea.select();
   try {
-    if (!document.execCommand("copy")) {
-      throw new Error("Clipboard is unavailable.");
-    }
+    textArea.focus();
+    textArea.select();
+    textArea.setSelectionRange(0, value.length);
+    return document.execCommand("copy");
   } finally {
     document.body.removeChild(textArea);
   }
+}
+
+function withClipboardSoftTimeout(promise: Promise<void>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(resolve, 900);
+    promise
+      .then(resolve, reject)
+      .finally(() => window.clearTimeout(timeout));
+  });
 }
 
 function threadURL(threadId: string): string {

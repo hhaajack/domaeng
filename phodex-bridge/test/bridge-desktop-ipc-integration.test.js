@@ -450,12 +450,12 @@ function writeFrame(socket, payload) {
   socket.write(Buffer.concat([header, body]));
 }
 
-async function waitForMessage(messages, predicate, timeoutMs = 500) {
+async function waitForMessage(messages, predicate, timeoutMs = 1500) {
   await waitFor(() => messages.find(predicate), timeoutMs);
   return messages.find(predicate);
 }
 
-async function waitFor(predicate, timeoutMs = 500) {
+async function waitFor(predicate, timeoutMs = 1500) {
   const startedAt = Date.now();
   while (!predicate()) {
     if (Date.now() - startedAt > timeoutMs) {

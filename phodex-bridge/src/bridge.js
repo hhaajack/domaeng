@@ -784,14 +784,14 @@ function startBridge({
   }
 
   function refreshDesktopThread({ threadId, targetUrl }) {
-    if (!desktopRefresher.canRefresh()) {
+    if (!desktopRefresher.canRefresh({ allowWhenDisabled: true })) {
       return {
         queued: false,
         skippedReason: "refresh_disabled",
       };
     }
 
-    desktopRefresher.queueRefresh("explicit_refresh", {
+    desktopRefresher.queueExplicitRefresh({
       threadId,
       url: targetUrl,
     }, "desktop/refreshThread");
@@ -829,7 +829,7 @@ function startBridge({
   }
 
   function maybeBuildJsonlThreadTurnsListFallback(request, response) {
-    if (!isEmptyTurnsListResponse(response)) {
+    if (!isEmptyTurnsListResponse(response) && !findTurnsListResultKey(response?.result)) {
       return null;
     }
 
@@ -854,6 +854,22 @@ function startBridge({
       const turnsKey = findTurnsListResultKey(result);
       if (!turnsKey || result[turnsKey].length === 0) {
         return null;
+      }
+
+      if (!isEmptyTurnsListResponse(response)) {
+        const activeTurn = activeTurnFromTurns(result[turnsKey]);
+        const responseTurnsKey = findTurnsListResultKey(response?.result);
+        if (!activeTurn || !responseTurnsKey || turnsContainRunningTurn(response.result[responseTurnsKey])) {
+          return null;
+        }
+        return {
+          ...response,
+          result: {
+            ...response.result,
+            [responseTurnsKey]: mergeActiveTurnIntoHistoryTurns(response.result[responseTurnsKey], activeTurn),
+            remodexJsonlActiveOverlay: true,
+          },
+        };
       }
 
       return {
@@ -1050,7 +1066,9 @@ function startBridge({
     }
     relaySanitizedResponseMethodsById.delete(String(responseId));
 
-    return sanitizeThreadHistoryImagesForRelay(normalizedMessage, trackedRequest.method);
+    return sanitizeThreadHistoryImagesForRelay(normalizedMessage, trackedRequest.method, {
+      activeTurnResolver: resolveJsonlActiveTurnForThread,
+    });
   }
 
   function updatePendingAuthLoginFromCodexMessage(rawMessage) {
@@ -1081,6 +1099,7 @@ function startBridge({
           clearPendingAuthLogin();
           return;
         }
+
       }
     }
 
@@ -1864,6 +1883,127 @@ function isEmptyTurnsListResponse(response) {
   return Boolean(turnsKey) && response.result[turnsKey].length === 0;
 }
 
+function resolveJsonlActiveTurnForThread(threadId) {
+  const normalizedThreadId = normalizeNonEmptyString(threadId);
+  if (!normalizedThreadId) {
+    return null;
+  }
+
+  try {
+    const rolloutPath = findRecentRolloutFileForContextRead(resolveSessionsRoot(), {
+      threadId: normalizedThreadId,
+    });
+    if (!rolloutPath) {
+      return null;
+    }
+    const result = readThreadTurnsListPageFromSessionJsonl(rolloutPath, {
+      threadId: normalizedThreadId,
+      limit: 1,
+      maxLimit: 1,
+    });
+    const turnsKey = findTurnsListResultKey(result);
+    if (!turnsKey) {
+      return null;
+    }
+    return activeTurnFromTurns(result[turnsKey]);
+  } catch {
+    return null;
+  }
+}
+
+function activeTurnFromTurns(turns) {
+  if (!Array.isArray(turns)) {
+    return null;
+  }
+  return turns.find((turn) => turn && typeof turn === "object" && isRunningStatusLike(turn.status)) || null;
+}
+
+function turnsContainRunningTurn(turns) {
+  return Array.isArray(turns)
+    && turns.some((turn) => turn && typeof turn === "object" && isRunningStatusLike(turn.status));
+}
+
+function isRunningStatusLike(value) {
+  const token = normalizeStatusToken(value);
+  return ["active", "running", "processing", "inprogress", "started", "pending"].includes(token);
+}
+
+function normalizeStatusToken(value) {
+  if (typeof value === "string") {
+    return value.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return "";
+  }
+  return normalizeStatusToken(value.type)
+    || normalizeStatusToken(value.statusType)
+    || normalizeStatusToken(value.status_type)
+    || normalizeStatusToken(value.state)
+    || normalizeStatusToken(value.phase);
+}
+
+function mergeActiveTurnIntoHistoryTurns(turns, activeTurn) {
+  const existingTurns = Array.isArray(turns) ? turns : [];
+  const activeTurnId = normalizeNonEmptyString(activeTurn?.id)
+    || normalizeNonEmptyString(activeTurn?.turnId)
+    || normalizeNonEmptyString(activeTurn?.turn_id);
+  if (!activeTurnId) {
+    return existingTurns;
+  }
+
+  const active = {
+    ...activeTurn,
+    status: "running",
+  };
+  const existingIndex = existingTurns.findIndex((turn) => {
+    if (!turn || typeof turn !== "object") {
+      return false;
+    }
+    const turnId = normalizeNonEmptyString(turn.id)
+      || normalizeNonEmptyString(turn.turnId)
+      || normalizeNonEmptyString(turn.turn_id);
+    return turnId === activeTurnId;
+  });
+  if (existingIndex < 0) {
+    return [...existingTurns, active];
+  }
+
+  return existingTurns.map((turn, index) => (
+    index === existingIndex
+      ? {
+        ...turn,
+        ...active,
+        items: mergeHistoryItems(turn.items, active.items),
+      }
+      : turn
+  ));
+}
+
+function mergeHistoryItems(existingItems, activeItems) {
+  if (!Array.isArray(existingItems)) {
+    return Array.isArray(activeItems) ? activeItems : [];
+  }
+  if (!Array.isArray(activeItems) || activeItems.length === 0) {
+    return existingItems;
+  }
+
+  const seen = new Set(existingItems.map((item) => (
+    item && typeof item === "object" ? normalizeNonEmptyString(item.id) : ""
+  )).filter(Boolean));
+  const merged = [...existingItems];
+  for (const item of activeItems) {
+    const itemId = item && typeof item === "object" ? normalizeNonEmptyString(item.id) : "";
+    if (itemId && seen.has(itemId)) {
+      continue;
+    }
+    if (itemId) {
+      seen.add(itemId);
+    }
+    merged.push(item);
+  }
+  return merged;
+}
+
 async function fetchSafeThreadTurnsListFallback(request, {
   fetchPage,
   now,
@@ -2208,7 +2348,10 @@ function isRelayBoundServerRequestMethod(method) {
 
 // Shrinks thread history snapshots/pages for mobile relay delivery.
 // This elides bulky blobs and replaces oversized older history with a compact marker.
-function sanitizeThreadHistoryImagesForRelay(rawMessage, requestMethod) {
+function sanitizeThreadHistoryImagesForRelay(rawMessage, requestMethod, {
+  activeTurnResolver = null,
+} = {}) {
+  rawMessage = maybeOverlayActiveTurnOnThreadRead(rawMessage, requestMethod, activeTurnResolver);
   if (requestMethod === "thread/turns/list") {
     return sanitizeThreadTurnsListForRelay(rawMessage);
   }
@@ -2247,6 +2390,45 @@ function sanitizeThreadHistoryImagesForRelay(rawMessage, requestMethod) {
   return trimThreadPayloadForRelay(parseBridgeJSON(sanitizedPayload), null) ?? sanitizedPayload;
 }
 
+function maybeOverlayActiveTurnOnThreadRead(rawMessage, requestMethod, activeTurnResolver) {
+  if (
+    typeof activeTurnResolver !== "function"
+    || (requestMethod !== "thread/read" && requestMethod !== "thread/resume")
+  ) {
+    return rawMessage;
+  }
+
+  const parsed = parseBridgeJSON(rawMessage);
+  const thread = parsed?.result?.thread;
+  if (!thread || typeof thread !== "object" || Array.isArray(thread)) {
+    return rawMessage;
+  }
+  const threadId = normalizeNonEmptyString(thread.id)
+    || normalizeNonEmptyString(thread.threadId)
+    || normalizeNonEmptyString(thread.thread_id);
+  if (!threadId || turnsContainRunningTurn(thread.turns) || isRunningStatusLike(thread.status)) {
+    return rawMessage;
+  }
+
+  const activeTurn = activeTurnResolver(threadId);
+  if (!activeTurn || !isRunningStatusLike(activeTurn.status)) {
+    return rawMessage;
+  }
+
+  return JSON.stringify({
+    ...parsed,
+    result: {
+      ...parsed.result,
+      thread: {
+        ...thread,
+        status: "running",
+        turns: mergeActiveTurnIntoHistoryTurns(thread.turns, activeTurn),
+        remodexJsonlActiveOverlay: true,
+      },
+    },
+  });
+}
+
 function sanitizeThreadTurnsListForRelay(rawMessage) {
   const parsed = parseBridgeJSON(rawMessage);
   const result = parsed?.result;
@@ -2280,10 +2462,10 @@ function sanitizeThreadTurnsListForRelay(rawMessage) {
 
 function sanitizeRelayHistoryTurns(turns, threadId = "") {
   let didSanitize = false;
-  const newestTurnIndex = turns.length - 1;
+  const newestTurn = newestRelayHistoryTurn(turns);
   const sanitizedTurns = turns.map((turn, index) => {
     const sanitizedTurn = sanitizeRelayHistoryTurn(turn, threadId, {
-      preserveInlineImages: index === newestTurnIndex,
+      preserveInlineImages: turn === newestTurn,
     });
     if (sanitizedTurn !== turn) {
       didSanitize = true;
@@ -2659,7 +2841,7 @@ function trimThreadPayloadForRelay(parsed, explicitThread = undefined) {
     return explicitThread === undefined ? null : encoded;
   }
 
-  const turns = thread.turns;
+  const turns = orderRelayHistoryTurnsChronologically(thread.turns);
   let trimmedTurns = turns.length > RELAY_HISTORY_RECENT_TURN_TARGET
     ? turns.slice(-RELAY_HISTORY_RECENT_TURN_TARGET)
     : turns.slice();
@@ -2752,6 +2934,65 @@ function trimThreadPayloadForRelay(parsed, explicitThread = undefined) {
     1
   );
   return encodeRelayThreadPayload(parsed, candidateThread);
+}
+
+function orderRelayHistoryTurnsChronologically(turns) {
+  if (!Array.isArray(turns) || turns.length <= 1) {
+    return Array.isArray(turns) ? turns.slice() : [];
+  }
+  const indexed = turns.map((turn, index) => ({
+    turn,
+    index,
+    timestamp: relayHistoryTurnTimestamp(turn),
+  }));
+  if (!indexed.some((entry) => entry.timestamp > 0)) {
+    return turns.slice();
+  }
+  return indexed
+    .sort((left, right) => {
+      const timestampDelta = left.timestamp - right.timestamp;
+      return timestampDelta === 0 ? left.index - right.index : timestampDelta;
+    })
+    .map((entry) => entry.turn);
+}
+
+function newestRelayHistoryTurn(turns) {
+  const ordered = orderRelayHistoryTurnsChronologically(turns);
+  return ordered.length ? ordered[ordered.length - 1] : null;
+}
+
+function relayHistoryTurnTimestamp(turn) {
+  if (!turn || typeof turn !== "object" || Array.isArray(turn)) {
+    return 0;
+  }
+  const ownTimestamp = relayHistoryTimestamp(
+    turn.createdAt ?? turn.created_at ?? turn.timestamp ?? turn.updatedAt ?? turn.updated_at
+  );
+  if (ownTimestamp > 0) {
+    return ownTimestamp;
+  }
+  if (!Array.isArray(turn.items)) {
+    return 0;
+  }
+  return turn.items.reduce((latest, item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return latest;
+    }
+    return Math.max(latest, relayHistoryTimestamp(
+      item.createdAt ?? item.created_at ?? item.timestamp ?? item.updatedAt ?? item.updated_at
+    ));
+  }, 0);
+}
+
+function relayHistoryTimestamp(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 10_000_000_000 ? value : value * 1000;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
 }
 
 function trimTurnsListPayloadForRelay(parsed, turnsKey, originalRawMessage = null) {

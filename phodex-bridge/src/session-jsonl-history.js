@@ -84,13 +84,11 @@ function parseSessionJsonlTurns(content, { threadId = "" } = {}) {
       }
 
       if (eventType === "user_message") {
-        const turn = ensureTurn(
-          turns,
-          turnsById,
-          normalizeString(payload?.turn_id) || normalizeString(payload?.turnId) || activeTurnId || `turn-line-${index + 1}`,
-          sessionThreadId,
-          entry.timestamp
-        );
+        activeTurnId = normalizeString(payload?.turn_id)
+          || normalizeString(payload?.turnId)
+          || activeTurnId
+          || `turn-line-${index + 1}`;
+        const turn = ensureTurn(turns, turnsById, activeTurnId, sessionThreadId, entry.timestamp);
         turn.items.push({
           id: normalizeString(payload?.id) || `user-message-line-${index + 1}`,
           type: "user_message",
@@ -98,6 +96,12 @@ function parseSessionJsonlTurns(content, { threadId = "" } = {}) {
           text: normalizeString(payload?.message) || normalizeString(payload?.text),
         });
         continue;
+      }
+
+      if (eventType === "agent_message" && isTerminalAssistantPhase(payload?.phase) && activeTurnId) {
+        const turn = ensureTurn(turns, turnsById, activeTurnId, sessionThreadId, entry.timestamp);
+        turn.status = "completed";
+        activeTurnId = "";
       }
 
       // The final assistant text is usually present again as a response_item message.
@@ -110,16 +114,26 @@ function parseSessionJsonlTurns(content, { threadId = "" } = {}) {
       if (!payload) {
         continue;
       }
+      const explicitTurnId = normalizeString(payload.turn_id) || normalizeString(payload.turnId);
+      if (isResponseUserMessage(payload)) {
+        activeTurnId = explicitTurnId || activeTurnId || `turn-line-${index + 1}`;
+      } else if (!activeTurnId && isResponseActiveItem(payload)) {
+        activeTurnId = explicitTurnId || `turn-line-${index + 1}`;
+      }
       const turn = ensureTurn(
         turns,
         turnsById,
-        normalizeString(payload.turn_id) || normalizeString(payload.turnId) || activeTurnId || `turn-line-${index + 1}`,
+        explicitTurnId || activeTurnId || `turn-line-${index + 1}`,
         sessionThreadId,
         entry.timestamp
       );
       const item = normalizeResponseItemForHistory(payload, index + 1);
       if (item) {
         turn.items.push(item);
+      }
+      if (isResponseTerminalAssistantMessage(payload)) {
+        turn.status = "completed";
+        activeTurnId = "";
       }
     }
   }
@@ -152,6 +166,9 @@ function normalizeResponseItemForHistory(payload, lineNumber) {
   if (!type) {
     return null;
   }
+  if (type === "reasoning" && !readHistoryItemText(payload)) {
+    return null;
+  }
 
   const item = {
     ...payload,
@@ -181,6 +198,65 @@ function normalizeHistoryItemType(rawType) {
     return "tool_call_output";
   }
   return rawType;
+}
+
+function readHistoryItemText(item) {
+  const object = objectValue(item);
+  if (!object) {
+    return normalizeString(item);
+  }
+
+  for (const key of ["content", "output", "summary"]) {
+    if (Array.isArray(object[key])) {
+      const text = object[key]
+        .map((part) => readHistoryItemText(part))
+        .filter(Boolean)
+        .join("\n");
+      if (text) {
+        return text;
+      }
+    }
+  }
+
+  return normalizeString(object.text)
+    || normalizeString(object.content)
+    || normalizeString(object.summary)
+    || normalizeString(object.message)
+    || normalizeString(object.result)
+    || "";
+}
+
+function isResponseUserMessage(payload) {
+  return normalizeHistoryItemType(payload?.type) === "message"
+    && normalizeString(payload?.role).toLowerCase() === "user";
+}
+
+function isResponseActiveItem(payload) {
+  const type = normalizeHistoryItemType(payload?.type);
+  if (type === "message") {
+    return normalizeString(payload?.role).toLowerCase() === "assistant";
+  }
+  return type === "reasoning"
+    || type === "tool_call"
+    || type === "function_call_output"
+    || type === "image_generation"
+    || type === "image_generation_call";
+}
+
+function isResponseTerminalAssistantMessage(payload) {
+  if (normalizeHistoryItemType(payload?.type) !== "message") {
+    return false;
+  }
+  if (normalizeString(payload?.role).toLowerCase() !== "assistant") {
+    return false;
+  }
+  const phase = normalizeString(payload?.phase);
+  return !phase || isTerminalAssistantPhase(phase);
+}
+
+function isTerminalAssistantPhase(phase) {
+  const normalized = normalizeString(phase).replace(/[_-]/g, "").toLowerCase();
+  return normalized === "final" || normalized === "finalanswer";
 }
 
 function objectValue(value) {

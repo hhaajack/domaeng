@@ -56,8 +56,9 @@ export function applyNotification(
       return appendStreamingText(state, object, "tool", "diff", readDeltaText(object) || readString(object.diff) || "");
     case "item/completed":
     case "codex/event/item_completed":
-    case "codex/event/agent_message":
       return appendCompletedItem(state, object);
+    case "codex/event/agent_message":
+      return appendCompletedItem(state, object, { settleAssistantTurn: false });
     case "codex/event/user_message":
       return appendMirroredUserMessage(state, object);
     case "codex/event/image_generation_end":
@@ -113,18 +114,19 @@ export function decodeThreadRead(state: TimelineState, result: JSONValue | undef
           text: generatedImageMarkdown(item),
           createdAt: timestamp
         }));
-      } else if (itemType.includes("reasoning")) {
+      } else if (itemType.includes("reasoning") && text) {
         messages.push(message({ role: "reasoning", kind: "reasoning", threadId: thread.id, turnId, itemId, text, createdAt: timestamp }));
       } else if (text) {
         messages.push(message({ role: "assistant", kind: "chat", threadId: thread.id, turnId, itemId, text, createdAt: timestamp }));
       }
     }
   }
+  const decodedMessages = orderMessagesChronologically(messages);
   const existingMessages = state.messagesByThread[thread.id] ?? [];
   const runningTurnId = runningTurnIdFromThreadObject(threadObject, turns);
   const existingRunningTurnId = state.runningTurnByThread[thread.id];
-  const settledTurnIds = settledTurnIdsFromDecodedThread(turns, messages);
-  const mergedMessages = mergeDecodedThreadMessages(existingMessages, messages, {
+  const settledTurnIds = settledTurnIdsFromDecodedThread(turns);
+  const mergedMessages = mergeDecodedThreadMessages(existingMessages, decodedMessages, {
     settledTurnIds,
     runningTurnId,
     existingRunningTurnId,
@@ -136,7 +138,7 @@ export function decodeThreadRead(state: TimelineState, result: JSONValue | undef
   } else if (shouldPreserveExistingRunningTurn({
     existingRunningTurnId,
     existingMessages,
-    decodedMessages: messages,
+    decodedMessages,
     threadObject,
     turns,
     settledTurnIds
@@ -277,7 +279,7 @@ function shouldIgnoreTerminalTurnForRunningState(
   if (terminalTurnId) {
     return Boolean(runningTurnId && runningTurnId !== "__running__" && runningTurnId !== terminalTurnId);
   }
-  return !runningTurnId || runningTurnId !== "__running__";
+  return true;
 }
 
 function shouldClearRunningTurn(
@@ -290,7 +292,11 @@ function shouldClearRunningTurn(
   return runningTurnId === "__running__" || runningTurnId === terminalTurnId;
 }
 
-function appendCompletedItem(state: TimelineState, object: JSONObject): TimelineState {
+function appendCompletedItem(
+  state: TimelineState,
+  object: JSONObject,
+  options: { settleAssistantTurn?: boolean } = {}
+): TimelineState {
   const item = incomingItemObject(object);
   if (item && isGeneratedImageItem(item)) {
     return appendGeneratedImage(state, { ...object, ...item });
@@ -316,7 +322,7 @@ function appendCompletedItem(state: TimelineState, object: JSONObject): Timeline
     text,
     createdAt: Date.now()
   }));
-  if (role !== "assistant") {
+  if (role !== "assistant" || options.settleAssistantTurn === false) {
     return next;
   }
   return markTurnCompleted(next, turnId ? { threadId, turnId } : { threadId });
@@ -664,11 +670,11 @@ function shouldPreserveExistingRunningTurn({
     return false;
   }
 
-  if (
-    existingRunningTurnId !== "__running__"
-    && (turnHasTerminalStatus(turns, existingRunningTurnId) || settledTurnIds.has(existingRunningTurnId))
-  ) {
-    return false;
+  if (existingRunningTurnId !== "__running__") {
+    if (turnHasTerminalStatus(turns, existingRunningTurnId) || settledTurnIds.has(existingRunningTurnId)) {
+      return false;
+    }
+    return true;
   }
 
   return existingMessages.some((entry) => {
@@ -800,8 +806,13 @@ function readItemText(item: JSONObject): string {
   if (output) {
     return output.map((part) => readItemText(asObject(part)) || readString(part)).filter(Boolean).join("\n");
   }
+  const summary = asArray(item.summary);
+  if (summary) {
+    return summary.map((part) => readItemText(asObject(part)) || readString(part)).filter(Boolean).join("\n");
+  }
   return readString(item.text)
     || readString(item.content)
+    || readString(item.summary)
     || readString(item.message)
     || readString(item.result)
     || "";
@@ -1049,6 +1060,16 @@ function mergeDecodedThreadMessages(
   return [...decoded, ...preserved].sort((left, right) => left.createdAt - right.createdAt);
 }
 
+function orderMessagesChronologically(messages: TimelineMessage[]): TimelineMessage[] {
+  return messages
+    .map((entry, index) => ({ entry, index }))
+    .sort((left, right) => {
+      const timestampDelta = left.entry.createdAt - right.entry.createdAt;
+      return timestampDelta === 0 ? left.index - right.index : timestampDelta;
+    })
+    .map(({ entry }) => entry);
+}
+
 function shouldPreserveExistingMessage(
   existing: TimelineMessage,
   decoded: TimelineMessage[],
@@ -1062,6 +1083,10 @@ function shouldPreserveExistingMessage(
     return false;
   }
 
+  if (isEmptyReasoningMessage(existing)) {
+    return false;
+  }
+
   if (isPendingLocalUserMessage(existing)) {
     return true;
   }
@@ -1071,6 +1096,10 @@ function shouldPreserveExistingMessage(
   }
 
   return existing.kind !== "error";
+}
+
+function isEmptyReasoningMessage(message: TimelineMessage): boolean {
+  return message.kind === "reasoning" && message.text.trim() === "";
 }
 
 interface ThreadReadMergeContext {
@@ -1103,21 +1132,49 @@ function shouldDropPlaceholderThinkingFromThreadRead(
   return context.settledTurnIds.has(existingRunningTurnId);
 }
 
-function settledTurnIdsFromDecodedThread(turns: JSONValue[], messages: TimelineMessage[]): Set<string> {
+function settledTurnIdsFromDecodedThread(turns: JSONValue[]): Set<string> {
   const settledTurnIds = new Set<string>();
   for (const turnValue of turns) {
     const turn = asObject(turnValue);
     const turnId = readString(turn.id) || readString(turn.turnId) || readString(turn.turn_id);
     if (turnId && isTerminalStatusObject(turn)) {
       settledTurnIds.add(turnId);
+      continue;
     }
-  }
-  for (const decoded of messages) {
-    if (decoded.turnId && decoded.role === "assistant") {
-      settledTurnIds.add(decoded.turnId);
+    if (turnId && turnHasSettlingAssistantItem(turn)) {
+      settledTurnIds.add(turnId);
     }
   }
   return settledTurnIds;
+}
+
+function turnHasSettlingAssistantItem(turn: JSONObject): boolean {
+  const items = asArray(turn.items) ?? [];
+  return items.some((itemValue) => isSettlingAssistantHistoryItem(asObject(itemValue)));
+}
+
+function isSettlingAssistantHistoryItem(item: JSONObject): boolean {
+  if (!isAssistantHistoryItem(item)) {
+    return false;
+  }
+  const phase = normalizeIdentifier(
+    readString(item.phase)
+      || readString(item.messagePhase)
+      || readString(item.message_phase)
+      || readString(asObject(item.metadata).phase)
+  );
+  return !phase || phase === "final" || phase === "finalanswer";
+}
+
+function isAssistantHistoryItem(item: JSONObject): boolean {
+  const role = normalizeIdentifier(readString(item.role));
+  const type = normalizeIdentifier(readString(item.type));
+  return role.includes("assistant")
+    || role.includes("agent")
+    || role.includes("codex")
+    || type.includes("assistantmessage")
+    || type.includes("agentmessage")
+    || type.includes("messageoutput");
 }
 
 function decodedMessageRepresentsExisting(

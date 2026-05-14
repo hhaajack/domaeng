@@ -72,6 +72,54 @@ test("desktop-origin active runs replay thinking and exec command activity on re
   assert.equal(outbound[3].params.chunk, "On branch main");
 });
 
+test("desktop-origin active mirrors replay running state for later web reads", async (t) => {
+  const { homeDir } = createTemporaryRolloutHome({
+    threadId: "thread-reread",
+    originator: "Codex Desktop",
+    source: "vscode",
+    lines: [
+      taskStarted("turn-live"),
+      functionCall("call-1", "exec_command", {
+        cmd: "npm test",
+        workdir: "/repo",
+      }),
+    ],
+  });
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = homeDir;
+  t.after(() => {
+    restoreCodexHome(previousCodexHome);
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  const outbound = [];
+  const controller = createRolloutLiveMirrorController({
+    sendApplicationResponse(message) {
+      outbound.push(JSON.parse(message));
+    },
+    pollIntervalMs: 5,
+    idleTimeoutMs: 50,
+  });
+  t.after(() => controller.stopAll());
+
+  const readRequest = JSON.stringify({
+    method: "thread/read",
+    params: {
+      threadId: "thread-reread",
+    },
+  });
+  controller.observeInbound(readRequest);
+  await wait(30);
+  outbound.length = 0;
+
+  controller.observeInbound(readRequest);
+  await wait(10);
+
+  assert.deepEqual(outbound.map((message) => message.method), ["turn/started"]);
+  assert.equal(outbound[0].params.threadId, "thread-reread");
+  assert.equal(outbound[0].params.turnId, "turn-live");
+});
+
 test("desktop-origin active rollouts are discovered without a web thread read", async (t) => {
   const { homeDir } = createTemporaryRolloutHome({
     threadId: "thread-auto",
@@ -80,7 +128,57 @@ test("desktop-origin active rollouts are discovered without a web thread read", 
     lines: [
       userMessage("Desktop started this"),
       taskStarted("turn-auto"),
-      agentMessage("Working from desktop", "final_answer"),
+      functionCall("call-auto", "exec_command", {
+        cmd: "npm test",
+        workdir: "/repo",
+      }),
+    ],
+  });
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = homeDir;
+  t.after(() => {
+    restoreCodexHome(previousCodexHome);
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  const outbound = [];
+  const controller = createRolloutLiveMirrorController({
+    sendApplicationResponse(message) {
+      outbound.push(JSON.parse(message));
+    },
+    autoDiscoverActiveRollouts: true,
+    pollIntervalMs: 5,
+    discoveryIntervalMs: 5,
+    idleTimeoutMs: 50,
+  });
+  t.after(() => controller.stopAll());
+
+  await wait(30);
+
+  assert.deepEqual(
+    outbound.map((message) => message.method),
+      [
+        "codex/event/user_message",
+        "turn/started",
+        "item/reasoning/textDelta",
+        "codex/event/exec_command_begin",
+      ]
+    );
+  assert.equal(outbound[0].params.threadId, "thread-auto");
+  assert.equal(outbound[3].params.command, "npm test");
+});
+
+test("desktop-origin response-item rollouts are discovered as running without task events", async (t) => {
+  const { homeDir } = createTemporaryRolloutHome({
+    threadId: "thread-response-active",
+    originator: "remodex_web",
+    source: "vscode",
+    lines: [
+      responseUserMessage("Please keep running"),
+      functionCall("call-response", "exec_command", {
+        cmd: "sleep 20",
+        workdir: "/repo",
+      }),
     ],
   });
   const previousCodexHome = process.env.CODEX_HOME;
@@ -107,25 +205,64 @@ test("desktop-origin active rollouts are discovered without a web thread read", 
   assert.deepEqual(
     outbound.map((message) => message.method),
     [
-      "codex/event/user_message",
       "turn/started",
       "item/reasoning/textDelta",
-      "codex/event/agent_message",
+      "codex/event/exec_command_begin",
     ]
   );
-  assert.equal(outbound[0].params.threadId, "thread-auto");
-  assert.equal(outbound[3].params.message, "Working from desktop");
+  assert.equal(outbound[0].params.threadId, "thread-response-active");
+  assert.equal(outbound[0].params.turnId, "__running__");
+  assert.equal(outbound[2].params.command, "sleep 20");
 });
 
-test("desktop-origin bootstrap replays the pending user message and final assistant text", async (t) => {
+test("desktop-origin discovery recovers active runs behind oversized user payloads", async (t) => {
   const { homeDir } = createTemporaryRolloutHome({
+    threadId: "thread-large-active",
+    originator: "Codex Desktop",
+    source: "vscode",
+    lines: [
+      taskStarted("turn-large"),
+      userMessage("x".repeat(700 * 1024)),
+      agentMessage("still working", "commentary"),
+    ],
+  });
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = homeDir;
+  t.after(() => {
+    restoreCodexHome(previousCodexHome);
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  const outbound = [];
+  const controller = createRolloutLiveMirrorController({
+    sendApplicationResponse(message) {
+      outbound.push(JSON.parse(message));
+    },
+    autoDiscoverActiveRollouts: true,
+    pollIntervalMs: 5,
+    discoveryIntervalMs: 5,
+    idleTimeoutMs: 50,
+  });
+  t.after(() => controller.stopAll());
+
+  await wait(30);
+
+  assert.deepEqual(outbound.map((message) => message.method).slice(0, 2), [
+    "turn/started",
+    "item/reasoning/textDelta",
+  ]);
+  assert.equal(outbound[0].params.threadId, "thread-large-active");
+  assert.equal(outbound[0].params.turnId, "turn-large");
+});
+
+test("desktop-origin live mirror sends completion when final assistant text arrives", async (t) => {
+  const { homeDir, rolloutPath } = createTemporaryRolloutHome({
     threadId: "thread-chat",
     originator: "Codex Desktop",
     source: "desktop",
     lines: [
       userMessage("Please review this diff"),
       taskStarted("turn-chat"),
-      agentMessage("Review complete", "final_answer"),
     ],
   });
   const previousCodexHome = process.env.CODEX_HOME;
@@ -153,20 +290,24 @@ test("desktop-origin bootstrap replays the pending user message and final assist
   }));
 
   await wait(30);
+  outbound.length = 0;
+
+  appendRolloutLines(rolloutPath, [
+    agentMessage("Review complete", "final_answer"),
+  ]);
+  await wait(30);
 
   assert.deepEqual(
     outbound.map((message) => message.method),
     [
-      "codex/event/user_message",
-      "turn/started",
-      "item/reasoning/textDelta",
       "codex/event/agent_message",
+      "turn/completed",
     ]
   );
-  assert.equal(outbound[0].params.message, "Please review this diff");
-  assert.equal(outbound[3].params.message, "Review complete");
+  assert.equal(outbound[0].params.message, "Review complete");
+  assert.equal(outbound[1].params.turnId, "turn-chat");
   assert.equal(
-    outbound[3].params.itemId,
+    outbound[0].params.itemId,
     "rollout-agent-message:thread-chat:turn-chat:2026-03-15T19:47:40.000Z:73e01b91e228"
   );
 });
@@ -509,6 +650,23 @@ function userMessage(message) {
     payload: {
       type: "user_message",
       message,
+    },
+  });
+}
+
+function responseUserMessage(message) {
+  return JSON.stringify({
+    timestamp: "2026-03-15T19:47:36.500Z",
+    type: "response_item",
+    payload: {
+      type: "message",
+      role: "user",
+      content: [
+        {
+          type: "input_text",
+          text: message,
+        },
+      ],
     },
   });
 }

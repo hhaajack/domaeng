@@ -21,6 +21,9 @@ const DEFAULT_DISCOVERY_LOOKBACK_MS = 15 * 60 * 1_000;
 const DEFAULT_DISCOVERY_CANDIDATE_LIMIT = 12;
 const DEFAULT_DISCOVERY_HEAD_SCAN_BYTES = 64 * 1_024;
 const DEFAULT_DISCOVERY_TAIL_SCAN_BYTES = 512 * 1_024;
+const DEFAULT_LARGE_BOOTSTRAP_BYTES = 8 * 1_024 * 1_024;
+const DEFAULT_STREAM_SCAN_CHUNK_BYTES = 1 * 1_024 * 1_024;
+const DEFAULT_STREAM_SCAN_MAX_LINE_BYTES = 2 * 1_024 * 1_024;
 const DESKTOP_RESUME_METHODS = new Set(["thread/read", "thread/resume"]);
 
 // Observes desktop-authored rollout files and replays the currently active run as
@@ -73,6 +76,10 @@ function createRolloutLiveMirrorController({
     });
 
     for (const candidate of candidates) {
+      const candidateThreadId = threadIdFromRolloutPath(candidate.filePath);
+      if (candidateThreadId && mirrorsByThreadId.has(candidateThreadId)) {
+        continue;
+      }
       const summary = readActiveDesktopRolloutSummary(candidate.filePath, { fsModule });
       if (!summary.active || !summary.threadId || mirrorsByThreadId.has(summary.threadId)) {
         continue;
@@ -86,6 +93,7 @@ function createRolloutLiveMirrorController({
     const existingMirror = mirrorsByThreadId.get(threadId);
     if (existingMirror) {
       existingMirror.bump();
+      existingMirror.replayActive();
       return;
     }
 
@@ -213,6 +221,10 @@ function createThreadRolloutLiveMirror({
       }
 
       if (currentTime - lastActivityAt >= idleTimeoutMs) {
+        if (state.activeTurnId) {
+          lastActivityAt = currentTime;
+          return;
+        }
         stop();
       }
     } catch (error) {
@@ -237,8 +249,29 @@ function createThreadRolloutLiveMirror({
 
   return {
     bump,
+    replayActive() {
+      replayActiveRunState(state, sendApplicationResponse);
+    },
     stop,
   };
+}
+
+function replayActiveRunState(state, sendApplicationResponse) {
+  if (!state.activeTurnId) {
+    return;
+  }
+
+  const notifications = [
+    createNotification("turn/started", {
+      threadId: state.threadId,
+      turnId: state.activeTurnId,
+      id: state.activeTurnId,
+    }),
+    ...ensureThinkingNotifications(state),
+  ];
+  for (const notification of notifications) {
+    sendApplicationResponse(JSON.stringify(notification));
+  }
 }
 
 function bootstrapFromExistingRollout({
@@ -248,6 +281,22 @@ function bootstrapFromExistingRollout({
   fsModule,
   sendApplicationResponse,
 }) {
+  if (fileSize > DEFAULT_LARGE_BOOTSTRAP_BYTES) {
+    const summary = scanRolloutForActiveRun(rolloutPath, { fsModule });
+    populateSessionMetaState(state, summary.sessionMeta);
+    state.threadId = summary.threadId || state.threadId;
+    if (!isDesktopRolloutOrigin(state.sessionMeta)) {
+      state.isDesktopOrigin = false;
+      return;
+    }
+    state.isDesktopOrigin = true;
+    if (summary.activeTurnId) {
+      state.activeTurnId = summary.activeTurnId;
+      replayActiveRunState(state, sendApplicationResponse);
+    }
+    return;
+  }
+
   const initialContents = readFileSlice(rolloutPath, 0, fileSize, fsModule);
   if (!initialContents) {
     return;
@@ -277,8 +326,11 @@ function bootstrapFromExistingRollout({
     const taskEventType = parsed?.type === "event_msg"
       ? readString(parsed?.payload?.type)
       : "";
-    if (taskEventType === "user_message") {
+    if (isRolloutUserPreludeEntry(parsed)) {
       pendingUserPreludeLine = line;
+      if (!insideActiveRun) {
+        activeRunLines.length = 0;
+      }
     }
     if (taskEventType === "task_started") {
       insideActiveRun = true;
@@ -293,12 +345,21 @@ function bootstrapFromExistingRollout({
       continue;
     }
 
+    if (!insideActiveRun && isRolloutActiveEntry(parsed)) {
+      insideActiveRun = true;
+      activeTurnId = readEntryTurnId(parsed) || activeTurnId || "__running__";
+      activeRunLines.length = 0;
+      if (pendingUserPreludeLine) {
+        activeRunLines.push(pendingUserPreludeLine);
+      }
+    }
+
     if (!insideActiveRun) {
       continue;
     }
 
     activeRunLines.push(line);
-    if (taskEventType === "task_complete") {
+    if (taskEventType === "task_complete" || isRolloutTerminalEntry(parsed)) {
       insideActiveRun = false;
       activeTurnId = "";
       activeRunLines.length = 0;
@@ -312,9 +373,6 @@ function bootstrapFromExistingRollout({
   }
 
   state.isDesktopOrigin = true;
-  if (activeTurnId) {
-    state.activeTurnId = activeTurnId;
-  }
   processRolloutLines(activeRunLines, state, sendApplicationResponse);
 }
 
@@ -412,6 +470,7 @@ function synthesizeNotificationsFromRolloutEntry(entry, state) {
     }
 
     if (eventType === "agent_reasoning") {
+      notifications.push(...ensureActiveRunNotifications(state, entry));
       notifications.push(...reasoningNotifications(state, firstNonEmptyString([
         readString(payload.message),
         readString(payload.text),
@@ -422,8 +481,15 @@ function synthesizeNotificationsFromRolloutEntry(entry, state) {
 
     if (eventType === "agent_message") {
       const message = readString(payload.message) || readString(payload.text);
+      const terminal = isTerminalAssistantPhase(payload.phase);
+      if (message && !terminal) {
+        notifications.push(...ensureActiveRunNotifications(state, entry));
+      }
       if (!message || !shouldMirrorAgentMessage(payload)) {
-        return [];
+        if (terminal) {
+          notifications.push(...completionNotifications(state, readEntryTurnId(entry)));
+        }
+        return notifications;
       }
       const turnId = readString(payload.turn_id) || readString(payload.turnId) || state.activeTurnId || "";
 
@@ -433,10 +499,14 @@ function synthesizeNotificationsFromRolloutEntry(entry, state) {
         itemId: buildAgentMessageItemId(state.threadId, turnId, entry, message),
         message,
       }));
+      if (terminal) {
+        notifications.push(...completionNotifications(state, turnId));
+      }
       return notifications;
     }
 
     if (eventType === "image_generation_end") {
+      notifications.push(...ensureActiveRunNotifications(state, entry));
       notifications.push(...imageGenerationNotifications(state, payload, {
         preferCallId: true,
       }));
@@ -453,26 +523,77 @@ function synthesizeNotificationsFromRolloutEntry(entry, state) {
   const payload = entry.payload || {};
   const itemType = normalizeRolloutItemType(payload.type);
 
+  if (itemType === "message" && isResponseItemAssistantMessage(payload)) {
+    if (isTerminalAssistantPhase(payload.phase)) {
+      notifications.push(...completionNotifications(state, readEntryTurnId(entry)));
+    } else {
+      notifications.push(...ensureActiveRunNotifications(state, entry));
+    }
+    return notifications;
+  }
+
   if (itemType === "reasoning") {
+    notifications.push(...ensureActiveRunNotifications(state, entry));
     notifications.push(...reasoningNotifications(state, extractReasoningText(payload)));
     return notifications;
   }
 
   if (itemType === "functioncall") {
+    notifications.push(...ensureActiveRunNotifications(state, entry));
     notifications.push(...toolStartNotifications(state, payload));
     return notifications;
   }
 
   if (itemType === "functioncalloutput") {
+    notifications.push(...ensureActiveRunNotifications(state, entry));
     notifications.push(...toolOutputNotifications(state, payload));
     return notifications;
   }
 
   if (itemType === "imagegeneration" || itemType === "imagegenerationcall" || itemType === "imagegenerationend" || itemType === "imageview") {
+    notifications.push(...ensureActiveRunNotifications(state, entry));
     notifications.push(...imageGenerationNotifications(state, payload));
     return notifications;
   }
 
+  return notifications;
+}
+
+function ensureActiveRunNotifications(state, entry) {
+  if (state.activeTurnId) {
+    return [];
+  }
+
+  const turnId = readEntryTurnId(entry) || "__running__";
+  state.activeTurnId = turnId;
+  state.reasoningItemId = buildSyntheticItemId("thinking", state.threadId, turnId);
+  state.hasThinking = false;
+  state.commandCalls.clear();
+
+  return [
+    createNotification("turn/started", {
+      threadId: state.threadId,
+      turnId,
+      id: turnId,
+    }),
+    ...ensureThinkingNotifications(state),
+  ];
+}
+
+function completionNotifications(state, explicitTurnId = "") {
+  const turnId = explicitTurnId || state.activeTurnId;
+  if (!turnId) {
+    return [];
+  }
+
+  const notifications = [
+    createNotification("turn/completed", {
+      threadId: state.threadId,
+      turnId,
+      id: turnId,
+    }),
+  ];
+  resetRunState(state);
   return notifications;
 }
 
@@ -748,6 +869,7 @@ function readActiveDesktopRolloutSummary(rolloutPath, { fsModule = fs } = {}) {
   const combined = tailStart > 0 ? `${head}\n${tail}` : head;
   const state = createMirrorState(threadIdFromRolloutPath(rolloutPath));
   let activeTurnId = "";
+  let sawRunStateSignal = false;
 
   for (const rawLine of combined.split("\n")) {
     const line = rawLine.trim();
@@ -769,26 +891,212 @@ function readActiveDesktopRolloutSummary(rolloutPath, { fsModule = fs } = {}) {
       continue;
     }
 
-    const taskEventType = parsed?.type === "event_msg"
-      ? readString(parsed?.payload?.type)
-      : "";
-    if (taskEventType === "task_started") {
-      activeTurnId = readString(parsed?.payload?.turn_id)
-        || readString(parsed?.payload?.turnId)
-        || activeTurnId
-        || "__running__";
-      continue;
+    if (isRolloutRunStateSignalEntry(parsed)) {
+      sawRunStateSignal = true;
     }
+    activeTurnId = updateActiveRunScanStateFromEntry(parsed, state, activeTurnId);
+  }
 
-    if (taskEventType === "task_complete") {
-      activeTurnId = "";
-    }
+  if (!activeTurnId && !sawRunStateSignal && stat.size > DEFAULT_DISCOVERY_TAIL_SCAN_BYTES) {
+    const summary = scanRolloutForActiveRun(rolloutPath, { fsModule });
+    return {
+      active: Boolean(summary.activeTurnId) && isDesktopRolloutOrigin(summary.sessionMeta),
+      threadId: summary.threadId,
+      turnId: summary.activeTurnId,
+    };
   }
 
   return {
     active: Boolean(activeTurnId) && isDesktopRolloutOrigin(state.sessionMeta),
     threadId: state.threadId,
+    turnId: activeTurnId,
   };
+}
+
+function scanRolloutForActiveRun(rolloutPath, { fsModule = fs } = {}) {
+  const state = createMirrorState(threadIdFromRolloutPath(rolloutPath));
+  const fileSize = readFileSize(rolloutPath, fsModule);
+  const fileHandle = fsModule.openSync(rolloutPath, "r");
+  const buffer = Buffer.alloc(DEFAULT_STREAM_SCAN_CHUNK_BYTES);
+  let offset = 0;
+  let carry = "";
+  let skippingLongLine = false;
+  let activeTurnId = "";
+
+  try {
+    while (offset < fileSize) {
+      const bytesRead = fsModule.readSync(fileHandle, buffer, 0, buffer.length, offset);
+      if (bytesRead <= 0) {
+        break;
+      }
+      offset += bytesRead;
+
+      const chunk = buffer.toString("utf8", 0, bytesRead);
+      const combined = skippingLongLine ? chunk : `${carry}${chunk}`;
+      const lines = combined.split("\n");
+      carry = lines.pop() || "";
+
+      for (const line of lines) {
+        if (skippingLongLine) {
+          skippingLongLine = false;
+          continue;
+        }
+        activeTurnId = updateActiveRunScanStateFromLine(line, state, activeTurnId);
+      }
+
+      if (!skippingLongLine && carry.length > DEFAULT_STREAM_SCAN_MAX_LINE_BYTES) {
+        carry = "";
+        skippingLongLine = true;
+      }
+    }
+
+    if (!skippingLongLine && carry) {
+      activeTurnId = updateActiveRunScanStateFromLine(carry, state, activeTurnId);
+    }
+  } finally {
+    fsModule.closeSync(fileHandle);
+  }
+
+  return {
+    activeTurnId,
+    sessionMeta: state.sessionMeta,
+    threadId: state.threadId,
+  };
+}
+
+function updateActiveRunScanStateFromLine(line, state, activeTurnId) {
+  const trimmed = readString(line);
+  if (!trimmed || trimmed.length > DEFAULT_STREAM_SCAN_MAX_LINE_BYTES) {
+    return activeTurnId;
+  }
+
+  const parsed = safeParseJSON(trimmed);
+  if (!parsed) {
+    return activeTurnId;
+  }
+
+  return updateActiveRunScanStateFromEntry(parsed, state, activeTurnId);
+}
+
+function updateActiveRunScanStateFromEntry(entry, state, activeTurnId) {
+  if (entry?.type === "session_meta") {
+    populateSessionMetaState(state, entry.payload);
+    state.threadId = readString(entry.payload?.id)
+      || readString(entry.payload?.threadId)
+      || readString(entry.payload?.thread_id)
+      || state.threadId;
+    return activeTurnId;
+  }
+
+  if (isRolloutUserPreludeEntry(entry)) {
+    return "";
+  }
+
+  const taskEventType = entry?.type === "event_msg"
+    ? readString(entry?.payload?.type)
+    : "";
+  if (taskEventType === "task_started") {
+    return readString(entry?.payload?.turn_id)
+      || readString(entry?.payload?.turnId)
+      || activeTurnId
+      || "__running__";
+  }
+  if (taskEventType === "task_complete" || isRolloutTerminalEntry(entry)) {
+    return "";
+  }
+  if (isRolloutActiveEntry(entry)) {
+    return readEntryTurnId(entry) || activeTurnId || "__running__";
+  }
+  return activeTurnId;
+}
+
+function isRolloutRunStateSignalEntry(entry) {
+  return isRolloutUserPreludeEntry(entry)
+    || isRolloutActiveEntry(entry)
+    || isRolloutTerminalEntry(entry);
+}
+
+function isRolloutUserPreludeEntry(entry) {
+  if (entry?.type === "event_msg") {
+    return readString(entry.payload?.type) === "user_message";
+  }
+
+  if (entry?.type !== "response_item") {
+    return false;
+  }
+
+  const payload = entry.payload || {};
+  return normalizeRolloutItemType(payload.type) === "message"
+    && readString(payload.role).toLowerCase() === "user";
+}
+
+function isRolloutActiveEntry(entry) {
+  if (entry?.type === "event_msg") {
+    const eventType = readString(entry.payload?.type);
+    return eventType === "task_started"
+      || eventType === "agent_reasoning"
+      || eventType === "agent_message"
+      || eventType === "image_generation_end";
+  }
+
+  if (entry?.type !== "response_item") {
+    return false;
+  }
+
+  const payload = entry.payload || {};
+  const itemType = normalizeRolloutItemType(payload.type);
+  if (itemType === "message") {
+    return isResponseItemAssistantMessage(payload);
+  }
+
+  return itemType === "reasoning"
+    || itemType === "functioncall"
+    || itemType === "functioncalloutput"
+    || itemType === "imagegeneration"
+    || itemType === "imagegenerationcall"
+    || itemType === "imagegenerationend"
+    || itemType === "imageview";
+}
+
+function isRolloutTerminalEntry(entry) {
+  if (entry?.type === "event_msg") {
+    const eventType = readString(entry.payload?.type);
+    return eventType === "task_complete"
+      || (eventType === "agent_message" && isTerminalAssistantPhase(entry.payload?.phase));
+  }
+
+  if (entry?.type !== "response_item") {
+    return false;
+  }
+
+  const payload = entry.payload || {};
+  return normalizeRolloutItemType(payload.type) === "message"
+    && isResponseItemAssistantMessage(payload)
+    && isTerminalAssistantPhase(payload.phase);
+}
+
+function isResponseItemAssistantMessage(payload) {
+  return readString(payload?.role).toLowerCase() === "assistant";
+}
+
+function isTerminalAssistantPhase(phase) {
+  const normalized = readString(phase).replace(/[_-]/g, "").toLowerCase();
+  return normalized === "final" || normalized === "finalanswer";
+}
+
+function readEntryTurnId(entry) {
+  const payload = entry?.payload || {};
+  const candidates = [
+    readString(payload.turn_id),
+    readString(payload.turnId),
+    readString(payload.turn?.id),
+    readString(payload.turn?.turn_id),
+    readString(payload.turn?.turnId),
+  ];
+  if (entry?.type === "event_msg") {
+    candidates.push(readString(payload.id));
+  }
+  return firstNonEmptyString(candidates) || "";
 }
 
 function threadIdFromRolloutPath(rolloutPath) {

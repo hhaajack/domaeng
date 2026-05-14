@@ -95,7 +95,7 @@ class CodexDesktopRefresher {
     this.watchStartAt = 0;
     this.lastRolloutSize = null;
     this.stopWatcherAfterRefreshThreadId = null;
-    this.runtimeRefreshAvailable = enabled;
+    this.runtimeRefreshAvailable = true;
     this.consecutiveRefreshFailures = 0;
     this.unavailableLogged = false;
   }
@@ -192,6 +192,12 @@ class CodexDesktopRefresher {
     this.scheduleRefresh(reason);
   }
 
+  queueExplicitRefresh(target, reason) {
+    this.noteRefreshTarget(target);
+    this.pendingRefreshKinds.add("explicit_refresh");
+    this.scheduleRefresh(reason, { allowWhenDisabled: true });
+  }
+
   queueCompletionRefresh(target, turnId, reason) {
     const completionTarget = target?.url
       ? target
@@ -242,8 +248,8 @@ class CodexDesktopRefresher {
     this.pendingCompletionTargetThreadId = "";
   }
 
-  scheduleRefresh(reason) {
-    if (!this.canRefresh()) {
+  scheduleRefresh(reason, { allowWhenDisabled = false } = {}) {
+    if (!this.canRefresh({ allowWhenDisabled })) {
       return;
     }
 
@@ -257,12 +263,12 @@ class CodexDesktopRefresher {
     this.log(`refresh scheduled: ${reason}`);
     this.refreshTimer = setTimeout(() => {
       this.refreshTimer = null;
-      void this.runPendingRefresh();
+      void this.runPendingRefresh({ allowWhenDisabled });
     }, waitMs);
   }
 
-  async runPendingRefresh() {
-    if (!this.canRefresh()) {
+  async runPendingRefresh({ allowWhenDisabled = false } = {}) {
+    if (!this.canRefresh({ allowWhenDisabled })) {
       this.clearPendingState();
       return;
     }
@@ -536,8 +542,8 @@ class CodexDesktopRefresher {
     }
   }
 
-  canRefresh() {
-    return this.enabled && this.runtimeRefreshAvailable;
+  canRefresh({ allowWhenDisabled = false } = {}) {
+    return this.runtimeRefreshAvailable && (this.enabled || allowWhenDisabled);
   }
 
   // Tells the debounce loop whether any phone/completion refresh is still waiting to run.

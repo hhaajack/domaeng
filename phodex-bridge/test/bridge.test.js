@@ -427,6 +427,46 @@ test("sanitizeThreadHistoryImagesForRelay replaces older inline history images w
   });
 });
 
+test("sanitizeThreadHistoryImagesForRelay overlays active JSONL turns onto thread reads", () => {
+  const rawMessage = JSON.stringify({
+    id: "req-thread-read",
+    result: {
+      thread: {
+        id: "thread-active",
+        status: "idle",
+        turns: [{
+          id: "turn-old",
+          status: "completed",
+          items: [],
+        }],
+      },
+    },
+  });
+
+  const sanitized = JSON.parse(sanitizeThreadHistoryImagesForRelay(rawMessage, "thread/read", {
+    activeTurnResolver: (threadId) => {
+      assert.equal(threadId, "thread-active");
+      return {
+        id: "turn-live",
+        status: "running",
+        items: [{
+          id: "tool-live",
+          type: "tool_call",
+          text: "sleep 20",
+        }],
+      };
+    },
+  }));
+
+  assert.equal(sanitized.result.thread.status, "running");
+  assert.equal(sanitized.result.thread.remodexJsonlActiveOverlay, true);
+  assert.deepEqual(
+    sanitized.result.thread.turns.map((turn) => turn.id),
+    ["turn-old", "turn-live"]
+  );
+  assert.equal(sanitized.result.thread.turns[1].status, "running");
+});
+
 test("sanitizeThreadHistoryImagesForRelay replaces older input_image history data URLs", () => {
   const rawMessage = JSON.stringify({
     id: "req-thread-input-image",
@@ -1139,6 +1179,48 @@ test("sanitizeThreadHistoryImagesForRelay keeps the newest forty turns when comp
     [
       "remodex-history-compacted-turn-1",
       ...turns.slice(5).map((turn) => turn.id),
+    ]
+  );
+});
+
+test("sanitizeThreadHistoryImagesForRelay keeps newest turns from newest-first snapshots", () => {
+  const largeText = "A".repeat(900 * 1024);
+  const turnsNewestFirst = Array.from({ length: 45 }, (_, index) => {
+    const turnNumber = 45 - index;
+    return {
+      id: `turn-${turnNumber}`,
+      createdAt: `2026-05-13T12:${String(turnNumber).padStart(2, "0")}:00.000Z`,
+      items: [
+        {
+          id: `item-${turnNumber}`,
+          type: "assistant_message",
+          text: turnNumber <= 5 ? largeText : `reply ${turnNumber}`,
+        },
+      ],
+    };
+  });
+  const rawMessage = JSON.stringify({
+    id: "req-thread-recent-window-newest-first",
+    result: {
+      thread: {
+        id: "thread-recent-window-newest-first",
+        turns: turnsNewestFirst,
+      },
+    },
+  });
+
+  const sanitized = JSON.parse(
+    sanitizeThreadHistoryImagesForRelay(rawMessage, "thread/read")
+  );
+
+  assert.equal(sanitized.result.thread.remodexHistoryCompacted, true);
+  assert.equal(sanitized.result.thread.remodexOmittedTurnCount, 5);
+  assert.equal(sanitized.result.thread.remodexKeptTurnCount, 40);
+  assert.deepEqual(
+    sanitized.result.thread.turns.map((turn) => turn.id),
+    [
+      "remodex-history-compacted-turn-1",
+      ...Array.from({ length: 40 }, (_, index) => `turn-${index + 6}`),
     ]
   );
 });

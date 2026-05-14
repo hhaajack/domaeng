@@ -30,7 +30,6 @@ import {
   appendLocalUserMessage,
   applyNotification,
   decodeThreadRead,
-  decodeThreadTurnsList,
   type TimelineState
 } from "../lib/timeline";
 import {
@@ -55,6 +54,7 @@ interface RemodexStore {
   threads: CodexThread[];
   activeThreadId?: string;
   locallyStartedThreadIds: Record<string, true>;
+  locallyInterruptedTurnByThread: Record<string, string | undefined>;
   messagesByThread: Record<string, TimelineMessage[]>;
   runningTurnByThread: Record<string, string | undefined>;
   threadRunStateByThread: Record<string, ThreadRunState | undefined>;
@@ -104,6 +104,7 @@ interface RemodexStore {
   approve: (request: ApprovalRequest, decision: "accept" | "decline" | "acceptForSession") => Promise<void>;
   answerUserInput: (request: ApprovalRequest, questionId: string, answer: string) => Promise<void>;
   dismissInAppNotification: (id: string) => void;
+  dismissLastError: () => void;
   setRuntimeSettings: (settings: Partial<RuntimeSettings>) => Promise<void>;
   refreshContextWindowUsage: (threadId: string) => Promise<void>;
   refreshRateLimits: () => Promise<void>;
@@ -195,6 +196,7 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
           event.params
         ));
         maybeRefreshContextWindowUsageAfterNotification(event.method, event.params);
+        maybeRefreshDesktopThreadAfterNotification(event.method, event.params);
         break;
       case "approval":
         set((state) => applyApprovalActivityUpdate(state, event.request));
@@ -386,7 +388,8 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
       return {
         ...state,
         runningTurnByThread: removeThreadKey(state.runningTurnByThread, threadId),
-        threadRunStateByThread: clearThreadTerminalState(state.threadRunStateByThread, threadId)
+        threadRunStateByThread: clearThreadTerminalState(state.threadRunStateByThread, threadId),
+        locallyInterruptedTurnByThread: removeThreadKey(state.locallyInterruptedTurnByThread, threadId)
       };
     });
   }
@@ -429,14 +432,8 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
   }
 
   async function refreshThreadRunSnapshot(threadId: string): Promise<void> {
-    try {
-      const response = await client.listThreadTurns(threadId, 4);
-      set((state) => applyTimelinePatch(state, decodeThreadTurnsList(state, threadId, response.result)));
-      return;
-    } catch {
-      const response = await client.readThread(threadId);
-      set((state) => applyThreadReadResult(state, response.result));
-    }
+    const response = await client.readThread(threadId);
+    set((state) => applyThreadReadResult(state, response.result));
   }
 
   async function reconcileRunningThreadsAfterConnect(): Promise<void> {
@@ -467,6 +464,7 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
     secureState: "notPaired",
     threads: [],
     locallyStartedThreadIds: {},
+    locallyInterruptedTurnByThread: {},
     messagesByThread: {},
     runningTurnByThread: {},
     threadRunStateByThread: {},
@@ -622,6 +620,7 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
         if (get().runtimeSettings.gitToolbarEnabled === true) {
           await get().refreshGitStatus();
         }
+        void refreshDesktopThreadBestEffort(thread.id);
       }
     },
 
@@ -727,7 +726,13 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
       if (!activeThreadId) {
         return;
       }
-      await client.interruptTurn(activeThreadId, concreteTurnId(runningTurnByThread[activeThreadId]));
+      const turnId = runningTurnByThread[activeThreadId];
+      set((state) => markStoreThreadInterrupted(state, activeThreadId, turnId));
+      try {
+        await client.interruptTurn(activeThreadId, concreteTurnId(turnId));
+      } catch (error) {
+        set({ lastError: errorMessage(error) });
+      }
     },
 
     queueDraft() {
@@ -798,6 +803,10 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
       set((state) => ({
         inAppNotifications: state.inAppNotifications.filter((notification) => notification.id !== id)
       }));
+    },
+
+    dismissLastError() {
+      set({ lastError: undefined });
     },
 
     async setRuntimeSettings(settings) {
@@ -977,6 +986,27 @@ function maybeRefreshContextWindowUsageAfterNotification(method: string, params:
   }
 }
 
+function maybeRefreshDesktopThreadAfterNotification(method: string, params: JSONValue | undefined): void {
+  if (!shouldRefreshDesktopThreadAfterNotification(method, objectValue(params))) {
+    return;
+  }
+  const threadId = resolveThreadId(objectValue(params));
+  if (threadId) {
+    void useRemodexStore.getState().client.refreshDesktopThread(threadId).catch(() => undefined);
+  }
+}
+
+function shouldRefreshDesktopThreadAfterNotification(method: string, params: Record<string, unknown>): boolean {
+  if (method === "turn/completed" || method === "turn/failed" || method === "codex/event/agent_message") {
+    return true;
+  }
+  if (method !== "item/completed" && method !== "codex/event/item_completed") {
+    return false;
+  }
+  const item = objectValue(params.item ?? params.event ?? params);
+  return isAssistantHistoryItem(item);
+}
+
 function applyTimelinePatch<T extends TimelineState>(state: T, next: TimelineState): T {
   const patched = {
     ...state,
@@ -999,31 +1029,58 @@ function applyTimelinePatch<T extends TimelineState>(state: T, next: TimelineSta
 function applyThreadReadResult<T extends RemodexStore>(state: T, result: JSONValue | undefined): T {
   const threadObject = objectValue(objectValue(result).thread ?? result);
   const threadId = readString(threadObject.id) || resolveThreadId(threadObject);
-  const listedRunningTurnId = threadId ? state.runningTurnByThread[threadId] : undefined;
-  const listStillShowsRunning = threadId
-    ? state.threads.some((thread) => thread.id === threadId && isRunningThreadStatus(thread.status))
-    : false;
-  const shouldPreserveListedRunning = Boolean(
+  const existingRunningTurnId = threadId ? state.runningTurnByThread[threadId] : undefined;
+  const shouldPreserveExistingRunning = Boolean(
     threadId
-      && listedRunningTurnId
-      && listStillShowsRunning
+      && existingRunningTurnId
       && !isTerminalStatusPayload(threadObject)
+      && !threadReadSettlesRunningTurn(threadObject, existingRunningTurnId)
   );
   const patched = preserveListedRunningAfterRead(
     applyTimelinePatch(state, decodeThreadRead(state, result)),
     threadId,
-    shouldPreserveListedRunning ? listedRunningTurnId : undefined
+    shouldPreserveExistingRunning ? existingRunningTurnId : undefined
   );
   if (!threadId) {
     return patched;
   }
+  const runReconciled = reconcileLocalInterruptedThreadRead(state, patched, threadId, threadObject);
   const usage = extractContextWindowUsage(threadObject.usage);
   if (!usage) {
-    return patched;
+    return runReconciled;
   }
   return {
-    ...patched,
-    ...contextUsageStatePatch(patched, threadId, usage)
+    ...runReconciled,
+    ...contextUsageStatePatch(runReconciled, threadId, usage)
+  };
+}
+
+function reconcileLocalInterruptedThreadRead<T extends RemodexStore>(
+  previousState: T,
+  nextState: T,
+  threadId: string,
+  threadObject: Record<string, unknown>
+): T {
+  const interruptedTurnId = previousState.locallyInterruptedTurnByThread[threadId];
+  if (!interruptedTurnId) {
+    return nextState;
+  }
+  if (isTerminalStatusPayload(threadObject)) {
+    return {
+      ...nextState,
+      locallyInterruptedTurnByThread: removeThreadKey(nextState.locallyInterruptedTurnByThread, threadId)
+    };
+  }
+  if (!shouldSuppressRunningForInterruptedTurn(interruptedTurnId, nextState.runningTurnByThread[threadId])) {
+    return {
+      ...nextState,
+      locallyInterruptedTurnByThread: removeThreadKey(nextState.locallyInterruptedTurnByThread, threadId)
+    };
+  }
+  return {
+    ...nextState,
+    runningTurnByThread: removeThreadKey(nextState.runningTurnByThread, threadId),
+    threadRunStateByThread: clearThreadTerminalState(nextState.threadRunStateByThread, threadId)
   };
 }
 
@@ -1036,6 +1093,55 @@ function preserveListedRunningAfterRead<T extends RemodexStore>(
     return state;
   }
   return markStoreThreadRunning(state, threadId, runningTurnId);
+}
+
+function threadReadSettlesRunningTurn(
+  threadObject: Record<string, unknown>,
+  runningTurnId: string | undefined
+): boolean {
+  if (!runningTurnId || runningTurnId === "__running__") {
+    return false;
+  }
+  const turns = arrayValue(threadObject.turns);
+  return turns.some((turnValue) => {
+    const turn = objectValue(turnValue);
+    const turnId = readString(turn.id) || readString(turn.turnId) || readString(turn.turn_id);
+    if (turnId !== runningTurnId) {
+      return false;
+    }
+    if (isTerminalStatusPayload(turn)) {
+      return true;
+    }
+    const items = arrayValue(turn.items);
+    return items.some((itemValue) => isSettlingAssistantHistoryItem(objectValue(itemValue)));
+  });
+}
+
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function isAssistantHistoryItem(item: Record<string, unknown>): boolean {
+  const role = readString(item.role)?.toLowerCase();
+  const type = readString(item.type)?.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return role === "assistant"
+    || type === "assistantmessage"
+    || type === "agentmessage"
+    || type === "messageoutput";
+}
+
+function isSettlingAssistantHistoryItem(item: Record<string, unknown>): boolean {
+  if (!isAssistantHistoryItem(item)) {
+    return false;
+  }
+  const phase = normalizeStatusToken(
+    readString(item.phase)
+      || readString(item.messagePhase)
+      || readString(item.message_phase)
+      || readString(objectValue(item.metadata).phase)
+      || ""
+  );
+  return !phase || phase === "final" || phase === "finalanswer";
 }
 
 function selectThreadAfterRefresh(
@@ -1075,19 +1181,30 @@ function rememberLastActiveThread(threadId: string | undefined): void {
 function runningStateFromListedThreads(
   state: RemodexStore,
   threads: CodexThread[]
-): Pick<RemodexStore, "runningTurnByThread" | "threadRunStateByThread"> {
+): Pick<RemodexStore, "runningTurnByThread" | "threadRunStateByThread" | "locallyInterruptedTurnByThread"> {
   let runningTurnByThread = state.runningTurnByThread;
   let threadRunStateByThread = state.threadRunStateByThread;
+  let locallyInterruptedTurnByThread = state.locallyInterruptedTurnByThread;
 
   for (const thread of threads) {
     if (!isRunningThreadStatus(thread.status)) {
-      if (isTerminalThreadStatus(thread.status) && runningTurnByThread[thread.id] === "__running__") {
+      if (isTerminalThreadStatus(thread.status)) {
+        if (shouldPreserveRunningFromLiveMessages(state, thread.id, runningTurnByThread[thread.id])) {
+          continue;
+        }
         runningTurnByThread = removeThreadKey(runningTurnByThread, thread.id);
         threadRunStateByThread = clearThreadTerminalState(threadRunStateByThread, thread.id);
+        locallyInterruptedTurnByThread = removeThreadKey(locallyInterruptedTurnByThread, thread.id);
       }
       continue;
     }
     const runningTurnId = runningTurnByThread[thread.id] || "__running__";
+    const interruptedTurnId = locallyInterruptedTurnByThread[thread.id];
+    if (interruptedTurnId && shouldSuppressRunningForInterruptedTurn(interruptedTurnId, runningTurnId)) {
+      runningTurnByThread = removeThreadKey(runningTurnByThread, thread.id);
+      threadRunStateByThread = clearThreadTerminalState(threadRunStateByThread, thread.id);
+      continue;
+    }
     if (runningTurnByThread[thread.id] !== runningTurnId) {
       runningTurnByThread = {
         ...runningTurnByThread,
@@ -1104,8 +1221,43 @@ function runningStateFromListedThreads(
 
   return {
     runningTurnByThread,
-    threadRunStateByThread
+    threadRunStateByThread,
+    locallyInterruptedTurnByThread
   };
+}
+
+function shouldPreserveRunningFromLiveMessages(
+  state: RemodexStore,
+  threadId: string,
+  runningTurnId: string | undefined
+): boolean {
+  if (!runningTurnId) {
+    return false;
+  }
+  return (state.messagesByThread[threadId] ?? []).some((entry) => {
+    if (!isLiveActivityMessage(entry)) {
+      return false;
+    }
+    return runningTurnId === "__running__" || !entry.turnId || entry.turnId === runningTurnId;
+  });
+}
+
+function isLiveActivityMessage(message: TimelineMessage): boolean {
+  if (message.streaming || normalizeStatusToken(message.status) === "running") {
+    return true;
+  }
+  if (isPendingLocalUserMessage(message)) {
+    return true;
+  }
+  return message.kind === "tool" || message.kind === "reasoning";
+}
+
+function isPendingLocalUserMessage(message: TimelineMessage): boolean {
+  return message.role === "user"
+    && message.kind === "chat"
+    && !message.turnId
+    && !message.itemId
+    && objectValue(message.metadata).remodexLocalPending === true;
 }
 
 function applyContextUsageUpdate<T extends RemodexStore>(state: T, params: JSONValue | undefined): T {
@@ -1276,7 +1428,89 @@ function markStoreThreadRunning<T extends RemodexStore>(
     threadRunStateByThread: {
       ...state.threadRunStateByThread,
       [threadId]: "running"
+    },
+    locallyInterruptedTurnByThread: removeThreadKey(state.locallyInterruptedTurnByThread, threadId)
+  };
+}
+
+function markStoreThreadInterrupted<T extends RemodexStore>(
+  state: T,
+  threadId: string,
+  turnId: string | undefined
+): T {
+  return {
+    ...state,
+    messagesByThread: {
+      ...state.messagesByThread,
+      [threadId]: settleMessagesAfterLocalInterrupt(state.messagesByThread[threadId] ?? [], concreteTurnId(turnId))
+    },
+    runningTurnByThread: removeThreadKey(state.runningTurnByThread, threadId),
+    threadRunStateByThread: clearThreadTerminalState(state.threadRunStateByThread, threadId),
+    locallyInterruptedTurnByThread: {
+      ...state.locallyInterruptedTurnByThread,
+      [threadId]: turnId || "__running__"
     }
+  };
+}
+
+function settleMessagesAfterLocalInterrupt(
+  messages: TimelineMessage[],
+  turnId: string | undefined
+): TimelineMessage[] {
+  return messages
+    .filter((entry) => !isPlaceholderThinkingForInterruptedTurn(entry, turnId))
+    .map((entry) => {
+      if (!shouldSettleInterruptedMessage(entry, turnId)) {
+        return entry;
+      }
+      return { ...entry, streaming: false };
+    });
+}
+
+function shouldSettleInterruptedMessage(entry: TimelineMessage, turnId: string | undefined): boolean {
+  if (entry.streaming !== true) {
+    return false;
+  }
+  return !turnId || !entry.turnId || entry.turnId === turnId;
+}
+
+function isPlaceholderThinkingForInterruptedTurn(entry: TimelineMessage, turnId: string | undefined): boolean {
+  if (entry.role !== "reasoning" || entry.kind !== "reasoning" || entry.streaming !== true) {
+    return false;
+  }
+  if (turnId && entry.turnId && entry.turnId !== turnId) {
+    return false;
+  }
+  return isPlaceholderThinkingText(entry.text);
+}
+
+function isPlaceholderThinkingText(value: string): boolean {
+  const normalized = value.trim().replace(/\s+/g, " ").replace(/[^a-z0-9]/gi, "").toLowerCase();
+  return /^(thinking)+$/.test(normalized);
+}
+
+function shouldSuppressRunningForInterruptedTurn(
+  interruptedTurnId: string,
+  runningTurnId: string | undefined
+): boolean {
+  if (!runningTurnId) {
+    return false;
+  }
+  if (interruptedTurnId === "__running__") {
+    return runningTurnId === "__running__";
+  }
+  return runningTurnId === "__running__" || runningTurnId === interruptedTurnId;
+}
+
+function clearThreadActivityAfterLocalInterrupt<T extends RemodexStore>(
+  state: T,
+  threadId: string
+): T {
+  return {
+    ...state,
+    runningTurnByThread: removeThreadKey(state.runningTurnByThread, threadId),
+    threadRunStateByThread: clearThreadTerminalState(state.threadRunStateByThread, threadId),
+    locallyInterruptedTurnByThread: removeThreadKey(state.locallyInterruptedTurnByThread, threadId)
   };
 }
 
@@ -1327,6 +1561,14 @@ function applyThreadActivityUpdate<T extends RemodexStore>(
 
   if (method === "turn/started" || isActiveThreadStatus(method, paramsObject)) {
     const turnId = resolveTurnId(paramsObject) || state.runningTurnByThread[threadId] || "__running__";
+    const interruptedTurnId = state.locallyInterruptedTurnByThread[threadId];
+    if (interruptedTurnId && shouldSuppressRunningForInterruptedTurn(interruptedTurnId, turnId)) {
+      return {
+        ...state,
+        runningTurnByThread: removeThreadKey(state.runningTurnByThread, threadId),
+        threadRunStateByThread: clearThreadTerminalState(state.threadRunStateByThread, threadId)
+      };
+    }
     return {
       ...state,
       runningTurnByThread: {
@@ -1336,8 +1578,13 @@ function applyThreadActivityUpdate<T extends RemodexStore>(
       threadRunStateByThread: {
         ...state.threadRunStateByThread,
         [threadId]: "running"
-      }
+      },
+      locallyInterruptedTurnByThread: removeThreadKey(state.locallyInterruptedTurnByThread, threadId)
     };
+  }
+
+  if (shouldClearLocallyInterruptedTerminal(state, method, threadId, paramsObject)) {
+    return clearThreadActivityAfterLocalInterrupt(state, threadId);
   }
 
   const outcome = terminalOutcomeForNotification(method, paramsObject);
@@ -1375,8 +1622,22 @@ function applyThreadActivityUpdate<T extends RemodexStore>(
     ...state,
     runningTurnByThread: removeThreadKey(state.runningTurnByThread, threadId),
     threadRunStateByThread: nextRunState,
+    locallyInterruptedTurnByThread: removeThreadKey(state.locallyInterruptedTurnByThread, threadId),
     inAppNotifications: notificationUpdate?.notifications ?? state.inAppNotifications
   };
+}
+
+function shouldClearLocallyInterruptedTerminal(
+  state: RemodexStore,
+  method: string,
+  threadId: string,
+  params: Record<string, unknown>
+): boolean {
+  const interruptedTurnId = state.locallyInterruptedTurnByThread[threadId];
+  if (!interruptedTurnId || method !== "turn/completed") {
+    return false;
+  }
+  return shouldSuppressRunningForInterruptedTurn(interruptedTurnId, resolveTurnId(params) || "__running__");
 }
 
 function shouldIgnoreTerminalNotificationForRunningState(
@@ -1393,7 +1654,7 @@ function shouldIgnoreTerminalNotificationForRunningState(
   if (terminalTurnId) {
     return Boolean(runningTurnId && runningTurnId !== "__running__" && runningTurnId !== terminalTurnId);
   }
-  return !runningTurnId || runningTurnId !== "__running__";
+  return true;
 }
 
 function removeThreadKey<TValue>(
@@ -1421,6 +1682,11 @@ function applyApprovalActivityUpdate<T extends RemodexStore>(state: T, request: 
       pendingApprovals
     };
   }
+  const approvalTurnId = request.turnId?.trim() || state.runningTurnByThread[threadId] || "__running__";
+  const interruptedTurnId = state.locallyInterruptedTurnByThread[threadId];
+  const shouldSuppressRunning = Boolean(
+    interruptedTurnId && shouldSuppressRunningForInterruptedTurn(interruptedTurnId, approvalTurnId)
+  );
 
   const notification = state.activeThreadId === threadId
     ? undefined
@@ -1442,10 +1708,19 @@ function applyApprovalActivityUpdate<T extends RemodexStore>(state: T, request: 
   return {
     ...state,
     pendingApprovals,
+    runningTurnByThread: shouldSuppressRunning
+      ? state.runningTurnByThread
+      : {
+          ...state.runningTurnByThread,
+          [threadId]: approvalTurnId
+        },
     threadRunStateByThread: {
       ...state.threadRunStateByThread,
       [threadId]: "approval"
     },
+    locallyInterruptedTurnByThread: shouldSuppressRunning
+      ? state.locallyInterruptedTurnByThread
+      : removeThreadKey(state.locallyInterruptedTurnByThread, threadId),
     inAppNotifications: notificationUpdate?.notifications ?? state.inAppNotifications
   };
 }

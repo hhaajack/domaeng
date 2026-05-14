@@ -73,17 +73,24 @@ test("daemon-state creates the logs directory and derived log paths inside the s
 });
 
 function withTempDaemonEnv(run) {
-  const previousDir = process.env.REMODEX_DEVICE_STATE_DIR;
+  const previousDomaengDir = process.env.DOMAENG_DEVICE_STATE_DIR;
+  const previousRemodexDir = process.env.REMODEX_DEVICE_STATE_DIR;
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "remodex-daemon-state-"));
+  process.env.DOMAENG_DEVICE_STATE_DIR = rootDir;
   process.env.REMODEX_DEVICE_STATE_DIR = rootDir;
 
   try {
     return run({ rootDir });
   } finally {
-    if (previousDir === undefined) {
+    if (previousDomaengDir === undefined) {
+      delete process.env.DOMAENG_DEVICE_STATE_DIR;
+    } else {
+      process.env.DOMAENG_DEVICE_STATE_DIR = previousDomaengDir;
+    }
+    if (previousRemodexDir === undefined) {
       delete process.env.REMODEX_DEVICE_STATE_DIR;
     } else {
-      process.env.REMODEX_DEVICE_STATE_DIR = previousDir;
+      process.env.REMODEX_DEVICE_STATE_DIR = previousRemodexDir;
     }
     fs.rmSync(rootDir, { recursive: true, force: true });
   }

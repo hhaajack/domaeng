@@ -219,6 +219,36 @@ test("readBridgeConfig keeps safe defaults and explicit overrides", () => {
   assert.equal(sharedRuntimeOptOutConfig.refreshEnabled, false);
 });
 
+test("explicit desktop refresh bypasses the background auto-refresh preference", async () => {
+  const refreshCalls = [];
+  const refresher = new CodexDesktopRefresher({
+    enabled: false,
+    debounceMs: 0,
+    refreshExecutor: async (targetUrl) => {
+      refreshCalls.push(targetUrl);
+    },
+  });
+
+  assert.equal(refresher.canRefresh(), false);
+  assert.equal(refresher.canRefresh({ allowWhenDisabled: true }), true);
+
+  refresher.queueRefresh("phone", {
+    threadId: "thread-auto",
+    url: "codex://threads/thread-auto",
+  }, "automatic phone refresh");
+  await wait(10);
+  assert.deepEqual(refreshCalls, []);
+
+  refresher.queueExplicitRefresh({
+    threadId: "thread-explicit",
+    url: "codex://threads/thread-explicit",
+  }, "desktop/refreshThread");
+
+  await waitFor(() => refreshCalls.length === 1, 200);
+
+  assert.deepEqual(refreshCalls, ["codex://threads/thread-explicit"]);
+});
+
 test("readBridgeConfig derives a push URL from the active relay default", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "remodex-package-"));
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "remodex-state-"));

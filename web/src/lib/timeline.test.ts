@@ -188,6 +188,137 @@ describe("timeline item reconciliation", () => {
     expect(next.runningTurnByThread["thread-1"]).toBe("turn-1");
   });
 
+  it("keeps running after a stale read catches up only to the user message", () => {
+    const initial: TimelineState = {
+      ...state(),
+      messagesByThread: {
+        "thread-1": [{
+          id: "user-live",
+          role: "user",
+          kind: "chat",
+          threadId: "thread-1",
+          turnId: "turn-live",
+          text: "run a long command",
+          createdAt: Date.now()
+        }]
+      },
+      runningTurnByThread: { "thread-1": "turn-live" }
+    };
+
+    const next = decodeThreadRead(initial, {
+      thread: {
+        id: "thread-1",
+        turns: [{
+          id: "turn-live",
+          items: [{
+            id: "user-canonical",
+            type: "user_message",
+            content: [{ type: "input_text", text: "run a long command" }]
+          }]
+        }]
+      }
+    });
+
+    expect(next.runningTurnByThread["thread-1"]).toBe("turn-live");
+  });
+
+  it("keeps running when thread read contains assistant commentary from the live turn", () => {
+    let initial = applyNotification(state(), "turn/started", {
+      threadId: "thread-1",
+      turnId: "turn-live"
+    });
+    initial = applyNotification(initial, "item/reasoning/textDelta", {
+      threadId: "thread-1",
+      turnId: "turn-live",
+      delta: "Thinking..."
+    });
+
+    const next = decodeThreadRead(initial, {
+      thread: {
+        id: "thread-1",
+        turns: [{
+          id: "turn-live",
+          items: [{
+            id: "assistant-commentary",
+            type: "message",
+            role: "assistant",
+            phase: "commentary",
+            content: [{ type: "output_text", text: "Still checking." }]
+          }]
+        }]
+      }
+    });
+
+    expect(next.runningTurnByThread["thread-1"]).toBe("turn-live");
+  });
+
+  it("skips empty reasoning items from thread history snapshots", () => {
+    const next = decodeThreadRead(state(), {
+      thread: {
+        id: "thread-1",
+        turns: [{
+          id: "turn-1",
+          status: "completed",
+          items: [{
+            id: "reasoning-empty",
+            type: "reasoning",
+            encrypted_content: "opaque"
+          }, {
+            id: "assistant-final",
+            type: "message",
+            role: "assistant",
+            phase: "final_answer",
+            content: [{ type: "output_text", text: "done" }]
+          }]
+        }]
+      }
+    });
+
+    expect(next.messagesByThread["thread-1"]).toHaveLength(1);
+    expect(next.messagesByThread["thread-1"][0]).toMatchObject({
+      role: "assistant",
+      text: "done"
+    });
+  });
+
+  it("renders reasoning summary text from thread history snapshots", () => {
+    const next = decodeThreadRead(state(), {
+      thread: {
+        id: "thread-1",
+        turns: [{
+          id: "turn-1",
+          items: [{
+            id: "reasoning-visible",
+            type: "reasoning",
+            summary: [{ type: "summary_text", text: "visible thought summary" }]
+          }]
+        }]
+      }
+    });
+
+    expect(next.messagesByThread["thread-1"]).toHaveLength(1);
+    expect(next.messagesByThread["thread-1"][0]).toMatchObject({
+      role: "reasoning",
+      text: "visible thought summary"
+    });
+  });
+
+  it("does not treat mirrored agent messages as terminal without turn completion", () => {
+    let next = applyNotification(state(), "turn/started", {
+      threadId: "thread-1",
+      turnId: "turn-live"
+    });
+    next = applyNotification(next, "codex/event/agent_message", {
+      threadId: "thread-1",
+      turnId: "turn-live",
+      itemId: "agent-commentary",
+      message: "Still working."
+    });
+
+    expect(next.runningTurnByThread["thread-1"]).toBe("turn-live");
+    expect(next.messagesByThread["thread-1"]).toHaveLength(1);
+  });
+
   it("keeps a local user row when a stale thread read omits it", () => {
     const initial = appendLocalUserMessage(state(), "thread-1", "web prompt still pending", []);
     const next = decodeThreadRead(initial, {
@@ -318,6 +449,50 @@ describe("timeline item reconciliation", () => {
       itemId: "assistant-item-web",
       text: "web answer"
     });
+  });
+
+  it("normalizes thread reads that return newest turns first", () => {
+    const next = decodeThreadRead(state(), {
+      thread: {
+        id: "thread-1",
+        turns: [{
+          id: "turn-new",
+          createdAt: "2026-05-13T11:30:00.000Z",
+          items: [{
+            id: "user-new",
+            type: "user_message",
+            createdAt: "2026-05-13T11:30:00.000Z",
+            content: [{ type: "input_text", text: "new prompt" }]
+          }, {
+            id: "assistant-new",
+            type: "assistant_message",
+            createdAt: "2026-05-13T11:30:01.000Z",
+            text: "new answer"
+          }]
+        }, {
+          id: "turn-old",
+          createdAt: "2026-05-13T11:20:00.000Z",
+          items: [{
+            id: "user-old",
+            type: "user_message",
+            createdAt: "2026-05-13T11:20:00.000Z",
+            content: [{ type: "input_text", text: "old prompt" }]
+          }, {
+            id: "assistant-old",
+            type: "assistant_message",
+            createdAt: "2026-05-13T11:20:01.000Z",
+            text: "old answer"
+          }]
+        }]
+      }
+    });
+
+    expect(next.messagesByThread["thread-1"].map((message) => message.text)).toEqual([
+      "old prompt",
+      "old answer",
+      "new prompt",
+      "new answer"
+    ]);
   });
 
   it("keeps completed live tool rows when a stale thread read omits them", () => {
@@ -475,6 +650,23 @@ describe("timeline item reconciliation", () => {
     });
 
     expect(next.runningTurnByThread["thread-1"]).toBe("turn-new");
+  });
+
+  it("keeps fallback running state when terminal events omit the turn id", () => {
+    let next: TimelineState = {
+      ...state(),
+      runningTurnByThread: { "thread-1": "__running__" }
+    };
+
+    next = applyNotification(next, "turn/completed", {
+      threadId: "thread-1"
+    });
+    next = applyNotification(next, "codex/event/agent_message", {
+      threadId: "thread-1",
+      message: "final text from an older turn"
+    });
+
+    expect(next.runningTurnByThread["thread-1"]).toBe("__running__");
   });
 
   it("does not duplicate a local user row after the canonical item appears", () => {
