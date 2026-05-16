@@ -35,6 +35,7 @@ domaeng menubar login off
 - bridge and relay status
 - Web App URL served by the relay at `/app/`
 - pairing code and QR
+- installed Domaeng version and Update action
 - Start, Stop, Restart, Renew Pairing, Open Web App, and copy actions
 
 `domaeng up` starts the bridge and pairing flow as usual. If a prebuilt `DomaengMenuBar.app` is bundled and the user has not disabled open-at-login, `domaeng up` installs it to `~/Applications`, enables the login LaunchAgent, and opens it. If no prebuilt app is bundled, `domaeng up` continues normally with Terminal output only.

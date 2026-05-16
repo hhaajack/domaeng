@@ -15,6 +15,7 @@ const {
 } = require("./secure-device-state");
 const { openLastActiveThread } = require("./session-state");
 const { watchThreadRollout } = require("./rollout-watch");
+const { updateDomaengPackage } = require("./package-update");
 const { readBridgeConfig } = require("./codex-desktop-refresher");
 const {
   getMacOSBridgeServiceStatus,
@@ -68,4 +69,5 @@ module.exports = {
   setTrustedDeviceEnabled,
   openLastActiveThread,
   watchThreadRollout,
+  updateDomaengPackage,
 };

@@ -121,7 +121,7 @@ export function decodeThreadRead(state: TimelineState, result: JSONValue | undef
       }
     }
   }
-  const decodedMessages = orderMessagesChronologically(messages);
+  const decodedMessages = coalesceTimelineMessages(orderMessagesChronologically(messages));
   const existingMessages = state.messagesByThread[thread.id] ?? [];
   const runningTurnId = runningTurnIdFromThreadObject(threadObject, turns);
   const existingRunningTurnId = state.runningTurnByThread[thread.id];
@@ -484,7 +484,7 @@ function reconcileOrAppendMessage(state: TimelineState, nextMessage: TimelineMes
     return {
       ...entry,
       text: nextMessage.text,
-      turnId: entry.turnId ?? nextMessage.turnId,
+      turnId: shouldReplaceTurnId(entry.turnId, nextMessage.turnId) ? nextMessage.turnId : entry.turnId,
       itemId: shouldReplaceItemId(entry, nextMessage.itemId) ? nextMessage.itemId : entry.itemId,
       streaming: false,
       attachments: entry.attachments ?? nextMessage.attachments
@@ -553,7 +553,7 @@ function findReconcileIndex(existing: TimelineMessage[], nextMessage: TimelineMe
       entry.role === "user"
       && entry.kind === nextMessage.kind
       && normalizeMessageText(entry.text) === normalizeMessageText(nextMessage.text)
-      && (!entry.turnId || !nextMessage.turnId || entry.turnId === nextMessage.turnId)
+      && turnIdsCompatible(entry.turnId, nextMessage.turnId)
     );
     if (userIndex >= 0) {
       return userIndex;
@@ -564,7 +564,7 @@ function findReconcileIndex(existing: TimelineMessage[], nextMessage: TimelineMe
     const turnIndex = findLastIndex(existing, (entry) =>
       entry.role === nextMessage.role
       && entry.kind === nextMessage.kind
-      && entry.turnId === nextMessage.turnId
+      && turnIdsCompatible(entry.turnId, nextMessage.turnId)
       && (
         entry.streaming
         || normalizeMessageText(entry.text) === normalizeMessageText(nextMessage.text)
@@ -592,7 +592,7 @@ function findReconcileIndex(existing: TimelineMessage[], nextMessage: TimelineMe
     entry.role === nextMessage.role
     && entry.kind === nextMessage.kind
     && normalizeMessageText(entry.text) === normalizeMessageText(nextMessage.text)
-    && (!entry.turnId || !nextMessage.turnId || entry.turnId === nextMessage.turnId)
+    && turnIdsCompatible(entry.turnId, nextMessage.turnId)
   );
 }
 
@@ -764,12 +764,23 @@ function upsertThread(threads: CodexThread[], next: CodexThread): CodexThread[] 
 }
 
 function mergeThread(existing: CodexThread, next: CodexThread): CodexThread {
-  return Object.fromEntries(
+  const merged = Object.fromEntries(
     Object.entries({ ...existing, ...next }).map(([key, value]) => [
       key,
       value === undefined ? existing[key as keyof CodexThread] : value
     ])
   ) as unknown as CodexThread;
+  const existingTitle = firstSpecificThreadTitle(existing.title, existing.name);
+  if (!existingTitle) {
+    return merged;
+  }
+  const nextTitle = readString(next.title);
+  const nextName = readString(next.name);
+  return {
+    ...merged,
+    title: isDefaultThreadTitle(nextTitle) ? existingTitle : merged.title,
+    name: isDefaultThreadTitle(nextName) ? existingTitle : merged.name
+  };
 }
 
 function sortThreads(threads: CodexThread[]): CodexThread[] {
@@ -784,6 +795,14 @@ function readDeltaText(object: JSONObject): string {
     || readString(asObject(object.event).delta)
     || readString(asObject(object.event).text)
     || "";
+}
+
+function firstSpecificThreadTitle(...values: Array<string | undefined>): string | undefined {
+  return values.find((value) => Boolean(readString(value) && !isDefaultThreadTitle(value)));
+}
+
+function isDefaultThreadTitle(value: string | undefined): boolean {
+  return readString(value)?.toLowerCase() === "conversation";
 }
 
 function readPlanText(object: JSONObject): string {
@@ -1043,6 +1062,14 @@ function shouldReplaceItemId(entry: TimelineMessage, nextItemId: string | undefi
   return entry.itemId === `${entry.kind}-${entry.turnId ?? "open"}`;
 }
 
+function shouldReplaceTurnId(existingTurnId: string | undefined, nextTurnId: string | undefined): boolean {
+  return Boolean(nextTurnId && (!existingTurnId || existingTurnId === "__running__"));
+}
+
+function turnIdsCompatible(left: string | undefined, right: string | undefined): boolean {
+  return !left || !right || left === "__running__" || right === "__running__" || left === right;
+}
+
 function mergeDecodedThreadMessages(
   existing: TimelineMessage[],
   decoded: TimelineMessage[],
@@ -1057,7 +1084,7 @@ function mergeDecodedThreadMessages(
     return decoded;
   }
 
-  return [...decoded, ...preserved].sort((left, right) => left.createdAt - right.createdAt);
+  return coalesceTimelineMessages([...decoded, ...preserved].sort((left, right) => left.createdAt - right.createdAt));
 }
 
 function orderMessagesChronologically(messages: TimelineMessage[]): TimelineMessage[] {
@@ -1068,6 +1095,73 @@ function orderMessagesChronologically(messages: TimelineMessage[]): TimelineMess
       return timestampDelta === 0 ? left.index - right.index : timestampDelta;
     })
     .map(({ entry }) => entry);
+}
+
+function coalesceTimelineMessages(messages: TimelineMessage[]): TimelineMessage[] {
+  const coalesced: TimelineMessage[] = [];
+  for (const entry of messages) {
+    const duplicateIndex = findLastIndex(coalesced, (candidate) => decodedRowsRepresentSameDisplayMessage(candidate, entry));
+    if (duplicateIndex < 0) {
+      coalesced.push(entry);
+      continue;
+    }
+    coalesced[duplicateIndex] = mergeDuplicateDisplayMessage(coalesced[duplicateIndex], entry);
+  }
+  return coalesced;
+}
+
+function decodedRowsRepresentSameDisplayMessage(left: TimelineMessage, right: TimelineMessage): boolean {
+  if (left.role !== right.role || left.kind !== right.kind || !turnIdsCompatible(left.turnId, right.turnId)) {
+    return false;
+  }
+  if (left.itemId && right.itemId && left.itemId === right.itemId) {
+    return true;
+  }
+  if (normalizeMessageText(left.text) === normalizeMessageText(right.text)) {
+    return attachmentSignaturesCompatible(left.attachments, right.attachments);
+  }
+  return left.role === "user"
+    && stripInlineImagePlaceholders(left.text) === stripInlineImagePlaceholders(right.text)
+    && attachmentSignaturesCompatible(left.attachments, right.attachments);
+}
+
+function mergeDuplicateDisplayMessage(left: TimelineMessage, right: TimelineMessage): TimelineMessage {
+  const preferred = richerDisplayMessage(left, right);
+  const fallback = preferred === left ? right : left;
+  return {
+    ...preferred,
+    createdAt: mergeCreatedAt(left.createdAt, right.createdAt),
+    turnId: shouldReplaceTurnId(preferred.turnId, fallback.turnId) ? fallback.turnId : preferred.turnId,
+    itemId: preferred.itemId ?? fallback.itemId,
+    attachments: richerAttachments(preferred.attachments, fallback.attachments),
+    streaming: preferred.streaming === false || fallback.streaming === false
+      ? false
+      : preferred.streaming ?? fallback.streaming
+  };
+}
+
+function richerDisplayMessage(left: TimelineMessage, right: TimelineMessage): TimelineMessage {
+  const leftScore = displayMessageRichnessScore(left);
+  const rightScore = displayMessageRichnessScore(right);
+  return rightScore > leftScore ? right : left;
+}
+
+function displayMessageRichnessScore(message: TimelineMessage): number {
+  return normalizeMessageText(message.text).length + (message.attachments?.length ?? 0) * 10_000;
+}
+
+function richerAttachments(
+  left: ImageAttachment[] | undefined,
+  right: ImageAttachment[] | undefined
+): ImageAttachment[] | undefined {
+  return (right?.length ?? 0) > (left?.length ?? 0) ? right : left;
+}
+
+function mergeCreatedAt(left: number, right: number): number {
+  if (left && right) {
+    return Math.min(left, right);
+  }
+  return left || right;
 }
 
 function shouldPreserveExistingMessage(
@@ -1193,17 +1287,13 @@ function decodedMessageRepresentsExisting(
     return true;
   }
 
-  if (decoded.turnId && existing.turnId && decoded.turnId === existing.turnId && textsOverlap(decoded.text, existing.text)) {
+  if (decoded.turnId && existing.turnId && turnIdsCompatible(decoded.turnId, existing.turnId) && textsOverlap(decoded.text, existing.text)) {
     return true;
   }
 
   return normalizeMessageText(decoded.text) === normalizeMessageText(existing.text)
     && attachmentSignature(decoded.attachments) === attachmentSignature(existing.attachments)
-    && (
-      !decoded.turnId
-      || !existing.turnId
-      || decoded.turnId === existing.turnId
-    );
+    && turnIdsCompatible(decoded.turnId, existing.turnId);
 }
 
 function isPendingLocalUserMessage(message: TimelineMessage): boolean {
@@ -1232,6 +1322,19 @@ function attachmentSignature(attachments: ImageAttachment[] | undefined): string
       || attachment.thumbnailBase64JPEG
       || attachment.id
   )).join("\u0000");
+}
+
+function attachmentSignaturesCompatible(
+  left: ImageAttachment[] | undefined,
+  right: ImageAttachment[] | undefined
+): boolean {
+  const leftSignature = attachmentSignature(left);
+  const rightSignature = attachmentSignature(right);
+  return !leftSignature || !rightSignature || leftSignature === rightSignature;
+}
+
+function stripInlineImagePlaceholders(value: string): string {
+  return normalizeMessageText(value.replace(/<image>\s*<\/image>/gi, " "));
 }
 
 function timestampsLikelyRepresentSameMessage(decodedCreatedAt: number, localCreatedAt: number): boolean {

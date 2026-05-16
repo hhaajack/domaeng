@@ -15,6 +15,28 @@ function state(): TimelineState {
 }
 
 describe("timeline item reconciliation", () => {
+  it("does not downgrade a resolved thread title when a snapshot carries the default title", () => {
+    const initial: TimelineState = {
+      threads: [{ id: "thread-1", title: "测试", cwd: "/repo" }],
+      messagesByThread: {},
+      runningTurnByThread: {}
+    };
+
+    const next = decodeThreadRead(initial, {
+      thread: {
+        id: "thread-1",
+        title: "Conversation",
+        cwd: "/repo",
+        turns: []
+      }
+    });
+
+    expect(next.threads[0]).toEqual(expect.objectContaining({
+      id: "thread-1",
+      title: "测试"
+    }));
+  });
+
   it("merges completed user items into the local user row instead of echoing as Codex", () => {
     const initial = appendLocalUserMessage(state(), "thread-1", "hello from web", []);
     const next = applyNotification(initial, "item/completed", {
@@ -175,6 +197,141 @@ describe("timeline item reconciliation", () => {
       role: "user",
       text: "desktop prompt",
       turnId: "turn-1"
+    });
+  });
+
+  it("reconciles repeated live user messages when a placeholder running turn becomes concrete", () => {
+    let next = applyNotification(state(), "codex/event/user_message", {
+      threadId: "thread-1",
+      turnId: "__running__",
+      message: "same prompt"
+    });
+
+    next = applyNotification(next, "codex/event/user_message", {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      message: "same prompt"
+    });
+
+    expect(next.messagesByThread["thread-1"]).toHaveLength(1);
+    expect(next.messagesByThread["thread-1"][0]).toMatchObject({
+      role: "user",
+      text: "same prompt",
+      turnId: "turn-1"
+    });
+  });
+
+  it("absorbs live placeholder turn rows when thread history catches up with canonical items", () => {
+    let initial = applyNotification(state(), "codex/event/user_message", {
+      threadId: "thread-1",
+      turnId: "__running__",
+      message: "same prompt"
+    });
+    initial = applyNotification(initial, "codex/event/agent_message", {
+      threadId: "thread-1",
+      turnId: "__running__",
+      itemId: "rollout-agent-message:thread-1:__running__:hash",
+      message: "same answer"
+    });
+
+    const next = decodeThreadRead(initial, {
+      thread: {
+        id: "thread-1",
+        turns: [{
+          id: "turn-1",
+          items: [{
+            id: "user-item-1",
+            type: "user_message",
+            content: [{ type: "input_text", text: "same prompt" }]
+          }, {
+            id: "assistant-item-1",
+            type: "assistant_message",
+            text: "same answer"
+          }]
+        }]
+      }
+    });
+
+    expect(next.messagesByThread["thread-1"]).toHaveLength(2);
+    expect(next.messagesByThread["thread-1"].map((entry) => entry.text)).toEqual([
+      "same prompt",
+      "same answer"
+    ]);
+    expect(next.messagesByThread["thread-1"].map((entry) => entry.turnId)).toEqual([
+      "turn-1",
+      "turn-1"
+    ]);
+  });
+
+  it("coalesces duplicated rollout event and response user rows from thread history", () => {
+    const next = decodeThreadRead(state(), {
+      thread: {
+        id: "thread-1",
+        turns: [{
+          id: "turn-1",
+          items: [{
+            id: "canonical-user",
+            type: "message",
+            role: "user",
+            content: [{
+              type: "input_text",
+              text: "same prompt"
+            }, {
+              type: "input_text",
+              text: "<image>"
+            }, {
+              type: "input_image",
+              image_url: {
+                url: "data:image/png;base64,AAAA"
+              }
+            }, {
+              type: "input_text",
+              text: "</image>"
+            }]
+          }, {
+            type: "user_message",
+            message: "same prompt"
+          }]
+        }]
+      }
+    });
+
+    expect(next.messagesByThread["thread-1"]).toHaveLength(1);
+    expect(next.messagesByThread["thread-1"][0]).toMatchObject({
+      role: "user",
+      text: "same prompt\n<image>\n</image>",
+      itemId: "canonical-user"
+    });
+    expect(next.messagesByThread["thread-1"][0].attachments?.[0]).toMatchObject({
+      payloadDataURL: "data:image/png;base64,AAAA"
+    });
+  });
+
+  it("coalesces duplicated rollout event and response assistant rows from thread history", () => {
+    const next = decodeThreadRead(state(), {
+      thread: {
+        id: "thread-1",
+        turns: [{
+          id: "turn-1",
+          items: [{
+            type: "agent_message",
+            phase: "commentary",
+            message: "same update"
+          }, {
+            id: "canonical-assistant",
+            type: "message",
+            role: "assistant",
+            phase: "commentary",
+            content: [{ type: "output_text", text: "same update" }]
+          }]
+        }]
+      }
+    });
+
+    expect(next.messagesByThread["thread-1"]).toHaveLength(1);
+    expect(next.messagesByThread["thread-1"][0]).toMatchObject({
+      role: "assistant",
+      text: "same update"
     });
   });
 

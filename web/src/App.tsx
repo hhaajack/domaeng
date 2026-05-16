@@ -1166,10 +1166,11 @@ function highestPriorityThreadState(states: Array<ThreadRunState | undefined>): 
 function ThreadTitle() {
   const threads = useRemodexStore((state) => state.threads);
   const activeThreadId = useRemodexStore((state) => state.activeThreadId);
+  const messages = useRemodexStore((state) => activeThreadId ? state.messagesByThread[activeThreadId] ?? EMPTY_MESSAGES : EMPTY_MESSAGES);
   const thread = threads.find((entry) => entry.id === activeThreadId);
   return (
     <div className="thread-title">
-      <strong>{thread?.title || thread?.name || "Conversation"}</strong>
+      <strong>{displayThreadTitle(thread, messages)}</strong>
       <span>{thread?.cwd || "Domaeng"}</span>
     </div>
   );
@@ -2877,6 +2878,29 @@ function threadSearchText(thread: CodexThread): string {
     thread.sourceKind,
     thread.id
   ].filter(Boolean).join(" ").toLowerCase();
+}
+
+function displayThreadTitle(thread: CodexThread | undefined, messages: TimelineMessage[]): string {
+  const fallback = thread?.title || thread?.name || "Conversation";
+  return firstSpecificThreadTitle(thread?.title, thread?.name)
+    || firstUserMessageTitle(messages)
+    || (isDefaultThreadTitle(fallback) ? "" : fallback);
+}
+
+function firstSpecificThreadTitle(...values: Array<string | undefined>): string | undefined {
+  return values.find((value) => Boolean(value?.trim() && !isDefaultThreadTitle(value)));
+}
+
+function isDefaultThreadTitle(value: string | undefined): boolean {
+  return value?.trim().toLowerCase() === "conversation";
+}
+
+function firstUserMessageTitle(messages: TimelineMessage[]): string | undefined {
+  const text = messages.find((message) => message.role === "user" && message.text.trim())?.text.trim();
+  if (!text) {
+    return undefined;
+  }
+  return text.split(/\r?\n/).find((line) => line.trim())?.trim();
 }
 
 function projectKeyForThread(thread: CodexThread): string {

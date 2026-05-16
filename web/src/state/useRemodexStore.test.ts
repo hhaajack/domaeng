@@ -5,6 +5,7 @@ import { useRemodexStore } from "./useRemodexStore";
 const initialState = useRemodexStore.getState();
 const client = initialState.client;
 const LAST_ACTIVE_THREAD_STORAGE_KEY = "remodex-web:lastActiveThreadId";
+const THREAD_TITLE_CACHE_STORAGE_KEY = "remodex-web:threadTitles";
 const originalClientMethods = {
   listThreads: client.listThreads.bind(client),
   readThread: client.readThread.bind(client),
@@ -53,6 +54,7 @@ function restoreClientMethods() {
 
 afterEach(() => {
   localStorage.removeItem(LAST_ACTIVE_THREAD_STORAGE_KEY);
+  localStorage.removeItem(THREAD_TITLE_CACHE_STORAGE_KEY);
 });
 
 describe("useRemodexStore renameThread", () => {
@@ -901,6 +903,61 @@ describe("useRemodexStore thread activity", () => {
 
     expect(useRemodexStore.getState().activeThreadId).toBe("thread-old");
     expect(client.readThread).toHaveBeenCalledWith("thread-old");
+  });
+
+  it("does not downgrade a resolved thread title when list refresh returns the default title", async () => {
+    client.listThreads = vi.fn().mockResolvedValue([
+      { id: "thread-active", title: "Conversation", cwd: "/repo", status: "idle" }
+    ]);
+
+    useRemodexStore.setState({
+      threads: [{ id: "thread-active", title: "测试", cwd: "/repo", status: "idle" }],
+      activeThreadId: "thread-active",
+      messagesByThread: { "thread-active": [{ id: "message-1", role: "user", kind: "chat", threadId: "thread-active", text: "测试", createdAt: 1 }] },
+      runningTurnByThread: {},
+      threadRunStateByThread: {}
+    });
+
+    await useRemodexStore.getState().refreshThreads();
+
+    expect(useRemodexStore.getState().threads[0]).toEqual(expect.objectContaining({
+      id: "thread-active",
+      title: "测试"
+    }));
+  });
+
+  it("uses the cached resolved thread title before the active thread read returns", async () => {
+    localStorage.setItem(THREAD_TITLE_CACHE_STORAGE_KEY, JSON.stringify({
+      "thread-active": "测试"
+    }));
+    client.listThreads = vi.fn().mockResolvedValue([
+      { id: "thread-active", title: "Conversation", cwd: "/repo", status: "idle" }
+    ]);
+    client.readThread = vi.fn().mockResolvedValue({
+      result: {
+        thread: {
+          id: "thread-active",
+          title: "Conversation",
+          cwd: "/repo",
+          turns: []
+        }
+      }
+    });
+
+    useRemodexStore.setState({
+      threads: [],
+      activeThreadId: undefined,
+      messagesByThread: {},
+      runningTurnByThread: {},
+      threadRunStateByThread: {}
+    });
+
+    await useRemodexStore.getState().refreshThreads();
+
+    expect(useRemodexStore.getState().threads[0]).toEqual(expect.objectContaining({
+      id: "thread-active",
+      title: "测试"
+    }));
   });
 
   it("falls back to the newest thread when the last active thread is not listed", async () => {

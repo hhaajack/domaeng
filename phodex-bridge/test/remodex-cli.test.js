@@ -82,6 +82,7 @@ test("domaeng restart reuses the macOS service start flow", async () => {
       "  domaeng status",
       "  domaeng restart",
       "  domaeng stop",
+      "  domaeng update",
       "  domaeng renew-pairing",
     ].join("\n"),
   ]);
@@ -137,6 +138,7 @@ test("domaeng up shows a startup indicator while waiting for the pairing code", 
       "  domaeng status",
       "  domaeng restart",
       "  domaeng stop",
+      "  domaeng update",
       "  domaeng renew-pairing",
     ].join("\n"),
   ]);
@@ -327,6 +329,75 @@ test("domaeng menubar install reports the installed prebuilt app path", async ()
 
   assert.deepEqual(messages, [
     "[domaeng] Installed DomaengMenuBar.app to /Users/tester/Applications/DomaengMenuBar.app.",
+  ]);
+});
+
+test("domaeng update emits machine-readable package update result", async () => {
+  const writes = [];
+  const calls = [];
+  const originalWrite = process.stdout.write;
+
+  process.stdout.write = (chunk, encoding, callback) => {
+    writes.push(String(chunk));
+    if (typeof callback === "function") {
+      callback();
+    }
+    return true;
+  };
+
+  try {
+    await main({
+      argv: ["node", "domaeng", "update", "--json"],
+      platform: "darwin",
+      consoleImpl: {
+        log() {},
+        error(message) {
+          throw new Error(`unexpected error: ${message}`);
+        },
+      },
+      exitImpl(code) {
+        throw new Error(`unexpected exit ${code}`);
+      },
+      deps: {
+        installMenuBarApp() {
+          calls.push("install-menubar");
+          return {
+            installed: true,
+            installedAppPath: "/Users/tester/Applications/DomaengMenuBar.app",
+          };
+        },
+        async updateDomaengPackage(options) {
+          calls.push(["update-package", options.platform, typeof options.installMenuBarApp]);
+          const menuBar = options.installMenuBarApp();
+          return {
+            updated: true,
+            previousVersion: version,
+            packageSpec: "domaeng@latest",
+            updateCommand: "npm install -g domaeng@latest",
+            restartRecommended: true,
+            menuBar: {
+              ok: true,
+              installed: menuBar.installed,
+              installedAppPath: menuBar.installedAppPath,
+            },
+          };
+        },
+      },
+    });
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+
+  const payload = JSON.parse(writes.join("").trim());
+  assert.equal(payload.ok, true);
+  assert.equal(payload.currentVersion, version);
+  assert.equal(payload.updated, true);
+  assert.equal(payload.packageSpec, "domaeng@latest");
+  assert.equal(payload.restartRecommended, true);
+  assert.equal(payload.menuBar.ok, true);
+  assert.deepEqual(calls, [
+    ["update-package", "darwin", "function"],
+    "install-menubar",
   ]);
 });
 

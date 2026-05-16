@@ -105,6 +105,14 @@ struct DomaengPanel: View {
                 DividerLine()
                 InfoRow(label: "Updated", value: updatedAt)
             }
+            DividerLine()
+            VersionRow(
+                version: model.versionSummary,
+                isWorking: model.isWorking,
+                onUpdate: {
+                    Task { await model.updateDomaeng() }
+                }
+            )
             if let error = model.visibleError {
                 DividerLine()
                 Text(error)
@@ -290,6 +298,37 @@ struct InfoRow: View {
                 .lineLimit(2)
                 .textSelection(.enabled)
             Spacer(minLength: 0)
+        }
+    }
+}
+
+struct VersionRow: View {
+    let version: String
+    let isWorking: Bool
+    let onUpdate: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Version")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.muted)
+                Text(version)
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Theme.inkSoft)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                    .textSelection(.enabled)
+            }
+            Spacer(minLength: 8)
+            Button {
+                onUpdate()
+            } label: {
+                Label("Update", systemImage: "arrow.down.circle")
+            }
+            .buttonStyle(CompactActionButtonStyle(width: 88))
+            .disabled(isWorking)
+            .help("Update Domaeng via npm and refresh the bundled menu bar app")
         }
     }
 }
@@ -856,6 +895,7 @@ struct CompactActionButtonStyle: ButtonStyle {
     }
 
     var variant: Variant = .normal
+    var width: CGFloat = 68
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -864,7 +904,7 @@ struct CompactActionButtonStyle: ButtonStyle {
             .minimumScaleFactor(0.82)
             .foregroundStyle(variant == .destructive ? Theme.red : Theme.ink)
             .padding(.horizontal, 8)
-            .frame(width: 68, height: 30)
+            .frame(width: width, height: 30)
             .background(background(isPressed: configuration.isPressed), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -1162,6 +1202,12 @@ final class DomaengMenuBarModel: ObservableObject {
         formatDate(status?.bridgeStatus?.updatedAt)
     }
 
+    var versionSummary: String {
+        normalizedString(status?.currentVersion)
+            ?? bundleVersionSummary
+            ?? "unknown"
+    }
+
     var visibleError: String? {
         if let commandError {
             return commandError
@@ -1299,6 +1345,36 @@ final class DomaengMenuBarModel: ObservableObject {
         }
     }
 
+    func updateDomaeng() async {
+        isWorking = true
+        commandError = nil
+        defer { isWorking = false }
+
+        do {
+            let output = try await cli.run(["update", "--json"])
+            let result = try? JSONDecoder().decode(DomaengUpdateResult.self, from: Data(output.utf8))
+            let nextActionMessage: String
+            let warningMessage: String?
+            if result?.menuBar?.ok == false, let error = result?.menuBar?.error {
+                nextActionMessage = "Updated; menu bar refresh warning"
+                warningMessage = error
+            } else if result?.restartRecommended == true {
+                nextActionMessage = "Updated; restart recommended"
+                warningMessage = nil
+            } else {
+                nextActionMessage = "Updated"
+                warningMessage = nil
+            }
+            await refreshNow()
+            actionMessage = nextActionMessage
+            if let warningMessage {
+                commandError = warningMessage
+            }
+        } catch {
+            commandError = error.localizedDescription
+        }
+    }
+
     func openWebApp() {
         guard let value = webAppURL, let url = URL(string: value) else {
             return
@@ -1417,6 +1493,10 @@ final class DomaengMenuBarModel: ObservableObject {
         }
     }
 
+    private var bundleVersionSummary: String? {
+        normalizedString(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
+    }
+
     private static let webAppAccessModeDefaultsKey = "DomaengMenuBar.webAppAccessMode"
     private static let tailscaleAddressDefaultsKey = "DomaengMenuBar.tailscaleAddress"
 }
@@ -1508,6 +1588,16 @@ struct MenuBarStatus: Decodable {
     let installed: Bool?
     let openAtLogin: Bool?
     let autoOpenEnabled: Bool?
+}
+
+struct DomaengUpdateResult: Decodable {
+    let restartRecommended: Bool?
+    let menuBar: DomaengUpdateMenuBarResult?
+}
+
+struct DomaengUpdateMenuBarResult: Decodable {
+    let ok: Bool?
+    let error: String?
 }
 
 struct DaemonConfig: Decodable {

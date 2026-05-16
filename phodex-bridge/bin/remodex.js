@@ -31,6 +31,7 @@ const {
   resetBridgePairing,
   openLastActiveThread,
   watchThreadRollout,
+  updateDomaengPackage,
 } = require("../src");
 const { version } = require("../package.json");
 
@@ -60,6 +61,7 @@ const defaultDeps = {
   resetBridgePairing,
   openLastActiveThread,
   watchThreadRollout,
+  updateDomaengPackage,
 };
 
 if (require.main === module) {
@@ -226,6 +228,29 @@ async function main({
     return;
   }
 
+  if (command === "update") {
+    try {
+      const result = await deps.updateDomaengPackage({
+        platform,
+        installMenuBarApp: deps.installMenuBarApp,
+      });
+      emitResult({
+        payload: {
+          ok: true,
+          currentVersion: version,
+          ...result,
+        },
+        message: packageUpdateMessage(result),
+        jsonOutput,
+        consoleImpl,
+      });
+    } catch (error) {
+      consoleImpl.error(`[domaeng] ${(error && error.message) || "Failed to update Domaeng."}`);
+      exitImpl(1);
+    }
+    return;
+  }
+
   if (command === "reset-pairing") {
     try {
       if (platform === "darwin") {
@@ -389,12 +414,12 @@ async function main({
 
   consoleImpl.error(`Unknown command: ${command}`);
   consoleImpl.error(
-    "Usage: domaeng up | domaeng run | domaeng start | domaeng restart | domaeng stop | domaeng status | "
+    "Usage: domaeng up | domaeng run | domaeng start | domaeng restart | domaeng stop | domaeng status | domaeng update | "
     + "domaeng reset-pairing | domaeng renew-pairing | "
     + "domaeng trusted-device <enable|disable|revoke|rename> <id> [name] | "
     + "domaeng menubar <status|install|open|login> [on|off] | "
     + "domaeng resume | domaeng watch [threadId] | domaeng --version | "
-    + "append --json to start/restart/stop/status/reset-pairing/renew-pairing/trusted-device/menubar/resume for machine-readable output"
+    + "append --json to start/restart/stop/status/update/reset-pairing/renew-pairing/trusted-device/menubar/resume for machine-readable output"
   );
   exitImpl(1);
 }
@@ -488,6 +513,7 @@ function printUpManagementHelp({
     "  domaeng status",
     "  domaeng restart",
     "  domaeng stop",
+    "  domaeng update",
     "  domaeng renew-pairing",
   ].join("\n"));
 }
@@ -604,6 +630,13 @@ function trustedDeviceActionMessage(action) {
   default:
     return "[domaeng] Trusted device updated.";
   }
+}
+
+function packageUpdateMessage(result = {}) {
+  const menuBarWarning = result.menuBar && result.menuBar.ok === false
+    ? ` Menu bar refresh warning: ${result.menuBar.error}`
+    : "";
+  return `[domaeng] Updated Domaeng via ${result.updateCommand || "npm"}. Restart the bridge to run the new version.${menuBarWarning}`;
 }
 
 function emitVersion({

@@ -36,7 +36,9 @@ import {
   normalizeRuntimeSettings,
   readLastActiveThreadId,
   readRuntimeSettings,
+  readThreadTitleCache,
   readTrustedMacs,
+  mergeThreadTitleCache,
   writeLastActiveThreadId,
   writeRuntimeSettings
 } from "../lib/storage";
@@ -195,6 +197,9 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
           event.method,
           event.params
         ));
+        if (event.method === "thread/name/updated") {
+          rememberThreadTitleCache(get().threads);
+        }
         maybeRefreshContextWindowUsageAfterNotification(event.method, event.params);
         maybeRefreshDesktopThreadAfterNotification(event.method, event.params);
         break;
@@ -546,17 +551,55 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
 
     async refreshThreads() {
       const listedThreads = decodeThreads(await client.listThreads());
+      const titleCache = await readThreadTitleCache().catch(() => ({}));
       const currentState = get();
       const currentActive = currentState.activeThreadId;
-      const threads = preserveUnlistedLocalActiveThread(listedThreads, currentState);
+      const threads = preserveUnlistedLocalActiveThread(
+        preserveKnownThreadTitles(applyThreadTitleCache(listedThreads, titleCache), currentState.threads),
+        currentState
+      );
       const savedActive = await readLastActiveThreadId().catch(() => undefined);
       const nextActive = selectThreadAfterRefresh(threads, currentActive, savedActive);
-      set((state) => ({
-        threads,
-        activeThreadId: nextActive,
-        ...runningStateFromListedThreads(state, threads)
-      }));
+      let primedThreadReadResult: JSONValue | undefined;
+      let didPrimeThreadRead = false;
+      let primedThreadReadError: string | undefined;
+      if (nextActive && !currentState.messagesByThread[nextActive] && !currentState.locallyStartedThreadIds[nextActive]) {
+        try {
+          const response = await client.readThread(nextActive);
+          primedThreadReadResult = response.result;
+          didPrimeThreadRead = true;
+        } catch (error) {
+          primedThreadReadError = errorMessage(error);
+        }
+      }
+      set((state) => {
+        const listedState = {
+          ...state,
+          threads,
+          activeThreadId: nextActive,
+          ...runningStateFromListedThreads(state, threads)
+        };
+        if (!didPrimeThreadRead) {
+          return listedState;
+        }
+        const patched = applyThreadReadResult(listedState, primedThreadReadResult);
+        return {
+          ...patched,
+          threads: nextActive ? promoteThreadByRecentUse(patched.threads, nextActive) : patched.threads
+        };
+      });
       rememberLastActiveThread(nextActive);
+      rememberThreadTitleCache(get().threads);
+      if (primedThreadReadError) {
+        set({ lastError: primedThreadReadError });
+      }
+      if (nextActive && didPrimeThreadRead) {
+        void get().refreshContextWindowUsage(nextActive);
+        if (get().runtimeSettings.gitToolbarEnabled === true) {
+          await get().refreshGitStatus();
+        }
+        return;
+      }
       if (nextActive && !get().messagesByThread[nextActive] && !get().locallyStartedThreadIds[nextActive]) {
         try {
           await get().openThread(nextActive);
@@ -598,6 +641,7 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
           threads: promoteThreadByRecentUse(patched.threads, threadId)
         };
       });
+      rememberThreadTitleCache(get().threads);
       void get().refreshContextWindowUsage(threadId);
       if (get().runtimeSettings.gitToolbarEnabled === true) {
         await get().refreshGitStatus();
@@ -644,6 +688,7 @@ export const useRemodexStore = create<RemodexStore>((set, get) => {
           threads: renameThreadEntries(state.threads, resultThreadId, resultName),
           lastError: undefined
         }));
+        rememberThreadTitleCache(get().threads);
       } catch (error) {
         const message = errorMessage(error);
         set({ lastError: message });
@@ -1169,6 +1214,68 @@ function preserveUnlistedLocalActiveThread(threads: CodexThread[], state: Remode
   }
   const localThread = state.threads.find((thread) => thread.id === currentActive);
   return localThread ? [localThread, ...threads] : threads;
+}
+
+function preserveKnownThreadTitles(threads: CodexThread[], existingThreads: CodexThread[]): CodexThread[] {
+  if (!threads.length || !existingThreads.length) {
+    return threads;
+  }
+  const existingById = new Map(existingThreads.map((thread) => [thread.id, thread]));
+  return threads.map((thread) => preserveKnownThreadTitle(thread, existingById.get(thread.id)));
+}
+
+function applyThreadTitleCache(threads: CodexThread[], titleCache: Record<string, string>): CodexThread[] {
+  if (!threads.length || !Object.keys(titleCache).length) {
+    return threads;
+  }
+  return threads.map((thread) => {
+    const cachedTitle = readString(titleCache[thread.id]);
+    if (!cachedTitle || isDefaultThreadTitle(cachedTitle)) {
+      return thread;
+    }
+    return preserveKnownThreadTitle(thread, { id: thread.id, title: cachedTitle, name: cachedTitle });
+  });
+}
+
+function preserveKnownThreadTitle(thread: CodexThread, existing: CodexThread | undefined): CodexThread {
+  if (!existing) {
+    return thread;
+  }
+  const existingTitle = firstSpecificThreadTitle(existing.title, existing.name);
+  if (!existingTitle) {
+    return thread;
+  }
+  const nextTitle = readString(thread.title);
+  const nextName = readString(thread.name);
+  if (!isDefaultThreadTitle(nextTitle) && !isDefaultThreadTitle(nextName)) {
+    return thread;
+  }
+  return {
+    ...thread,
+    title: isDefaultThreadTitle(nextTitle) ? existingTitle : thread.title,
+    name: isDefaultThreadTitle(nextName) ? existingTitle : thread.name
+  };
+}
+
+function firstSpecificThreadTitle(...values: Array<string | undefined>): string | undefined {
+  return values.find((value) => Boolean(readString(value) && !isDefaultThreadTitle(value)));
+}
+
+function isDefaultThreadTitle(value: string | undefined): boolean {
+  return readString(value)?.toLowerCase() === "conversation";
+}
+
+function rememberThreadTitleCache(threads: CodexThread[]): void {
+  const titlesByThreadId = Object.fromEntries(
+    threads.flatMap((thread) => {
+      const title = firstSpecificThreadTitle(thread.title, thread.name);
+      return title ? [[thread.id, title]] : [];
+    })
+  );
+  if (!Object.keys(titlesByThreadId).length) {
+    return;
+  }
+  void mergeThreadTitleCache(titlesByThreadId).catch(() => undefined);
 }
 
 function rememberLastActiveThread(threadId: string | undefined): void {

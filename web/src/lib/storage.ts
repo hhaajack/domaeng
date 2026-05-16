@@ -22,7 +22,8 @@ const KEYS = {
   trustedMacs: "trustedMacs",
   relayState: "relayState",
   runtimeSettings: "runtimeSettings",
-  lastActiveThreadId: "lastActiveThreadId"
+  lastActiveThreadId: "lastActiveThreadId",
+  threadTitles: "threadTitles"
 };
 
 let idbAvailable = true;
@@ -143,6 +144,33 @@ export async function writeLastActiveThreadId(threadId: string): Promise<void> {
     return;
   }
   await writeKV(KEYS.lastActiveThreadId, normalized);
+}
+
+export async function readThreadTitleCache(): Promise<Record<string, string>> {
+  const stored = await readKV<Record<string, unknown>>(KEYS.threadTitles);
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(stored)
+      .filter(([threadId, title]) => threadId.trim() && typeof title === "string" && title.trim())
+      .map(([threadId, title]) => [threadId.trim(), (title as string).trim()])
+  );
+}
+
+export async function mergeThreadTitleCache(titlesByThreadId: Record<string, string>): Promise<void> {
+  const patch = Object.fromEntries(
+    Object.entries(titlesByThreadId)
+      .filter(([threadId, title]) => threadId.trim() && title.trim())
+      .map(([threadId, title]) => [threadId.trim(), title.trim()])
+  );
+  if (!Object.keys(patch).length) {
+    return;
+  }
+  await writeKV(KEYS.threadTitles, {
+    ...await readThreadTitleCache(),
+    ...patch
+  });
 }
 
 export function normalizeRuntimeSettings(settings: Partial<RuntimeSettings>): RuntimeSettings {
